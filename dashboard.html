@@ -1,0 +1,1449 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LLM Eval Dashboard</title>
+<style>
+/* ===== RESET & BASE ===== */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "SF Mono", "Cascadia Code", "Fira Code", Consolas, monospace;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --transition-fast: 150ms ease;
+  --transition-base: 250ms ease;
+}
+
+/* ===== DARK THEME (default) ===== */
+[data-theme="dark"] {
+  --bg-body: #0f1419;
+  --bg-surface: #1a2030;
+  --bg-surface-raised: #212b3d;
+  --bg-surface-hover: #283347;
+  --bg-header: #141a24;
+  --border-subtle: rgba(255,255,255,0.06);
+  --border-default: rgba(255,255,255,0.1);
+  --text-primary: #e8ecf1;
+  --text-secondary: #8d99ae;
+  --text-tertiary: #5d6b82;
+  --accent: #22d3c5;
+  --accent-dim: rgba(34,211,197,0.12);
+  --accent-hover: #2ee8d9;
+  --green: #34d399;
+  --green-bg: rgba(52,211,153,0.1);
+  --yellow: #fbbf24;
+  --yellow-bg: rgba(251,191,36,0.1);
+  --red: #f87171;
+  --red-bg: rgba(248,113,113,0.1);
+  --chart-1: #22d3c5;
+  --chart-2: #818cf8;
+  --chart-3: #fb923c;
+  --chart-4: #f472b6;
+  --chart-5: #a3e635;
+  --scrollbar-track: #1a2030;
+  --scrollbar-thumb: #2d3a50;
+  --shadow-card: 0 1px 3px rgba(0,0,0,0.3), 0 0 0 1px rgba(255,255,255,0.04);
+  --shadow-card-hover: 0 4px 16px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.06);
+}
+
+/* ===== LIGHT THEME ===== */
+[data-theme="light"] {
+  --bg-body: #f5f7fa;
+  --bg-surface: #ffffff;
+  --bg-surface-raised: #f0f2f5;
+  --bg-surface-hover: #e8ebf0;
+  --bg-header: #ffffff;
+  --border-subtle: rgba(0,0,0,0.04);
+  --border-default: rgba(0,0,0,0.1);
+  --text-primary: #1a1f2e;
+  --text-secondary: #5a6478;
+  --text-tertiary: #8d95a5;
+  --accent: #0ea5a0;
+  --accent-dim: rgba(14,165,160,0.08);
+  --accent-hover: #0d9490;
+  --green: #16a34a;
+  --green-bg: rgba(22,163,74,0.08);
+  --yellow: #d97706;
+  --yellow-bg: rgba(217,119,6,0.08);
+  --red: #dc2626;
+  --red-bg: rgba(220,38,38,0.08);
+  --chart-1: #0ea5a0;
+  --chart-2: #6366f1;
+  --chart-3: #ea580c;
+  --chart-4: #db2777;
+  --chart-5: #65a30d;
+  --scrollbar-track: #f0f2f5;
+  --scrollbar-thumb: #c4c9d4;
+  --shadow-card: 0 1px 3px rgba(0,0,0,0.08), 0 0 0 1px rgba(0,0,0,0.04);
+  --shadow-card-hover: 0 4px 16px rgba(0,0,0,0.12), 0 0 0 1px rgba(0,0,0,0.06);
+}
+
+html { font-size: 15px; }
+
+body {
+  font-family: var(--font-sans);
+  background: var(--bg-body);
+  color: var(--text-primary);
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: var(--scrollbar-track); }
+::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 4px; }
+
+/* ===== HEADER ===== */
+.header {
+  background: var(--bg-header);
+  border-bottom: 1px solid var(--border-default);
+  padding: 0 24px;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.logo-mark {
+  width: 32px; height: 32px;
+}
+
+.header-title {
+  font-size: 1.07rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.header-subtitle {
+  font-size: 0.8rem;
+  color: var(--text-tertiary);
+  margin-left: 4px;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* ===== BUTTONS ===== */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 0.84rem;
+  font-weight: 550;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  border: 1px solid var(--border-default);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  transition: background var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+.btn:hover { background: var(--bg-surface-hover); }
+
+.btn-primary {
+  background: var(--accent);
+  color: #0a0f14;
+  border-color: transparent;
+  font-weight: 650;
+}
+.btn-primary:hover { background: var(--accent-hover); }
+
+.btn-icon {
+  padding: 7px 9px;
+}
+
+.btn-sm {
+  padding: 5px 10px;
+  font-size: 0.78rem;
+}
+
+/* ===== TAB NAVIGATION ===== */
+.tab-bar {
+  display: flex;
+  gap: 2px;
+  padding: 0 24px;
+  background: var(--bg-header);
+  border-bottom: 1px solid var(--border-default);
+}
+
+.tab-btn {
+  padding: 10px 16px;
+  font-size: 0.84rem;
+  font-weight: 550;
+  color: var(--text-secondary);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  font-family: var(--font-sans);
+  transition: color var(--transition-fast), border-color var(--transition-fast);
+}
+.tab-btn:hover { color: var(--text-primary); }
+.tab-btn.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+/* ===== MAIN LAYOUT ===== */
+.main {
+  max-width: 1360px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+
+/* ===== EMPTY STATE ===== */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 80px 24px;
+  text-align: center;
+}
+.empty-state-icon { margin-bottom: 20px; opacity: 0.35; }
+.empty-state h2 {
+  font-size: 1.2rem;
+  font-weight: 650;
+  margin-bottom: 8px;
+}
+.empty-state p {
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  max-width: 380px;
+  margin-bottom: 20px;
+}
+
+/* ===== KPI CARDS ===== */
+.kpi-section {
+  margin-bottom: 28px;
+}
+.kpi-section-label {
+  font-size: 0.78rem;
+  font-weight: 650;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 10px;
+}
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 14px;
+}
+
+.kpi-card {
+  background: var(--bg-surface);
+  border-radius: var(--radius-md);
+  padding: 18px 20px;
+  box-shadow: var(--shadow-card);
+  transition: box-shadow var(--transition-base);
+}
+.kpi-card:hover { box-shadow: var(--shadow-card-hover); }
+
+.kpi-label {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  font-weight: 500;
+  margin-bottom: 6px;
+}
+.kpi-value {
+  font-size: 1.7rem;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+.kpi-sub {
+  font-size: 0.75rem;
+  color: var(--text-tertiary);
+  margin-top: 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ===== CARDS / PANELS ===== */
+.card {
+  background: var(--bg-surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+  margin-bottom: 24px;
+}
+.card-header {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.card-title {
+  font-size: 0.92rem;
+  font-weight: 650;
+}
+.card-body {
+  padding: 20px;
+}
+
+/* ===== TABLES ===== */
+.table-wrap {
+  overflow-x: auto;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+th {
+  text-align: left;
+  font-size: 0.75rem;
+  font-weight: 650;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-default);
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+}
+th:hover { color: var(--text-secondary); }
+th .sort-arrow { font-size: 0.65rem; margin-left: 4px; opacity: 0.5; }
+th.sorted .sort-arrow { opacity: 1; color: var(--accent); }
+
+td {
+  padding: 10px 14px;
+  font-size: 0.87rem;
+  border-bottom: 1px solid var(--border-subtle);
+  vertical-align: middle;
+}
+
+tr:last-child td { border-bottom: none; }
+
+tbody tr {
+  transition: background var(--transition-fast);
+}
+tbody tr:hover { background: var(--bg-surface-hover); }
+
+/* ===== SCORE BAR (in-table) ===== */
+.score-bar-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.score-bar-track {
+  flex: 1;
+  height: 6px;
+  background: var(--bg-surface-raised);
+  border-radius: 3px;
+  overflow: hidden;
+  min-width: 60px;
+}
+.score-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width var(--transition-base);
+}
+.score-bar-val {
+  font-weight: 600;
+  font-size: 0.84rem;
+  min-width: 42px;
+  text-align: right;
+}
+
+/* ===== BADGE ===== */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 99px;
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+.badge-pass { background: var(--green-bg); color: var(--green); }
+.badge-fail { background: var(--red-bg); color: var(--red); }
+.badge-warn { background: var(--yellow-bg); color: var(--yellow); }
+
+/* ===== FILTER / SEARCH BAR ===== */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.search-input {
+  padding: 7px 12px 7px 34px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface-raised);
+  color: var(--text-primary);
+  font-size: 0.84rem;
+  font-family: var(--font-sans);
+  outline: none;
+  width: 240px;
+  transition: border-color var(--transition-fast);
+}
+.search-input:focus { border-color: var(--accent); }
+.search-wrap {
+  position: relative;
+}
+.search-icon {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-tertiary);
+  pointer-events: none;
+}
+
+.filter-btn {
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 0.78rem;
+  font-weight: 600;
+  border: 1px solid var(--border-default);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-family: var(--font-sans);
+  transition: all var(--transition-fast);
+}
+.filter-btn:hover { color: var(--text-primary); background: var(--bg-surface-hover); }
+.filter-btn.active {
+  background: var(--accent-dim);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* ===== DRILL-DOWN TABLE ===== */
+.drill-row { cursor: pointer; }
+.drill-row td:first-child { padding-left: 14px; }
+.drill-expand {
+  display: none;
+  background: var(--bg-surface-raised);
+}
+.drill-expand.open { display: table-row; }
+.drill-expand td { padding: 16px 20px; }
+.drill-detail {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.drill-detail-full { grid-column: 1 / -1; }
+.drill-label {
+  font-size: 0.72rem;
+  font-weight: 650;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 4px;
+}
+.drill-value {
+  font-size: 0.85rem;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.5;
+}
+.drill-value code {
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  background: var(--bg-body);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+.drill-evals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+.drill-eval-chip {
+  background: var(--bg-body);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  font-size: 0.8rem;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 140px;
+}
+.drill-eval-chip .metric-name {
+  font-weight: 600;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+/* ===== PASS/FAIL ICONS IN TABLE ===== */
+.pf-icons {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+.pf-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+  position: relative;
+}
+.pf-dot.pass { background: var(--green); }
+.pf-dot.fail { background: var(--red); }
+.pf-dot::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--bg-surface-raised);
+  color: var(--text-primary);
+  font-size: 0.7rem;
+  padding: 3px 7px;
+  border-radius: 4px;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+  z-index: 10;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+.pf-dot:hover::after { opacity: 1; }
+
+/* Truncated text */
+.truncate {
+  max-width: 280px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ===== SVG CHARTS ===== */
+.chart-container {
+  width: 100%;
+  overflow-x: auto;
+}
+.chart-container svg {
+  display: block;
+}
+
+/* ===== COMPARISON HIGHLIGHT ===== */
+.highlight-best {
+  font-weight: 700;
+  color: var(--accent);
+}
+
+/* ===== TWO-COL LAYOUT ===== */
+.two-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+
+/* ===== MODEL COLOR LEGEND ===== */
+.legend {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+.legend-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+}
+
+/* ===== RESPONSIVE ===== */
+@media (max-width: 900px) {
+  .two-col { grid-template-columns: 1fr; }
+  .drill-detail { grid-template-columns: 1fr; }
+  .kpi-grid { grid-template-columns: repeat(2, 1fr); }
+  .main { padding: 16px; }
+}
+@media (max-width: 600px) {
+  .kpi-grid { grid-template-columns: 1fr; }
+  .header { padding: 0 14px; }
+  .tab-bar { padding: 0 14px; }
+  .search-input { width: 160px; }
+}
+
+/* ===== REDUCED MOTION ===== */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}
+
+/* ===== HIDDEN FILE INPUT ===== */
+#fileInput { display: none; }
+
+/* ===== COMPARISON PER-SAMPLE TABLE ===== */
+.comp-sample-models {
+  display: grid;
+  gap: 12px;
+}
+.comp-model-block {
+  background: var(--bg-body);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+}
+.comp-model-name {
+  font-size: 0.78rem;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+.comp-model-response {
+  font-size: 0.84rem;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+
+/* Color utility */
+.color-green { color: var(--green); }
+.color-yellow { color: var(--yellow); }
+.color-red { color: var(--red); }
+</style>
+</head>
+<body>
+
+<!-- ===== HEADER ===== -->
+<header class="header">
+  <div class="header-left">
+    <svg class="logo-mark" viewBox="0 0 32 32" fill="none">
+      <rect width="32" height="32" rx="8" fill="var(--accent)"/>
+      <path d="M8 22V10l6 6 6-6v12" stroke="#0a0f14" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="24" cy="10" r="2" fill="#0a0f14"/>
+    </svg>
+    <span class="header-title">LLM Eval Dashboard</span>
+    <span class="header-subtitle" id="fileLabel">No file loaded</span>
+  </div>
+  <div class="header-right">
+    <button class="btn btn-primary" onclick="document.getElementById('fileInput').click()">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      Load JSON
+    </button>
+    <input type="file" id="fileInput" accept=".json,application/json">
+    <button class="btn btn-icon" id="themeToggle" title="Toggle dark/light mode">
+      <svg id="themeIconDark" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg id="themeIconLight" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+
+<!-- ===== TAB BAR ===== -->
+<nav class="tab-bar" id="tabBar">
+  <button class="tab-btn active" data-tab="summary">Summary</button>
+  <button class="tab-btn" data-tab="charts">Charts</button>
+  <button class="tab-btn" data-tab="samples">Samples</button>
+  <button class="tab-btn" data-tab="comparison" id="tabComparison" style="display:none">Comparison</button>
+</nav>
+
+<!-- ===== MAIN ===== -->
+<main class="main">
+
+  <!-- EMPTY STATE -->
+  <div id="emptyState" class="empty-state">
+    <div class="empty-state-icon">
+      <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-tertiary)"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+    </div>
+    <h2>No evaluation data loaded</h2>
+    <p>Load a <code>results_detailed.json</code> or <code>comparison_detailed.json</code> file to view the dashboard.</p>
+    <button class="btn btn-primary" onclick="document.getElementById('fileInput').click()">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      Load JSON File
+    </button>
+  </div>
+
+  <!-- SUMMARY TAB -->
+  <div class="tab-panel" id="panel-summary">
+    <div id="kpiContainer"></div>
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Metric Summary</span>
+      </div>
+      <div class="card-body table-wrap" id="metricTableContainer"></div>
+    </div>
+  </div>
+
+  <!-- CHARTS TAB -->
+  <div class="tab-panel" id="panel-charts">
+    <div class="two-col" id="chartsGrid">
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Mean Scores by Metric</span>
+          <div class="legend" id="barLegend"></div>
+        </div>
+        <div class="card-body chart-container" id="barChartContainer"></div>
+      </div>
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Radar Overview</span>
+          <div class="legend" id="radarLegend"></div>
+        </div>
+        <div class="card-body chart-container" id="radarChartContainer"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SAMPLES TAB -->
+  <div class="tab-panel" id="panel-samples">
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Per-Sample Results</span>
+        <div class="toolbar">
+          <div class="search-wrap">
+            <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input type="text" class="search-input" id="sampleSearch" placeholder="Search prompts...">
+          </div>
+          <button class="filter-btn active" data-filter="all">All</button>
+          <button class="filter-btn" data-filter="passed">Passed</button>
+          <button class="filter-btn" data-filter="failed">Failed</button>
+        </div>
+      </div>
+      <div class="card-body table-wrap" id="sampleTableContainer"></div>
+    </div>
+  </div>
+
+  <!-- COMPARISON TAB -->
+  <div class="tab-panel" id="panel-comparison">
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Model Comparison</span>
+        <div class="legend" id="compLegend"></div>
+      </div>
+      <div class="card-body table-wrap" id="compTableContainer"></div>
+    </div>
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Per-Sample Model Comparison</span>
+        <div class="toolbar">
+          <div class="search-wrap">
+            <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input type="text" class="search-input" id="compSampleSearch" placeholder="Search prompts...">
+          </div>
+        </div>
+      </div>
+      <div class="card-body table-wrap" id="compSampleTableContainer"></div>
+    </div>
+  </div>
+
+</main>
+
+<script>
+/* ================================================================
+   LLM Eval Dashboard — Self-Contained
+   ================================================================ */
+
+(function() {
+  'use strict';
+
+  // --- State ---
+  let rawData = null;
+  let mode = null; // 'single' | 'comparison'
+  let models = [];
+  let metrics = [];
+  let currentFilter = 'all';
+  let currentSearch = '';
+  let compSearch = '';
+
+  const MODEL_COLORS = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'var(--chart-4)', 'var(--chart-5)'];
+  const MODEL_COLORS_RAW_DARK = ['#22d3c5','#818cf8','#fb923c','#f472b6','#a3e635'];
+  const MODEL_COLORS_RAW_LIGHT = ['#0ea5a0','#6366f1','#ea580c','#db2777','#65a30d'];
+
+  function getModelColors() {
+    return document.documentElement.getAttribute('data-theme') === 'light' ? MODEL_COLORS_RAW_LIGHT : MODEL_COLORS_RAW_DARK;
+  }
+
+  // --- Theme ---
+  const themeToggle = document.getElementById('themeToggle');
+  const iconDark = document.getElementById('themeIconDark');
+  const iconLight = document.getElementById('themeIconLight');
+
+  function setTheme(t) {
+    document.documentElement.setAttribute('data-theme', t);
+    localStorage.setItem('eval-dash-theme', t);
+    iconDark.style.display = t === 'dark' ? 'block' : 'none';
+    iconLight.style.display = t === 'light' ? 'block' : 'none';
+    if (rawData) render(); // re-render charts for color changes
+  }
+
+  const savedTheme = localStorage.getItem('eval-dash-theme') || 'dark';
+  setTheme(savedTheme);
+  themeToggle.addEventListener('click', () => {
+    setTheme(document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
+  });
+
+  // --- File Input ---
+  document.getElementById('fileInput').addEventListener('change', function(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = function(ev) {
+      try {
+        const json = JSON.parse(ev.target.result);
+        loadData(json, file.name);
+      } catch(err) {
+        alert('Invalid JSON file: ' + err.message);
+      }
+    };
+    reader.readAsText(file);
+  });
+
+  // --- Tab Navigation ---
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', function() {
+      switchTab(this.dataset.tab);
+    });
+  });
+
+  function switchTab(tab) {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === 'panel-' + tab));
+  }
+
+  // --- Data Loading ---
+  function loadData(json, filename) {
+    rawData = json;
+    if (!Array.isArray(json) || json.length === 0) {
+      alert('JSON must be a non-empty array');
+      return;
+    }
+    // Detect format
+    if (json[0].models) {
+      mode = 'comparison';
+      models = Object.keys(json[0].models);
+      metrics = [...new Set(json[0].models[models[0]].evaluations.map(e => e.metric_name))];
+    } else {
+      mode = 'single';
+      models = [];
+      metrics = [...new Set(json[0].evaluations.map(e => e.metric_name))];
+    }
+
+    document.getElementById('fileLabel').textContent = filename + ' (' + mode + ')';
+    document.getElementById('emptyState').style.display = 'none';
+    document.getElementById('tabComparison').style.display = mode === 'comparison' ? '' : 'none';
+
+    render();
+    switchTab('summary');
+  }
+
+  // --- Helpers ---
+  function scoreColor(s) {
+    if (s >= 0.8) return 'var(--green)';
+    if (s >= 0.5) return 'var(--yellow)';
+    return 'var(--red)';
+  }
+  function scoreClass(s) {
+    if (s >= 0.8) return 'color-green';
+    if (s >= 0.5) return 'color-yellow';
+    return 'color-red';
+  }
+  function pct(v) { return (v * 100).toFixed(1) + '%'; }
+  function fmt(v) { return v.toFixed(3); }
+  function escHtml(s) {
+    const d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
+  }
+
+  // Compute stats per metric for a model (or single mode)
+  function computeMetricStats(data, modelName) {
+    const statsMap = {};
+    for (const sample of data) {
+      const evals = modelName ? sample.models[modelName].evaluations : sample.evaluations;
+      for (const ev of evals) {
+        if (!statsMap[ev.metric_name]) statsMap[ev.metric_name] = { scores: [], passed: 0, total: 0 };
+        statsMap[ev.metric_name].scores.push(ev.score);
+        statsMap[ev.metric_name].total++;
+        if (ev.passed) statsMap[ev.metric_name].passed++;
+      }
+    }
+    const result = [];
+    for (const [name, s] of Object.entries(statsMap)) {
+      const mean = s.scores.reduce((a,b) => a+b, 0) / s.scores.length;
+      result.push({ metric: name, mean, passRate: s.passed / s.total, count: s.total });
+    }
+    return result;
+  }
+
+  // Check if a sample passed all metrics
+  function sampleAllPassed(sample, modelName) {
+    const evals = modelName ? sample.models[modelName].evaluations : sample.evaluations;
+    return evals.every(e => e.passed);
+  }
+
+  // --- Render ---
+  function render() {
+    renderKPIs();
+    renderMetricTable();
+    renderBarChart();
+    renderRadarChart();
+    renderSampleTable();
+    if (mode === 'comparison') {
+      renderComparisonTable();
+      renderCompSampleTable();
+    }
+  }
+
+  // --- KPIs ---
+  function renderKPIs() {
+    const container = document.getElementById('kpiContainer');
+    let html = '';
+
+    if (mode === 'single') {
+      const stats = computeMetricStats(rawData);
+      const totalSamples = rawData.length;
+      const allScores = rawData.flatMap(s => s.evaluations.map(e => e.score));
+      const meanScore = allScores.reduce((a,b)=>a+b,0) / allScores.length;
+      const passedSamples = rawData.filter(s => sampleAllPassed(s)).length;
+      const passRate = passedSamples / totalSamples;
+
+      html += '<div class="kpi-grid">';
+      html += kpiCard('Total Samples', totalSamples, '');
+      html += kpiCard('Overall Pass Rate', pct(passRate), passedSamples + ' of ' + totalSamples + ' passed all', passRate);
+      html += kpiCard('Mean Score', meanScore.toFixed(3), 'Across all metrics', meanScore);
+      html += kpiCard('Metrics Evaluated', metrics.length, metrics.join(', '));
+      html += '</div>';
+    } else {
+      for (const m of models) {
+        const stats = computeMetricStats(rawData, m);
+        const totalSamples = rawData.length;
+        const allScores = rawData.flatMap(s => s.models[m].evaluations.map(e => e.score));
+        const meanScore = allScores.reduce((a,b)=>a+b,0) / allScores.length;
+        const passedSamples = rawData.filter(s => sampleAllPassed(s, m)).length;
+        const passRate = passedSamples / totalSamples;
+
+        html += '<div class="kpi-section">';
+        html += '<div class="kpi-section-label" style="color:' + MODEL_COLORS[models.indexOf(m)] + '">' + escHtml(m) + '</div>';
+        html += '<div class="kpi-grid">';
+        html += kpiCard('Samples', totalSamples, '');
+        html += kpiCard('Pass Rate', pct(passRate), passedSamples + ' of ' + totalSamples, passRate);
+        html += kpiCard('Mean Score', meanScore.toFixed(3), '', meanScore);
+        html += kpiCard('Metrics', metrics.length, '');
+        html += '</div></div>';
+      }
+    }
+    container.innerHTML = html;
+  }
+
+  function kpiCard(label, value, sub, scoreVal) {
+    let colorStyle = '';
+    if (typeof scoreVal === 'number') colorStyle = ' style="color:' + scoreColor(scoreVal) + '"';
+    return '<div class="kpi-card"><div class="kpi-label">' + escHtml(label) + '</div><div class="kpi-value"' + colorStyle + '>' + value + '</div>' +
+      (sub ? '<div class="kpi-sub">' + escHtml(sub) + '</div>' : '') + '</div>';
+  }
+
+  // --- Metric Table ---
+  let metricSortCol = 'metric';
+  let metricSortAsc = true;
+
+  function renderMetricTable() {
+    const container = document.getElementById('metricTableContainer');
+
+    if (mode === 'single') {
+      let stats = computeMetricStats(rawData);
+      stats = sortStats(stats);
+
+      let html = '<table><thead><tr>';
+      html += sortTh('metric', 'Metric Name');
+      html += sortTh('mean', 'Mean Score');
+      html += sortTh('passRate', 'Pass Rate');
+      html += sortTh('count', 'Samples');
+      html += '</tr></thead><tbody>';
+
+      for (const s of stats) {
+        html += '<tr>';
+        html += '<td style="font-weight:600">' + escHtml(s.metric) + '</td>';
+        html += '<td>' + scoreBarHtml(s.mean) + '</td>';
+        html += '<td><span class="' + scoreClass(s.passRate) + '">' + pct(s.passRate) + '</span></td>';
+        html += '<td>' + s.count + '</td>';
+        html += '</tr>';
+      }
+      html += '</tbody></table>';
+      container.innerHTML = html;
+    } else {
+      // Comparison: one row per metric, columns per model
+      let html = '<table><thead><tr><th>Metric</th>';
+      for (const m of models) html += '<th colspan="2">' + escHtml(m) + '</th>';
+      html += '</tr><tr><th></th>';
+      for (const m of models) html += '<th style="font-size:0.68rem">Mean</th><th style="font-size:0.68rem">Pass</th>';
+      html += '</tr></thead><tbody>';
+
+      for (const metric of metrics) {
+        html += '<tr><td style="font-weight:600">' + escHtml(metric) + '</td>';
+        let bestMean = -1;
+        const means = {};
+        for (const m of models) {
+          const st = computeMetricStats(rawData, m).find(s => s.metric === metric);
+          means[m] = st ? st.mean : 0;
+          if (means[m] > bestMean) bestMean = means[m];
+        }
+        for (const m of models) {
+          const st = computeMetricStats(rawData, m).find(s => s.metric === metric);
+          const isBest = means[m] === bestMean;
+          html += '<td>' + scoreBarHtml(st ? st.mean : 0, isBest) + '</td>';
+          html += '<td><span class="' + scoreClass(st ? st.passRate : 0) + '">' + pct(st ? st.passRate : 0) + '</span></td>';
+        }
+        html += '</tr>';
+      }
+      html += '</tbody></table>';
+      container.innerHTML = html;
+    }
+
+    // Add sort listeners
+    container.querySelectorAll('th[data-sort]').forEach(th => {
+      th.addEventListener('click', () => {
+        if (metricSortCol === th.dataset.sort) metricSortAsc = !metricSortAsc;
+        else { metricSortCol = th.dataset.sort; metricSortAsc = true; }
+        renderMetricTable();
+      });
+    });
+  }
+
+  function sortTh(key, label) {
+    const active = metricSortCol === key;
+    const arrow = active ? (metricSortAsc ? '&#9650;' : '&#9660;') : '&#9650;';
+    return '<th data-sort="' + key + '" class="' + (active ? 'sorted' : '') + '">' + label + ' <span class="sort-arrow">' + arrow + '</span></th>';
+  }
+
+  function sortStats(stats) {
+    const col = metricSortCol;
+    const dir = metricSortAsc ? 1 : -1;
+    return [...stats].sort((a,b) => {
+      if (typeof a[col] === 'string') return a[col].localeCompare(b[col]) * dir;
+      return (a[col] - b[col]) * dir;
+    });
+  }
+
+  function scoreBarHtml(val, highlight) {
+    const w = Math.max(0, Math.min(100, val * 100));
+    const color = scoreColor(val);
+    return '<div class="score-bar-wrap">' +
+      '<div class="score-bar-track"><div class="score-bar-fill" style="width:' + w + '%;background:' + color + '"></div></div>' +
+      '<span class="score-bar-val' + (highlight ? ' highlight-best' : '') + '">' + fmt(val) + '</span></div>';
+  }
+
+  // --- Bar Chart (pure SVG) ---
+  function renderBarChart() {
+    const container = document.getElementById('barChartContainer');
+    const legendEl = document.getElementById('barLegend');
+    const colors = getModelColors();
+
+    if (mode === 'single') {
+      const stats = computeMetricStats(rawData);
+      legendEl.innerHTML = '';
+      container.innerHTML = buildHBarSVG(stats.map(s => ({ label: s.metric, values: [s.mean] })), ['Model'], colors);
+    } else {
+      // Grouped bars
+      const groups = metrics.map(metric => {
+        const values = models.map(m => {
+          const st = computeMetricStats(rawData, m).find(s => s.metric === metric);
+          return st ? st.mean : 0;
+        });
+        return { label: metric, values };
+      });
+      legendEl.innerHTML = models.map((m,i) =>
+        '<div class="legend-item"><div class="legend-swatch" style="background:' + colors[i] + '"></div>' + escHtml(m) + '</div>'
+      ).join('');
+      container.innerHTML = buildHBarSVG(groups, models, colors);
+    }
+  }
+
+  function buildHBarSVG(groups, seriesNames, colors) {
+    const marginLeft = 180, marginRight = 60, marginTop = 16, marginBottom = 20;
+    const barH = 18, barGap = 4, groupGap = 18;
+    const nSeries = seriesNames.length;
+    const totalH = groups.length * (nSeries * (barH + barGap) + groupGap) + marginTop + marginBottom;
+    const svgW = 560;
+    const chartW = svgW - marginLeft - marginRight;
+
+    let svg = '<svg width="100%" viewBox="0 0 ' + svgW + ' ' + totalH + '" xmlns="http://www.w3.org/2000/svg">';
+
+    // Grid lines
+    for (let i = 0; i <= 4; i++) {
+      const x = marginLeft + (chartW * i / 4);
+      const val = (i / 4).toFixed(2);
+      svg += '<line x1="' + x + '" y1="' + marginTop + '" x2="' + x + '" y2="' + (totalH - marginBottom) + '" stroke="var(--border-subtle)" stroke-width="1"/>';
+      svg += '<text x="' + x + '" y="' + (totalH - 4) + '" fill="var(--text-tertiary)" font-size="10" text-anchor="middle" font-family="var(--font-sans)">' + val + '</text>';
+    }
+
+    let y = marginTop;
+    for (const group of groups) {
+      const groupStartY = y;
+      for (let s = 0; s < nSeries; s++) {
+        const val = group.values[s];
+        const w = Math.max(0, Math.min(1, val)) * chartW;
+        const color = colors[s % colors.length];
+        svg += '<rect x="' + marginLeft + '" y="' + y + '" width="' + w + '" height="' + barH + '" rx="3" fill="' + color + '" opacity="0.85"/>';
+        svg += '<text x="' + (marginLeft + w + 6) + '" y="' + (y + barH/2 + 4) + '" fill="var(--text-secondary)" font-size="11" font-family="var(--font-sans)" font-variant-numeric="tabular-nums">' + val.toFixed(3) + '</text>';
+        y += barH + barGap;
+      }
+      const labelY = groupStartY + (nSeries * (barH + barGap)) / 2;
+      svg += '<text x="' + (marginLeft - 8) + '" y="' + labelY + '" fill="var(--text-primary)" font-size="12" text-anchor="end" font-family="var(--font-sans)" dominant-baseline="middle">' + escHtml(group.label) + '</text>';
+      y += groupGap;
+    }
+    svg += '</svg>';
+    return svg;
+  }
+
+  // --- Radar Chart (pure SVG) ---
+  function renderRadarChart() {
+    const container = document.getElementById('radarChartContainer');
+    const legendEl = document.getElementById('radarLegend');
+    const colors = getModelColors();
+
+    const size = 360;
+    const cx = size / 2, cy = size / 2;
+    const radius = 140;
+    const n = metrics.length;
+    if (n < 3) { container.innerHTML = '<p style="color:var(--text-secondary);padding:20px">Radar chart requires at least 3 metrics.</p>'; return; }
+
+    const angleStep = (2 * Math.PI) / n;
+
+    let svg = '<svg width="100%" viewBox="0 0 ' + size + ' ' + size + '" xmlns="http://www.w3.org/2000/svg">';
+
+    // Draw grid circles
+    for (let r = 0.2; r <= 1.0; r += 0.2) {
+      const gridR = radius * r;
+      svg += '<circle cx="' + cx + '" cy="' + cy + '" r="' + gridR + '" fill="none" stroke="var(--border-subtle)" stroke-width="1"/>';
+      svg += '<text x="' + (cx + 4) + '" y="' + (cy - gridR + 3) + '" fill="var(--text-tertiary)" font-size="9" font-family="var(--font-sans)">' + r.toFixed(1) + '</text>';
+    }
+
+    // Draw axes + labels
+    for (let i = 0; i < n; i++) {
+      const angle = -Math.PI / 2 + i * angleStep;
+      const lx = cx + Math.cos(angle) * (radius + 20);
+      const ly = cy + Math.sin(angle) * (radius + 20);
+      const ax = cx + Math.cos(angle) * radius;
+      const ay = cy + Math.sin(angle) * radius;
+      svg += '<line x1="' + cx + '" y1="' + cy + '" x2="' + ax + '" y2="' + ay + '" stroke="var(--border-subtle)" stroke-width="1"/>';
+
+      let anchor = 'middle';
+      if (Math.cos(angle) > 0.3) anchor = 'start';
+      else if (Math.cos(angle) < -0.3) anchor = 'end';
+      svg += '<text x="' + lx + '" y="' + (ly + 4) + '" fill="var(--text-secondary)" font-size="10.5" text-anchor="' + anchor + '" font-family="var(--font-sans)">' + escHtml(metrics[i]) + '</text>';
+    }
+
+    // Draw data polygons
+    const dataSets = mode === 'single'
+      ? [{ name: 'Model', stats: computeMetricStats(rawData) }]
+      : models.map(m => ({ name: m, stats: computeMetricStats(rawData, m) }));
+
+    legendEl.innerHTML = mode === 'comparison'
+      ? models.map((m,i) => '<div class="legend-item"><div class="legend-swatch" style="background:' + colors[i] + '"></div>' + escHtml(m) + '</div>').join('')
+      : '';
+
+    dataSets.forEach((ds, di) => {
+      const color = colors[di % colors.length];
+      let points = '';
+      for (let i = 0; i < n; i++) {
+        const stat = ds.stats.find(s => s.metric === metrics[i]);
+        const val = stat ? stat.mean : 0;
+        const angle = -Math.PI / 2 + i * angleStep;
+        const px = cx + Math.cos(angle) * radius * val;
+        const py = cy + Math.sin(angle) * radius * val;
+        points += px + ',' + py + ' ';
+      }
+      svg += '<polygon points="' + points.trim() + '" fill="' + color + '" fill-opacity="0.12" stroke="' + color + '" stroke-width="2" stroke-linejoin="round"/>';
+      // Data points
+      for (let i = 0; i < n; i++) {
+        const stat = ds.stats.find(s => s.metric === metrics[i]);
+        const val = stat ? stat.mean : 0;
+        const angle = -Math.PI / 2 + i * angleStep;
+        const px = cx + Math.cos(angle) * radius * val;
+        const py = cy + Math.sin(angle) * radius * val;
+        svg += '<circle cx="' + px + '" cy="' + py + '" r="3.5" fill="' + color + '"/>';
+      }
+    });
+
+    svg += '</svg>';
+    container.innerHTML = svg;
+  }
+
+  // --- Sample Drill-Down Table ---
+  function renderSampleTable() {
+    const container = document.getElementById('sampleTableContainer');
+    const filteredSamples = getFilteredSamples();
+
+    if (mode === 'single') {
+      let html = '<table><thead><tr><th style="width:40px">#</th><th>Prompt</th><th>Expected</th><th>Response</th><th>Metrics</th></tr></thead><tbody>';
+      for (const s of filteredSamples) {
+        const allPass = sampleAllPassed(s);
+        const rowId = 'drill-' + s.sample_idx;
+        html += '<tr class="drill-row" data-target="' + rowId + '">';
+        html += '<td>' + s.sample_idx + '</td>';
+        html += '<td><span class="truncate" style="display:inline-block">' + escHtml(s.prompt) + '</span></td>';
+        html += '<td><code style="font-family:var(--font-mono);font-size:0.82rem">' + escHtml(s.expected) + '</code></td>';
+        html += '<td><code style="font-family:var(--font-mono);font-size:0.82rem">' + escHtml(s.model_response) + '</code></td>';
+        html += '<td>' + metricDots(s.evaluations) + '</td>';
+        html += '</tr>';
+        // Expand row
+        html += '<tr class="drill-expand" id="' + rowId + '"><td colspan="5">';
+        html += drillDetailSingle(s);
+        html += '</td></tr>';
+      }
+      html += '</tbody></table>';
+      container.innerHTML = html;
+    } else {
+      // Comparison mode samples tab — show first model's data with overall pass/fail
+      let html = '<table><thead><tr><th style="width:40px">#</th><th>Prompt</th><th>Expected</th>';
+      for (const m of models) html += '<th>' + escHtml(m) + '</th>';
+      html += '</tr></thead><tbody>';
+      for (const s of filteredSamples) {
+        const rowId = 'drill-' + s.sample_idx;
+        html += '<tr class="drill-row" data-target="' + rowId + '">';
+        html += '<td>' + s.sample_idx + '</td>';
+        html += '<td><span class="truncate" style="display:inline-block">' + escHtml(s.prompt) + '</span></td>';
+        html += '<td><code style="font-family:var(--font-mono);font-size:0.82rem">' + escHtml(s.expected) + '</code></td>';
+        for (const m of models) {
+          html += '<td>' + metricDots(s.models[m].evaluations) + '</td>';
+        }
+        html += '</tr>';
+        html += '<tr class="drill-expand" id="' + rowId + '"><td colspan="' + (3 + models.length) + '">';
+        html += drillDetailComparison(s);
+        html += '</td></tr>';
+      }
+      html += '</tbody></table>';
+      container.innerHTML = html;
+    }
+
+    // Attach expand listeners
+    container.querySelectorAll('.drill-row').forEach(row => {
+      row.addEventListener('click', () => {
+        const target = document.getElementById(row.dataset.target);
+        target.classList.toggle('open');
+      });
+    });
+  }
+
+  function getFilteredSamples() {
+    let samples = rawData;
+    if (currentSearch) {
+      const q = currentSearch.toLowerCase();
+      samples = samples.filter(s => s.prompt.toLowerCase().includes(q));
+    }
+    if (currentFilter === 'passed') {
+      if (mode === 'single') {
+        samples = samples.filter(s => sampleAllPassed(s));
+      } else {
+        samples = samples.filter(s => models.every(m => sampleAllPassed(s, m)));
+      }
+    } else if (currentFilter === 'failed') {
+      if (mode === 'single') {
+        samples = samples.filter(s => !sampleAllPassed(s));
+      } else {
+        samples = samples.filter(s => models.some(m => !sampleAllPassed(s, m)));
+      }
+    }
+    return samples;
+  }
+
+  function metricDots(evals) {
+    return '<div class="pf-icons">' + evals.map(e =>
+      '<span class="pf-dot ' + (e.passed ? 'pass' : 'fail') + '" data-tip="' + escHtml(e.metric_name) + ': ' + e.score.toFixed(3) + (e.passed ? ' ✓' : ' ✗') + '"></span>'
+    ).join('') + '</div>';
+  }
+
+  function drillDetailSingle(s) {
+    let html = '<div class="drill-detail">';
+    html += '<div><div class="drill-label">Full Prompt</div><div class="drill-value">' + escHtml(s.prompt) + '</div></div>';
+    html += '<div><div class="drill-label">Full Response</div><div class="drill-value"><code>' + escHtml(s.model_response) + '</code></div></div>';
+    html += '<div class="drill-detail-full"><div class="drill-label">Evaluations</div><div class="drill-evals">';
+    for (const ev of s.evaluations) {
+      html += '<div class="drill-eval-chip">';
+      html += '<span class="metric-name">' + escHtml(ev.metric_name) + '</span>';
+      html += '<span class="' + scoreClass(ev.score) + '" style="font-weight:700;font-variant-numeric:tabular-nums">' + ev.score.toFixed(3) + ' ' + (ev.passed ? '<span class="badge badge-pass">PASS</span>' : '<span class="badge badge-fail">FAIL</span>') + '</span>';
+      if (ev.details) {
+        html += '<span style="font-size:0.72rem;color:var(--text-tertiary);margin-top:2px">';
+        const entries = Object.entries(ev.details).filter(([k]) => k !== 'mode' && k !== 'expected' && k !== 'response');
+        html += entries.map(([k,v]) => k + ': ' + v).join(', ');
+        html += '</span>';
+      }
+      html += '</div>';
+    }
+    html += '</div></div></div>';
+    return html;
+  }
+
+  function drillDetailComparison(s) {
+    let html = '<div class="drill-detail"><div class="drill-detail-full"><div class="drill-label">Full Prompt</div><div class="drill-value">' + escHtml(s.prompt) + '</div></div>';
+    html += '<div class="drill-detail-full"><div class="drill-label">Expected</div><div class="drill-value"><code>' + escHtml(s.expected) + '</code></div></div>';
+    html += '<div class="drill-detail-full"><div class="comp-sample-models">';
+    const colors = getModelColors();
+    models.forEach((m, mi) => {
+      const md = s.models[m];
+      html += '<div class="comp-model-block" style="border-left:3px solid ' + colors[mi] + '">';
+      html += '<div class="comp-model-name" style="color:' + colors[mi] + '">' + escHtml(m) + '</div>';
+      html += '<div class="comp-model-response"><strong>Response:</strong> <code>' + escHtml(md.response) + '</code>  |  <strong>Latency:</strong> ' + md.latency_ms.toFixed(1) + ' ms</div>';
+      html += '<div class="drill-evals">';
+      for (const ev of md.evaluations) {
+        // Find best score for this metric across models
+        const bestScore = Math.max(...models.map(mm => {
+          const e = s.models[mm].evaluations.find(ee => ee.metric_name === ev.metric_name);
+          return e ? e.score : 0;
+        }));
+        const isBest = ev.score === bestScore && models.length > 1;
+        html += '<div class="drill-eval-chip' + (isBest ? ' highlight-best' : '') + '">';
+        html += '<span class="metric-name">' + escHtml(ev.metric_name) + (isBest ? ' ★' : '') + '</span>';
+        html += '<span class="' + scoreClass(ev.score) + '" style="font-weight:700">' + ev.score.toFixed(3) + ' ' + (ev.passed ? '<span class="badge badge-pass">PASS</span>' : '<span class="badge badge-fail">FAIL</span>') + '</span>';
+        html += '</div>';
+      }
+      html += '</div></div>';
+    });
+    html += '</div></div></div>';
+    return html;
+  }
+
+  // --- Filter / Search ---
+  document.querySelectorAll('.filter-btn').forEach(btn => {
+    btn.addEventListener('click', function() {
+      document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+      this.classList.add('active');
+      currentFilter = this.dataset.filter;
+      renderSampleTable();
+    });
+  });
+
+  document.getElementById('sampleSearch').addEventListener('input', function() {
+    currentSearch = this.value;
+    renderSampleTable();
+  });
+
+  document.getElementById('compSampleSearch').addEventListener('input', function() {
+    compSearch = this.value;
+    renderCompSampleTable();
+  });
+
+  // --- Comparison View ---
+  function renderComparisonTable() {
+    const container = document.getElementById('compTableContainer');
+    const legendEl = document.getElementById('compLegend');
+    const colors = getModelColors();
+
+    legendEl.innerHTML = models.map((m,i) =>
+      '<div class="legend-item"><div class="legend-swatch" style="background:' + colors[i] + '"></div>' + escHtml(m) + '</div>'
+    ).join('');
+
+    // Summary comparison table: for each metric, show each model's mean + pass rate, highlight best
+    let html = '<table><thead><tr><th>Metric</th>';
+    for (const m of models) html += '<th style="border-bottom:2px solid ' + colors[models.indexOf(m)] + '">' + escHtml(m) + ' Mean</th><th>' + escHtml(m) + ' Pass</th>';
+    html += '</tr></thead><tbody>';
+
+    for (const metric of metrics) {
+      html += '<tr><td style="font-weight:600">' + escHtml(metric) + '</td>';
+      const modelMeans = {};
+      let bestMean = -1;
+      for (const m of models) {
+        const st = computeMetricStats(rawData, m).find(s => s.metric === metric);
+        modelMeans[m] = st ? st.mean : 0;
+        if (modelMeans[m] > bestMean) bestMean = modelMeans[m];
+      }
+      for (const m of models) {
+        const st = computeMetricStats(rawData, m).find(s => s.metric === metric);
+        const isBest = modelMeans[m] === bestMean;
+        html += '<td class="' + (isBest ? 'highlight-best' : '') + '">' + fmt(modelMeans[m]) + '</td>';
+        html += '<td><span class="' + scoreClass(st ? st.passRate : 0) + '">' + pct(st ? st.passRate : 0) + '</span></td>';
+      }
+      html += '</tr>';
+    }
+
+    // Overall row
+    html += '<tr style="border-top:2px solid var(--border-default);font-weight:700"><td>Overall</td>';
+    let bestOverall = -1;
+    const overallMeans = {};
+    for (const m of models) {
+      const allScores = rawData.flatMap(s => s.models[m].evaluations.map(e => e.score));
+      overallMeans[m] = allScores.reduce((a,b)=>a+b,0) / allScores.length;
+      if (overallMeans[m] > bestOverall) bestOverall = overallMeans[m];
+    }
+    for (const m of models) {
+      const passedAll = rawData.filter(s => sampleAllPassed(s, m)).length;
+      const passRate = passedAll / rawData.length;
+      const isBest = overallMeans[m] === bestOverall;
+      html += '<td class="' + (isBest ? 'highlight-best' : '') + '">' + fmt(overallMeans[m]) + '</td>';
+      html += '<td><span class="' + scoreClass(passRate) + '">' + pct(passRate) + '</span></td>';
+    }
+    html += '</tr>';
+
+    html += '</tbody></table>';
+    container.innerHTML = html;
+  }
+
+  function renderCompSampleTable() {
+    const container = document.getElementById('compSampleTableContainer');
+    const colors = getModelColors();
+
+    let samples = rawData;
+    if (compSearch) {
+      const q = compSearch.toLowerCase();
+      samples = samples.filter(s => s.prompt.toLowerCase().includes(q));
+    }
+
+    let html = '<table><thead><tr><th style="width:40px">#</th><th>Prompt</th>';
+    for (const m of models) html += '<th>Response (' + escHtml(m) + ')</th>';
+    html += '<th>Best</th></tr></thead><tbody>';
+
+    for (const s of samples) {
+      // Determine best model per sample (by overall mean score)
+      let bestModel = '';
+      let bestMean = -1;
+      for (const m of models) {
+        const mean = s.models[m].evaluations.reduce((a,e) => a+e.score, 0) / s.models[m].evaluations.length;
+        if (mean > bestMean) { bestMean = mean; bestModel = m; }
+      }
+
+      html += '<tr>';
+      html += '<td>' + s.sample_idx + '</td>';
+      html += '<td><span class="truncate" style="display:inline-block">' + escHtml(s.prompt) + '</span></td>';
+      for (const m of models) {
+        const isBest = m === bestModel;
+        html += '<td' + (isBest ? ' class="highlight-best"' : '') + '><code style="font-family:var(--font-mono);font-size:0.82rem">' + escHtml(s.models[m].response) + '</code> ' + metricDots(s.models[m].evaluations) + '</td>';
+      }
+      html += '<td><span class="badge badge-pass" style="font-size:0.74rem">' + escHtml(bestModel) + '</span></td>';
+      html += '</tr>';
+    }
+
+    html += '</tbody></table>';
+    container.innerHTML = html;
+  }
+
+  // --- Expose for programmatic use ---
+  window.loadEvalData = loadData;
+  window.loadDataFromUrl = async function(url) {
+    const resp = await fetch(url);
+    const json = await resp.json();
+    const name = url.split('/').pop();
+    loadData(json, name);
+  };
+
+})();
+</script>
+</body>
+</html>

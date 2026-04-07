@@ -1,0 +1,10 @@
+{"prompt": "What is 12 multiplied by 13?", "expected_answer": "156", "category": "math"}
+{"prompt": "What is the capital of France?", "expected_answer": "Paris", "category": "geography"}
+{"prompt": "What is the chemical symbol for water?", "expected_answer": "H2O", "category": "science"}
+{"prompt": "How many sides does a hexagon have?", "expected_answer": "6", "category": "math"}
+{"prompt": "What planet is closest to the Sun?", "expected_answer": "Mercury", "category": "geography"}
+{"prompt": "What is the square root of 144?", "expected_answer": "12", "category": "math"}
+{"prompt": "What gas do plants absorb from the atmosphere during photosynthesis?", "expected_answer": "carbon dioxide", "category": "science"}
+{"prompt": "What is the largest ocean on Earth?", "expected_answer": "Pacific Ocean", "category": "geography"}
+{"prompt": "What is 2 raised to the power of 10?", "expected_answer": "1024", "category": "math"}
+{"prompt": "What is the atomic number of carbon?", "expected_answer": "6", "category": "science"}

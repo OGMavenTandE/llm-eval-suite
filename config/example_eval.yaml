@@ -1,0 +1,86 @@
+# ---------------------------------------------------------------------------
+# LLM Evaluation Suite — Example Configuration
+#
+# This file demonstrates a full multi-model evaluation run using all five
+# built-in evaluators. Run with:
+#
+#   python -m llm_eval --config config/example_eval.yaml
+#
+# Both models must be available via a running Ollama instance
+# (`ollama serve`) with qwen3:8b and llama3:8b pulled.
+# ---------------------------------------------------------------------------
+
+# Identifier for this run. Appears in output directory names.
+run_name: "multi-model-eval"
+
+# Where to write per-model and comparison results.
+output_dir: "results/"
+
+# Path to the evaluation dataset (JSONL with "prompt" and "expected_answer" fields).
+dataset: "datasets/sample_correctness.jsonl"
+
+
+# ---------------------------------------------------------------------------
+# Models
+# Each entry requires a "name" (model identifier) and "provider".
+# Optional "params" are passed directly to the model adapter.
+# ---------------------------------------------------------------------------
+models:
+  - name: "qwen3:8b"
+    provider: "ollama"
+    params:
+      temperature: 0.0        # Deterministic output for reproducibility
+      max_tokens: 512
+      base_url: "http://localhost:11434"
+
+  - name: "llama3:8b"
+    provider: "ollama"
+    params:
+      temperature: 0.0
+      max_tokens: 512
+      base_url: "http://localhost:11434"
+
+
+# ---------------------------------------------------------------------------
+# Evaluators
+# All five built-in evaluators are shown below. Remove or comment out any
+# you don't need.
+# ---------------------------------------------------------------------------
+evaluators:
+
+  # --- Correctness ---
+  # Measures how well the model response matches the expected answer.
+  # mode: "exact_match" | "fuzzy_match" | "llm_judge"
+  - name: "correctness"
+    mode: "fuzzy_match"       # fuzzy_match tolerates minor phrasing differences
+    threshold: 0.8            # Scores >= threshold are considered passing
+
+  # --- Latency ---
+  # Checks that inference completes within a time budget.
+  - name: "latency"
+    max_ms: 5000              # Samples over 5 000 ms are marked as failing
+
+  # --- Robustness ---
+  # Tests stability of responses under prompt perturbations (typos, case, rephrasing).
+  # Requires the correctness evaluator to be listed above it in this config.
+  - name: "robustness"
+    perturbations:            # Which perturbation types to apply
+      - typo
+      - case
+      - rephrase
+    threshold: 0.7            # Minimum consistency-under-perturbation score to pass
+
+  # --- Consistency ---
+  # Re-runs the same prompt multiple times and measures answer variance.
+  # Requires the model instance at runtime (injected automatically by the runner).
+  - name: "consistency"
+    num_runs: 3               # How many times to re-query the model per sample
+    threshold: 0.8            # Minimum self-consistency score to pass
+
+  # --- Cost ---
+  # Estimates token-based cost using the model's reported tokens_used field.
+  # For local models, set cost_per_1k_tokens to 0 and focus on token budgets.
+  - name: "cost"
+    cost_per_1k_tokens: 0.0      # Cost in USD per 1k tokens (0 for local models)
+    max_tokens_per_response: 512  # Flag responses exceeding this token count
+    # threshold: 0.01            # Uncomment to set max cost per response (USD)
