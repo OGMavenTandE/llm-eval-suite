@@ -108,6 +108,20 @@ export function getArtifactGroupLabel(kind: string): string {
   return ARTIFACT_GROUPS[kind] ?? "Other Files";
 }
 
+export function groupArtifactsBySection(
+  files: import("./types").ArtifactFile[],
+): Record<string, import("./types").ArtifactFile[]> {
+  const groups: Record<string, import("./types").ArtifactFile[]> = {};
+
+  for (const file of files) {
+    const group = getArtifactGroupLabel(file.kind);
+    if (!groups[group]) groups[group] = [];
+    groups[group].push(file);
+  }
+
+  return groups;
+}
+
 export interface ReportSummary {
   headline: string;
   evaluated: string;

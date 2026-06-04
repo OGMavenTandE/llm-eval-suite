@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { api } from "../lib/api";
 import { RunsTable } from "../components/tables/RunsTable";
-import { LoadingState, ErrorState, EmptyState } from "../components/feedback/FeedbackStates";
+import { LoadingState, ErrorState, EmptyState } from "../components/feedback";
 
 export function HomePage() {
   const runsQuery = useQuery({
@@ -35,7 +35,11 @@ export function HomePage() {
       <h2 className="section-title">Recent runs</h2>
       {runsQuery.isLoading ? <LoadingState title="Loading recent runs" message="Fetching your latest evaluations..." /> : null}
       {runsQuery.error ? (
-        <ErrorState title="Unable to load runs" message={(runsQuery.error as Error).message} />
+        <ErrorState
+          title="Unable to load runs"
+          message="We could not load recent evaluations."
+          detail={(runsQuery.error as Error).message}
+        />
       ) : null}
       {runsQuery.data?.length === 0 ? (
         <EmptyState

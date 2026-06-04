@@ -247,6 +247,12 @@ p {
   color: var(--muted);
 }
 
+.feedback-detail {
+  margin-top: 0.5rem !important;
+  font-size: 0.9rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
 .wizard-steps {
   display: flex;
   gap: 0.75rem;
@@ -444,6 +450,42 @@ p {
   border-color: #fecaca;
 }
 
+.readiness-checklist {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 0.65rem;
+}
+
+.readiness-check {
+  display: grid;
+  gap: 0.15rem;
+  padding: 0.75rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.readiness-check-ok {
+  border-color: #a7f3d0;
+}
+
+.readiness-check-missing {
+  border-color: #fecaca;
+  background: #fff5f5;
+}
+
+.readiness-check-warning {
+  border-color: #fde68a;
+  background: #fffbeb;
+}
+
+.readiness-check span {
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
 .warning-card {
   border-color: #fde68a;
 }
@@ -504,13 +546,41 @@ p {
   margin-left: 0.5rem;
 }
 
-.artifact-footnote {
+.artifact-intro {
   color: var(--muted);
-  font-size: 0.9rem;
+  margin-bottom: 1rem;
+}
+
+.artifact-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  margin-top: 0.5rem;
+}
+
+.artifact-action {
+  padding: 0.35rem 0.65rem;
+  font-size: 0.85rem;
+}
+
+.artifact-action-hint {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.run-id-hint {
+  color: var(--muted);
+  font-size: 0.85rem;
 }
 
 .review-note {
   color: var(--muted);
+}
+
+.artifact-footnote {
+  color: var(--muted);
+  font-size: 0.9rem;
 }
 
 .selection-reminder {

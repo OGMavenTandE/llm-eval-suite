@@ -1,10 +1,10 @@
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
-import { assessReadiness } from "../lib/readiness";
+import { assessReadiness, buildReadinessChecklist } from "../lib/readiness";
 import { MetricCard } from "../components/cards/MetricCard";
 import { SectionCard } from "../components/cards/SectionCard";
-import { LoadingState, ErrorState } from "../components/feedback/FeedbackStates";
+import { ErrorState, LoadingState, SuccessState } from "../components/feedback";
 
 export function StatusPage() {
   const healthQuery = useQuery({ queryKey: ["health"], queryFn: api.getHealth });
@@ -18,7 +18,8 @@ export function StatusPage() {
     return (
       <ErrorState
         title="Status check failed"
-        message={
+        message="We could not confirm whether the workbench is ready."
+        detail={
           (healthQuery.error as Error | undefined)?.message ||
           (statusQuery.error as Error | undefined)?.message ||
           "Unable to reach the local API."
@@ -27,39 +28,59 @@ export function StatusPage() {
     );
   }
 
+  const health = healthQuery.data!;
   const status = statusQuery.data!;
-  const readiness = assessReadiness(healthQuery.data, status);
+  const readiness = assessReadiness(health, status);
+  const checklist = buildReadinessChecklist(health, status);
 
   return (
     <>
       <header className="page-header">
         <h1>System readiness</h1>
-        <p>
-          Use this page as a go/no-go check before starting an evaluation on this machine.
-        </p>
+        <p>Use this page as a go/no-go check before starting an evaluation on this machine.</p>
       </header>
 
       <section className={`readiness-banner readiness-${readiness.level}`}>
         <h2>{readiness.headline}</h2>
         <p>{readiness.detail}</p>
         <p>
-          <strong>Next step:</strong> {readiness.action}
+          <strong>Can I start an evaluation now?</strong> {readiness.canStartLabel}
         </p>
-        {readiness.level === "ready" ? (
-          <div className="button-row">
+        <p>
+          <strong>Recommended next step:</strong> {readiness.action}
+        </p>
+        <div className="button-row">
+          {readiness.canStartNow !== "no" ? (
             <Link className="button" to="/new">
               Start new evaluation
             </Link>
-          </div>
-        ) : null}
+          ) : null}
+          <button className="button secondary" type="button" onClick={() => window.location.reload()}>
+            Refresh status
+          </button>
+        </div>
       </section>
+
+      <SectionCard
+        title="Readiness checklist"
+        description="Quick view of what is available and what may block an evaluation."
+      >
+        <ul className="readiness-checklist">
+          {checklist.map((item) => (
+            <li key={item.label} className={`readiness-check readiness-check-${item.status}`}>
+              <strong>{item.label}</strong>
+              <span>{item.detail}</span>
+            </li>
+          ))}
+        </ul>
+      </SectionCard>
 
       <SectionCard title="Connection and version" description="Basic service health on this machine.">
         <div className="card-grid">
           <MetricCard
             label="API reachable"
-            value={healthQuery.data!.api_status === "ok" ? "Yes" : "No"}
-            hint={`App status: ${healthQuery.data!.app_status}`}
+            value={health.api_status === "ok" ? "Yes" : "No"}
+            hint={`Service status: ${health.app_status}`}
           />
           <MetricCard label="Workbench version" value={status.app_version} />
           <MetricCard label="Last checked" value={new Date(status.timestamp).toLocaleString()} />
@@ -103,10 +124,10 @@ export function StatusPage() {
           </div>
         </SectionCard>
       ) : (
-        <div className="feedback-box success">
-          <strong>No blocking warnings detected</strong>
-          <p>Required resources were found and no major readiness warnings were reported.</p>
-        </div>
+        <SuccessState
+          title="No blocking warnings detected"
+          message="Required resources were found and no major readiness warnings were reported."
+        />
       )}
     </>
   );
