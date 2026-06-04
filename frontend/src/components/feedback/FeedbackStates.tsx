@@ -1,11 +1,63 @@
-export function LoadingState({ message = "Loading..." }: { message?: string }) {
-  return <div className="feedback-box">{message}</div>;
+import { ReactNode } from "react";
+
+interface FeedbackProps {
+  title?: string;
+  message: ReactNode;
 }
 
-export function ErrorState({ message }: { message: string }) {
-  return <div className="feedback-box error">{message}</div>;
+export function LoadingState({ title = "Loading", message = "Please wait while we load this page." }: FeedbackProps) {
+  return (
+    <div className="feedback-box loading" role="status" aria-live="polite">
+      <strong>{title}</strong>
+      <p>{message}</p>
+    </div>
+  );
 }
 
-export function EmptyState({ message }: { message: string }) {
-  return <div className="feedback-box empty">{message}</div>;
+export function ErrorState({
+  title = "Something went wrong",
+  message,
+}: FeedbackProps) {
+  return (
+    <div className="feedback-box error" role="alert">
+      <strong>{title}</strong>
+      <p>{message}</p>
+    </div>
+  );
+}
+
+export function EmptyState({
+  title = "Nothing to show yet",
+  message,
+}: FeedbackProps) {
+  return (
+    <div className="feedback-box empty" role="status">
+      <strong>{title}</strong>
+      <p>{message}</p>
+    </div>
+  );
+}
+
+export function InProgressState({
+  title = "Still in progress",
+  message,
+}: FeedbackProps) {
+  return (
+    <div className="feedback-box in-progress" role="status" aria-live="polite">
+      <strong>{title}</strong>
+      <p>{message}</p>
+    </div>
+  );
+}
+
+export function NotReadyState({
+  title = "Not ready yet",
+  message,
+}: FeedbackProps) {
+  return (
+    <div className="feedback-box not-ready" role="status">
+      <strong>{title}</strong>
+      <p>{message}</p>
+    </div>
+  );
 }
