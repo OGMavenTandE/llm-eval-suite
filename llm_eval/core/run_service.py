@@ -53,11 +53,12 @@ class RunService:
                 run_name=run_name,
                 status="failed_validation",
                 dry_run=True,
+                output_dir=output_dir,
                 started_at=started_at,
                 completed_at=datetime.now(),
                 validation=validation,
                 message="; ".join(validation.errors),
-                error="; ".join(validation.errors),
+                error_message="; ".join(validation.errors),
             )
             return self._finalize_run(result, config, output_dir)
 
@@ -71,13 +72,14 @@ class RunService:
             result = RunStartResult(
                 run_id=run_id,
                 run_name=run_name,
-                status="failed",
+                status="failed_runtime",
                 dry_run=True,
+                output_dir=output_dir,
                 started_at=started_at,
                 completed_at=datetime.now(),
                 validation=validation,
                 message=f"Dry-run failed: {exc}",
-                error=str(exc),
+                error_message=str(exc),
             )
             return self._finalize_run(result, config, output_dir)
 
@@ -90,6 +92,7 @@ class RunService:
             run_name=run_name,
             status="validated",
             dry_run=True,
+            output_dir=output_dir,
             started_at=started_at,
             completed_at=datetime.now(),
             validation=validation,
@@ -118,11 +121,12 @@ class RunService:
                 run_name=run_name,
                 status="failed_validation",
                 dry_run=False,
+                output_dir=output_dir,
                 started_at=started_at,
                 completed_at=datetime.now(),
                 validation=validation,
                 message="; ".join(validation.errors),
-                error="; ".join(validation.errors),
+                error_message="; ".join(validation.errors),
             )
             return self._finalize_run(result, config, output_dir)
 
@@ -136,13 +140,14 @@ class RunService:
             result = RunStartResult(
                 run_id=run_id,
                 run_name=run_name,
-                status="failed",
+                status="failed_runtime",
                 dry_run=False,
+                output_dir=output_dir,
                 started_at=started_at,
                 completed_at=datetime.now(),
                 validation=validation,
                 message=f"Run failed: {exc}",
-                error=str(exc),
+                error_message=str(exc),
             )
             return self._finalize_run(result, config, output_dir)
 
@@ -152,6 +157,7 @@ class RunService:
             run_name=run_name,
             status="completed",
             dry_run=False,
+            output_dir=output_dir,
             started_at=started_at,
             completed_at=datetime.now(),
             artifacts=artifacts,
@@ -185,6 +191,18 @@ class RunService:
                     pass
         return self.audit_service.load(output_dir, run_id)
 
+    def get_run_artifacts(self, run_id: str, output_dir: str = "results/") -> RunArtifactPaths | None:
+        """Return artifact path metadata for an indexed run."""
+        entry = self.get_run(run_id, output_dir)
+        if entry is None:
+            return None
+
+        artifact_data = entry.get("artifact_paths")
+        if not artifact_data:
+            return None
+
+        return RunArtifactPaths.model_validate(artifact_data)
+
     def get_run_results(self, run_id: str, output_dir: str = "results/") -> dict | None:
         """
         Load result summaries and detailed traces for an indexed run.
@@ -196,10 +214,16 @@ class RunService:
         if entry is None:
             return None
 
-        artifact_paths = entry.get("artifact_paths") or {}
+        artifacts = self.get_run_artifacts(run_id, output_dir)
+        artifact_paths = artifacts.model_dump() if artifacts else {}
+
         model_results = []
         for model_entry in artifact_paths.get("model_artifacts", []):
-            model_payload = {"model_name": model_entry.get("model_name"), "summary": None, "detailed": None}
+            model_payload = {
+                "model_name": model_entry.get("model_name"),
+                "summary": None,
+                "detailed": None,
+            }
             summary_path = model_entry.get("summary_path")
             detailed_path = model_entry.get("detailed_path")
             if summary_path:
@@ -239,6 +263,7 @@ class RunService:
             "run_name": entry.get("run_name"),
             "status": entry.get("status"),
             "dry_run": entry.get("dry_run", False),
+            "output_dir": entry.get("output_dir", output_dir),
             "model_results": model_results,
             "comparison": comparison,
         }
@@ -257,12 +282,17 @@ class RunService:
             run_name=result.run_name,
             status=result.status,
             dry_run=result.dry_run,
+            output_dir=output_dir,
             started_at=result.started_at,
             completed_at=result.completed_at,
             config_path=config.get("_config_path"),
             artifact_paths=result.artifacts.model_dump() if result.artifacts else None,
             audit_path=audit.audit_path,
-            error=result.error,
+            error_message=result.error_message,
+            config_hash=audit.config_hash,
+            dataset_path=audit.dataset_path,
+            model_names=audit.model_names,
+            evaluator_names=audit.evaluator_names,
         )
 
         return result.model_copy(update={"audit": audit})
