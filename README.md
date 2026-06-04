@@ -47,6 +47,15 @@ llm-eval --config config/example_eval.yaml --dry-run
 
 For a step-by-step walkthrough, see [docs/TUTORIAL.md](docs/TUTORIAL.md).
 
+## Local API (Milestone 2)
+
+```bash
+pip install -e ".[api]"
+llm-eval-api
+```
+
+The API wraps the service layer with typed JSON endpoints for health checks, profile/dataset/model discovery, and run lifecycle management. See [apps/api/README.md](apps/api/README.md) for endpoint details.
+
 ## Architecture
 
 ```

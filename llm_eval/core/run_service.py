@@ -39,10 +39,16 @@ class RunService:
         """Validate config and dataset without running inference."""
         return self.config_service.validate_run(config)
 
-    def run_dry_run(self, config: dict, *, verbose: bool = False) -> RunStartResult:
+    def run_dry_run(
+        self,
+        config: dict,
+        *,
+        verbose: bool = False,
+        run_id: str | None = None,
+    ) -> RunStartResult:
         """Validate config via the runner dry-run path and return structured data."""
         started_at = datetime.now()
-        run_id = uuid4().hex[:12]
+        run_id = run_id or uuid4().hex[:12]
         run_name = config.get("run_name", "eval_run")
         output_dir = config.get("output_dir", "results/")
 
@@ -106,10 +112,11 @@ class RunService:
         *,
         verbose: bool = False,
         compare: bool = False,
+        run_id: str | None = None,
     ) -> RunStartResult:
         """Execute a full evaluation run and return structured metadata."""
         started_at = datetime.now()
-        run_id = uuid4().hex[:12]
+        run_id = run_id or uuid4().hex[:12]
         run_name = config.get("run_name", "eval_run")
         output_dir = config.get("output_dir", "results/")
         config["_compare"] = compare

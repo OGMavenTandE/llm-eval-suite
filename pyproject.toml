@@ -30,10 +30,17 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0",
+    "httpx>=0.24",
+]
+api = [
+    "fastapi>=0.100",
+    "uvicorn[standard]>=0.23",
+    "httpx>=0.24",
 ]
 
 [project.scripts]
 llm-eval = "llm_eval.cli:main"
+llm-eval-api = "apps.api.main:run_server"
 
 [project.urls]
 Homepage = "https://github.com/OGMavenTandE/llm-eval-suite"
@@ -42,7 +49,7 @@ Issues = "https://github.com/OGMavenTandE/llm-eval-suite/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["llm_eval*"]
+include = ["llm_eval*", "apps*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
