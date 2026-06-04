@@ -36,8 +36,10 @@ class AuditService:
             compare=config.get("_compare", False),
             config_path=config.get("_config_path"),
         )
-        model_names = [m.name for m in request.models]
-        evaluator_names = [ev.get("name", "") for ev in request.evaluators if ev.get("name")]
+        validation = run_result.validation
+        dataset_sample_count = (
+            validation.dataset.sample_count if validation and validation.dataset else None
+        )
 
         return AuditMetadata(
             run_id=run_result.run_id,
@@ -47,14 +49,16 @@ class AuditService:
             config_path=request.config_path,
             config_hash=self.config_service.config_hash(config),
             dataset_path=request.dataset,
-            model_names=model_names,
-            evaluator_names=evaluator_names,
+            dataset_sample_count=dataset_sample_count,
+            model_names=[m.name for m in request.models],
+            model_providers=[m.provider for m in request.models],
+            evaluator_names=[ev.get("name", "") for ev in request.evaluators if ev.get("name")],
             dry_run=run_result.dry_run,
             compare=request.compare,
-            output_dir=request.output_dir,
+            output_dir=run_result.output_dir,
             status=run_result.status,
             artifact_paths=run_result.artifacts,
-            error=run_result.error,
+            error_message=run_result.error_message,
         )
 
     def build_from_validation(
@@ -66,11 +70,12 @@ class AuditService:
         *,
         config_path: str | None = None,
         started_at: datetime | None = None,
-        error: str | None = None,
+        error_message: str | None = None,
     ) -> AuditMetadata:
         """Build audit metadata for a validation-only or dry-run outcome."""
         started = started_at or datetime.now()
         request = self.config_service.normalize_config(config, config_path=config_path)
+        errors = "; ".join(validation.errors) if validation.errors else None
 
         return AuditMetadata(
             run_id=run_id,
@@ -80,23 +85,21 @@ class AuditService:
             config_path=config_path,
             config_hash=self.config_service.config_hash(config),
             dataset_path=request.dataset,
+            dataset_sample_count=validation.dataset.sample_count if validation.dataset else None,
             model_names=[m.name for m in validation.models],
+            model_providers=[m.provider for m in validation.models],
             evaluator_names=validation.evaluator_names,
             dry_run=True,
             compare=request.compare,
             output_dir=request.output_dir,
             status="validated" if validation.valid else "failed_validation",
             artifact_paths=None,
-            error=error or ("; ".join(validation.errors) if validation.errors else None),
+            error_message=error_message or errors,
         )
 
     def persist(self, audit: AuditMetadata) -> AuditMetadata:
         """Write audit metadata to disk and return it with audit_path set."""
         path = self.audit_file_path(audit.output_dir, audit.run_id)
-        payload = audit.model_dump(mode="json")
-        with path.open("w", encoding="utf-8") as f:
-            json.dump(payload, f, indent=2, default=str)
-
         persisted = audit.model_copy(update={"audit_path": str(path)})
         with path.open("w", encoding="utf-8") as f:
             json.dump(persisted.model_dump(mode="json"), f, indent=2, default=str)

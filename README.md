@@ -6,7 +6,7 @@ Offline AI evaluation workbench engine for local LLM benchmarking. Built for ope
 
 This repo is the backend core of an **Offline AI Evaluation Workbench**. It runs YAML-driven evaluations against local or API-backed models, produces timestamped artifacts, and exposes a structured service layer that a local API and guided UI can build on in later milestones.
 
-Milestone 1 stabilized the engine: installable packaging, typed schemas, filesystem storage/indexing, and a thin service layer over the existing evaluation runner.
+Milestone 1 stabilized the engine: installable packaging, typed schemas, filesystem storage/indexing, audit JSON per run, and a thin service layer over the existing evaluation runner.
 
 ## Current capabilities
 
@@ -15,8 +15,8 @@ Milestone 1 stabilized the engine: installable packaging, typed schemas, filesys
 - Five built-in evaluators: correctness, latency, robustness, consistency, cost
 - Model comparison mode with side-by-side reports
 - Dry-run validation without inference
-- Structured run results, audit metadata, and a filesystem run index
-- Service layer ready for CLI, API, and UI consumers
+- Structured run results, per-run audit JSON, and a filesystem run index
+- Service-layer accessors for listing runs, loading results, and retrieving artifacts
 
 ## Install
 
@@ -29,7 +29,7 @@ pip install -e ".[dev]"
 
 Requires Python 3.10+. Core dependencies: `pydantic`, `pyyaml`, `requests`.
 
-## Run from CLI
+## CLI usage
 
 ```bash
 # Validate config and dataset (no inference)
@@ -75,11 +75,9 @@ llm-eval-suite/
 
 ### Service layer
 
-The service layer is the stable contract for future UI and API work:
-
 | Service | Role |
 |---------|------|
-| `RunService` | Validate, dry-run, start runs; list/get runs and results |
+| `RunService` | Validate, dry-run, start runs; list/get runs, results, and artifacts |
 | `ConfigService` | Load YAML, validate structure, normalize to `RunRequest` |
 | `ResultService` | Load summary CSV and detailed JSON from artifact paths |
 | `AuditService` | Build and persist structured audit records per run |
@@ -95,7 +93,7 @@ result = RunService().run_dry_run(config)
 print(result.status, result.audit.audit_path)
 ```
 
-## Output and run artifacts
+## Run outputs and artifacts
 
 Each evaluation run writes outputs under the configured `output_dir` (default `results/`).
 
@@ -114,7 +112,17 @@ Each evaluation run writes outputs under the configured `output_dir` (default `r
 - `{output_dir}/.llm_eval_runs.json` — lightweight index of all runs
 - `{output_dir}/audit/{run_id}.json` — structured audit metadata per run
 
-Use `RunService.list_runs()`, `get_run()`, `get_run_audit()`, and `get_run_results()` to retrieve indexed runs programmatically.
+Each audit JSON includes run ID, status, config hash, dataset path and sample count, model names/providers, evaluator names, timestamps, and `error_message` when a run fails.
+
+Service-layer accessors:
+
+- `list_runs(output_dir)`
+- `get_run(run_id, output_dir)`
+- `get_run_audit(run_id, output_dir)`
+- `get_run_artifacts(run_id, output_dir)`
+- `get_run_results(run_id, output_dir)`
+
+Run statuses: `validated`, `completed`, `failed_validation`, `failed_runtime`.
 
 ## Development and tests
 
@@ -123,9 +131,9 @@ pip install -e ".[dev]"
 python3 -m pytest -v
 ```
 
-Tests cover dataset loader validation, dry-run via the service layer, reporter outputs, storage/index behavior, and audit persistence. Full runs with live inference are not required for the test suite.
+Tests cover dataset loader validation, dry-run via the service layer, reporter outputs, run index behavior, audit persistence, and runtime failure handling. Full runs with live inference are not required for the test suite.
 
-## Roadmap / next step
+## Next milestone
 
 **Milestone 2** will add a local FastAPI layer in `apps/api/` exposing `RunService` endpoints, followed by a guided local web UI for non-technical operational users.
 

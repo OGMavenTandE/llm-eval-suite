@@ -42,7 +42,12 @@ class RunIndex:
         config_path: str | None = None,
         artifact_paths: dict | None = None,
         audit_path: str | None = None,
-        error: str | None = None,
+        error_message: str | None = None,
+        output_dir: str | None = None,
+        config_hash: str | None = None,
+        dataset_path: str | None = None,
+        model_names: list[str] | None = None,
+        evaluator_names: list[str] | None = None,
     ) -> dict:
         """Add or update a run entry in the index."""
         entries = self._load()
@@ -52,12 +57,17 @@ class RunIndex:
             "run_name": run_name,
             "status": status,
             "dry_run": dry_run,
+            "output_dir": output_dir or str(self.output_dir),
             "started_at": started.isoformat(),
             "completed_at": completed_at.isoformat() if completed_at else None,
             "config_path": config_path,
             "artifact_paths": artifact_paths,
             "audit_path": audit_path,
-            "error": error,
+            "error_message": error_message,
+            "config_hash": config_hash,
+            "dataset_path": dataset_path,
+            "model_names": model_names or [],
+            "evaluator_names": evaluator_names or [],
         }
 
         updated = False

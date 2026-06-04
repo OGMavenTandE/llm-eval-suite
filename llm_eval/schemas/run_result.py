@@ -34,13 +34,14 @@ class RunStartResult(BaseModel):
     run_name: str
     status: str
     dry_run: bool = False
+    output_dir: str = "results/"
     started_at: datetime
     completed_at: datetime | None = None
     artifacts: RunArtifactPaths | None = None
     validation: "RunValidationResult | None" = None
     audit: "AuditMetadata | None" = None
     message: str | None = None
-    error: str | None = None
+    error_message: str | None = None
 
 
 class AuditMetadata(BaseModel):
@@ -53,7 +54,9 @@ class AuditMetadata(BaseModel):
     config_path: str | None = None
     config_hash: str | None = None
     dataset_path: str | None = None
+    dataset_sample_count: int | None = None
     model_names: list[str] = Field(default_factory=list)
+    model_providers: list[str] = Field(default_factory=list)
     evaluator_names: list[str] = Field(default_factory=list)
     dry_run: bool = False
     compare: bool = False
@@ -61,7 +64,7 @@ class AuditMetadata(BaseModel):
     status: str = "unknown"
     artifact_paths: RunArtifactPaths | None = None
     audit_path: str | None = None
-    error: str | None = None
+    error_message: str | None = None
 
 
 from llm_eval.schemas.run_request import RunValidationResult  # noqa: E402
