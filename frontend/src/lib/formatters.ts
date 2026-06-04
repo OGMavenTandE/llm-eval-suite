@@ -82,6 +82,8 @@ export function formatMetricLabel(metricName: string): string {
 
 const ARTIFACT_LABELS: Record<string, string> = {
   audit: "Run audit record",
+  executive_summary: "Executive summary",
+  report_manifest: "Report manifest",
   summary: "Score summary",
   detailed: "Sample-by-sample results",
   comparison_summary: "Comparison summary",
@@ -90,6 +92,8 @@ const ARTIFACT_LABELS: Record<string, string> = {
 
 const ARTIFACT_GROUPS: Record<string, string> = {
   audit: "Audit",
+  executive_summary: "Reports",
+  report_manifest: "Reports",
   summary: "Results",
   detailed: "Detailed Samples",
   comparison_summary: "Comparison",
@@ -122,62 +126,3 @@ export function groupArtifactsBySection(
   return groups;
 }
 
-export interface ReportSummary {
-  headline: string;
-  evaluated: string;
-  outcome: string;
-  nextAction: string;
-}
-
-export function buildReportSummary(
-  run: import("./types").RunDetail,
-  resultsReady: boolean,
-  reviewCount: number,
-): ReportSummary {
-  const runType = run.dry_run ? "validation check" : "full evaluation";
-  const datasetName = basename(run.dataset_path);
-  const models = run.model_names.join(", ") || "the selected model";
-
-  if (!resultsReady) {
-    return {
-      headline: "Report not ready yet",
-      evaluated: `This run is testing ${models} against ${datasetName}.`,
-      outcome: "Results are still being prepared.",
-      nextAction: "Open the progress page and return here when the run finishes.",
-    };
-  }
-
-  if (isFailureStatus(run.status)) {
-    return {
-      headline: "Evaluation did not finish successfully",
-      evaluated: `This ${runType} tested ${models} on ${datasetName}.`,
-      outcome: run.error_message || "The run stopped before producing a complete report.",
-      nextAction: "Review the error details, adjust your setup if needed, and start a new run.",
-    };
-  }
-
-  if (run.dry_run) {
-    return {
-      headline: "Validation completed successfully",
-      evaluated: `This validation checked ${models} against ${datasetName} without scoring every sample.`,
-      outcome: "Configuration, dataset, and model connections look usable.",
-      nextAction: "If this matches your intent, run a full evaluation to generate scored results.",
-    };
-  }
-
-  if (reviewCount > 0) {
-    return {
-      headline: "Evaluation completed with items to review",
-      evaluated: `This evaluation scored ${models} on ${datasetName}.`,
-      outcome: `${reviewCount} sample${reviewCount === 1 ? "" : "s"} scored below the review threshold.`,
-      nextAction: "Review the flagged examples below before sharing results or rerunning.",
-    };
-  }
-
-  return {
-    headline: "Evaluation completed successfully",
-    evaluated: `This evaluation scored ${models} on ${datasetName}.`,
-    outcome: "No samples were flagged for manual review.",
-    nextAction: "Use the summary below to decide whether to accept the model, rerun, or compare runs.",
-  };
-}

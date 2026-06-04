@@ -9,6 +9,7 @@ from apps.api.services.response_builders import (
     build_run_artifacts,
     build_run_audit,
     build_run_detail,
+    build_run_executive_summary,
     build_run_results,
 )
 from apps.api.services.run_jobs import RunJob, RunJobManager
@@ -198,4 +199,41 @@ def build_run_artifacts_response(
         ready=True,
         message=None,
         status=entry.get("status"),
+    )
+
+
+def build_executive_summary_response(
+    *,
+    run_id: str,
+    entry: dict,
+    run_service: RunService,
+    output_dir: str,
+    live_status: str | None,
+):
+    status = live_status or entry.get("status")
+    if is_in_progress(status):
+        return build_run_executive_summary(
+            run_id=run_id,
+            summary=None,
+            ready=False,
+            message=in_progress_message(status, "Executive summary"),
+            status=status,
+        )
+
+    summary = run_service.get_executive_summary(run_id, output_dir)
+    if summary is None:
+        return build_run_executive_summary(
+            run_id=run_id,
+            summary=None,
+            ready=False,
+            message="Executive summary has not been generated for this run.",
+            status=status,
+        )
+
+    return build_run_executive_summary(
+        run_id=run_id,
+        summary=summary.model_dump(mode="json"),
+        ready=True,
+        message=None,
+        status=status,
     )

@@ -4,6 +4,7 @@ from apps.api.dependencies import AppSettings, get_config_service, get_run_job_m
 from apps.api.schemas.runs import (
     CreateRunRequest,
     CreateRunResponse,
+    ExecutiveSummaryResponse,
     RunArtifactsResponse,
     RunAuditResponse,
     RunDetailResponse,
@@ -12,6 +13,7 @@ from apps.api.schemas.runs import (
 )
 from apps.api.services.response_builders import build_create_run_response, build_run_list
 from apps.api.services.run_api import (
+    build_executive_summary_response,
     build_run_artifacts_response,
     build_run_audit_response,
     build_run_detail_response,
@@ -119,6 +121,24 @@ def get_run_artifacts(
     output_dir = str(settings.output_dir)
     entry = get_run_entry_or_404(run_id, output_dir, job_manager)
     return build_run_artifacts_response(
+        run_id=run_id,
+        entry=entry,
+        run_service=run_service,
+        output_dir=output_dir,
+        live_status=get_live_job_status(job_manager, run_id),
+    )
+
+
+@router.get("/{run_id}/reports/executive-summary", response_model=ExecutiveSummaryResponse)
+def get_executive_summary(
+    run_id: str,
+    settings: AppSettings = Depends(get_settings),
+    run_service: RunService = Depends(get_run_service),
+    job_manager: RunJobManager = Depends(get_run_job_manager),
+) -> ExecutiveSummaryResponse:
+    output_dir = str(settings.output_dir)
+    entry = get_run_entry_or_404(run_id, output_dir, job_manager)
+    return build_executive_summary_response(
         run_id=run_id,
         entry=entry,
         run_service=run_service,

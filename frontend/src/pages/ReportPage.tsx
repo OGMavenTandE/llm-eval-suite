@@ -3,7 +3,6 @@ import { Link, useParams } from "react-router-dom";
 import { api } from "../lib/api";
 import {
   basename,
-  buildReportSummary,
   buildReviewItems,
   formatDate,
   formatMetricLabel,
@@ -14,11 +13,17 @@ import { MetricCard } from "../components/cards/MetricCard";
 import { SectionCard } from "../components/cards/SectionCard";
 import { StatusBadge } from "../components/status/StatusBadge";
 import { ArtifactList } from "../components/artifacts/ArtifactList";
+import { ExecutiveSummarySection } from "../components/reports/ExecutiveSummarySection";
 
 export function ReportPage() {
   const { runId = "" } = useParams();
 
   const runQuery = useQuery({ queryKey: ["run", runId], queryFn: () => api.getRun(runId), enabled: Boolean(runId) });
+  const executiveSummaryQuery = useQuery({
+    queryKey: ["run-executive-summary", runId],
+    queryFn: () => api.getExecutiveSummary(runId),
+    enabled: Boolean(runId),
+  });
   const resultsQuery = useQuery({
     queryKey: ["run-results", runId],
     queryFn: () => api.getRunResults(runId),
@@ -51,11 +56,12 @@ export function ReportPage() {
 
   const run = runQuery.data;
   const resultsReady = Boolean(resultsQuery.data?.ready);
+  const executiveSummary = executiveSummaryQuery.data?.summary;
+  const executiveSummaryReady = Boolean(executiveSummaryQuery.data?.ready && executiveSummary);
   const primaryResults = resultsQuery.data?.model_results[0];
   const metrics = summarizeMetrics(primaryResults?.summary);
   const detailed = primaryResults?.detailed ?? [];
   const reviewItems = buildReviewItems(detailed);
-  const reportSummary = buildReportSummary(run, resultsReady, reviewItems.length);
 
   const strongest = [...detailed]
     .map((sample) => ({
@@ -79,23 +85,20 @@ export function ReportPage() {
         <p>Evaluation report and recommended next steps.</p>
       </header>
 
-      <section className="report-summary card">
-        <h2>{reportSummary.headline}</h2>
-        <dl className="report-summary-list">
-          <div>
-            <dt>What was evaluated</dt>
-            <dd>{reportSummary.evaluated}</dd>
-          </div>
-          <div>
-            <dt>What this means</dt>
-            <dd>{reportSummary.outcome}</dd>
-          </div>
-          <div>
-            <dt>Recommended next step</dt>
-            <dd>{reportSummary.nextAction}</dd>
-          </div>
-        </dl>
-      </section>
+      {executiveSummaryReady && executiveSummary ? (
+        <ExecutiveSummarySection summary={executiveSummary} />
+      ) : (
+        <NotReadyState
+          title="Executive summary not available yet"
+          message={
+            <>
+              {executiveSummaryQuery.data?.message ||
+                "The plain-language summary will appear when this run finishes and reporting artifacts are generated."}{" "}
+              <Link to={`/runs/${run.run_id}/progress`}>View progress</Link>
+            </>
+          }
+        />
+      )}
 
       <div className="card-grid">
         <MetricCard label="Run status" value={run.status.replaceAll("_", " ")} />

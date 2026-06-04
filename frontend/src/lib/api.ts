@@ -44,6 +44,8 @@ export const api = {
     request<import("./types").RunAuditResponse>(`/runs/${runId}/audit`),
   getRunArtifacts: (runId: string) =>
     request<import("./types").RunArtifactsResponse>(`/runs/${runId}/artifacts`),
+  getExecutiveSummary: (runId: string) =>
+    request<import("./types").ExecutiveSummaryResponse>(`/runs/${runId}/reports/executive-summary`),
   createRun: (body: {
     config: Record<string, unknown>;
     dry_run?: boolean;

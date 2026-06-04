@@ -87,3 +87,30 @@ class RunArtifactsResponse(BaseModel):
     files: list[ArtifactFileResponse] = Field(default_factory=list)
     ready: bool = True
     message: str | None = None
+
+
+class NotableMetricResponse(BaseModel):
+    label: str
+    value: str
+    context: str
+
+
+class ExecutiveSummaryPayload(BaseModel):
+    run_id: str
+    generated_at: datetime
+    evaluation_purpose: str
+    overall_outcome: str
+    recommended_next_step: str
+    key_strengths: list[str] = Field(default_factory=list)
+    key_weaknesses: list[str] = Field(default_factory=list)
+    needs_human_review_count: int = 0
+    notable_metrics: list[NotableMetricResponse] = Field(default_factory=list)
+    notes: str | None = None
+
+
+class ExecutiveSummaryResponse(BaseModel):
+    run_id: str
+    status: str | None = None
+    ready: bool = True
+    message: str | None = None
+    summary: ExecutiveSummaryPayload | None = None

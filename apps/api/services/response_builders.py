@@ -8,6 +8,7 @@ from apps.api.schemas.profiles import ProfileListResponse, ProfileResponse
 from apps.api.schemas.runs import (
     ArtifactFileResponse,
     CreateRunResponse,
+    ExecutiveSummaryResponse,
     RunArtifactsResponse,
     RunAuditResponse,
     RunDetailResponse,
@@ -47,6 +48,7 @@ def build_run_links(run_id: str) -> list[LinkRef]:
         LinkRef(rel="results", href=f"{base}/results"),
         LinkRef(rel="audit", href=f"{base}/audit"),
         LinkRef(rel="artifacts", href=f"{base}/artifacts"),
+        LinkRef(rel="executive-summary", href=f"{base}/reports/executive-summary"),
     ]
 
 
@@ -164,6 +166,14 @@ def build_run_artifacts(
         if audit_path:
             files.append(ArtifactFileResponse(kind="audit", path=audit_path, exists=True))
 
+        for kind, key in (
+            ("executive_summary", "executive_summary_path"),
+            ("report_manifest", "report_manifest_path"),
+        ):
+            path = artifact_paths.get(key)
+            if path:
+                files.append(ArtifactFileResponse(kind=kind, path=path, exists=True))
+
     return RunArtifactsResponse(
         run_id=run_id,
         output_dir=output_dir,
@@ -171,4 +181,21 @@ def build_run_artifacts(
         files=files,
         ready=ready,
         message=message,
+    )
+
+
+def build_run_executive_summary(
+    *,
+    run_id: str,
+    summary: dict | None,
+    ready: bool,
+    message: str | None = None,
+    status: str | None = None,
+) -> ExecutiveSummaryResponse:
+    return ExecutiveSummaryResponse(
+        run_id=run_id,
+        status=status,
+        ready=ready,
+        message=message,
+        summary=summary,
     )

@@ -6,7 +6,9 @@ from uuid import uuid4
 from llm_eval.core.audit_service import AuditService
 from llm_eval.core.config_service import ConfigService
 from llm_eval.core.result_service import ResultService
+from llm_eval.reporting.report_artifacts import ReportArtifactService, load_executive_summary
 from llm_eval.runner import EvalRunner
+from llm_eval.schemas.executive_summary import ExecutiveSummary
 from llm_eval.schemas.run_result import (
     AuditMetadata,
     ModelRunArtifacts,
@@ -159,6 +161,17 @@ class RunService:
             return self._finalize_run(result, config, output_dir)
 
         artifacts = self._build_artifact_paths(config, runner_result)
+        if artifacts is not None:
+            artifacts = ReportArtifactService(self.result_service).generate_and_persist(
+                run_id=run_id,
+                run_name=run_name,
+                dataset_path=config.get("dataset"),
+                model_names=[model.get("name", "model") for model in config.get("models", [])],
+                evaluator_names=[
+                    evaluator.get("name", "evaluator") for evaluator in config.get("evaluators", [])
+                ],
+                artifacts=artifacts,
+            )
         result = RunStartResult(
             run_id=run_id,
             run_name=run_name,
@@ -209,6 +222,16 @@ class RunService:
             return None
 
         return RunArtifactPaths.model_validate(artifact_data)
+
+    def get_executive_summary(self, run_id: str, output_dir: str = "results/") -> ExecutiveSummary | None:
+        """Load a persisted executive summary for an indexed run."""
+        artifacts = self.get_run_artifacts(run_id, output_dir)
+        if artifacts is None or not artifacts.executive_summary_path:
+            return None
+        try:
+            return load_executive_summary(artifacts.executive_summary_path)
+        except (OSError, ValueError):
+            return None
 
     def get_run_results(self, run_id: str, output_dir: str = "results/") -> dict | None:
         """

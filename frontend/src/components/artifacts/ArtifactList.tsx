@@ -10,7 +10,7 @@ interface ArtifactListProps {
   outputDir?: string | null;
 }
 
-const GROUP_ORDER = ["Audit", "Results", "Detailed Samples", "Comparison", "Other Files"];
+const GROUP_ORDER = ["Reports", "Audit", "Results", "Detailed Samples", "Comparison", "Other Files"];
 
 export function ArtifactList({ files, ready, message, outputDir }: ArtifactListProps) {
   if (!ready) {

@@ -161,3 +161,30 @@ export interface ReviewItem {
   passed: boolean;
   metric_name: string;
 }
+
+export interface NotableMetric {
+  label: string;
+  value: string;
+  context: string;
+}
+
+export interface ExecutiveSummary {
+  run_id: string;
+  generated_at: string;
+  evaluation_purpose: string;
+  overall_outcome: string;
+  recommended_next_step: string;
+  key_strengths: string[];
+  key_weaknesses: string[];
+  needs_human_review_count: number;
+  notable_metrics: NotableMetric[];
+  notes?: string | null;
+}
+
+export interface ExecutiveSummaryResponse {
+  run_id: string;
+  status?: string | null;
+  ready: boolean;
+  message?: string | null;
+  summary?: ExecutiveSummary | null;
+}

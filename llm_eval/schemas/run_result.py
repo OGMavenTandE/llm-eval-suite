@@ -25,6 +25,9 @@ class RunArtifactPaths(BaseModel):
     comparison_dir: str | None = None
     comparison_summary_path: str | None = None
     comparison_detailed_path: str | None = None
+    reports_dir: str | None = None
+    executive_summary_path: str | None = None
+    report_manifest_path: str | None = None
 
 
 class RunStartResult(BaseModel):
