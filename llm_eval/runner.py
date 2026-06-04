@@ -96,9 +96,19 @@ class EvalRunner:
             _get_evaluator_class(eval_cfg["name"])  # raises on unknown evaluator
 
         if self.dry_run:
-            print(f"[dry-run] Config valid. {n} samples, {len(models_cfg)} model(s), "
-                  f"{len(evaluators_cfg)} evaluator(s). No inference will run.")
-            return
+            message = (
+                f"[dry-run] Config valid. {n} samples, {len(models_cfg)} model(s), "
+                f"{len(evaluators_cfg)} evaluator(s). No inference will run."
+            )
+            print(message)
+            return {
+                "dry_run": True,
+                "valid": True,
+                "message": message,
+                "sample_count": n,
+                "model_count": len(models_cfg),
+                "evaluator_count": len(evaluators_cfg),
+            }
 
         # --- Instantiate evaluators once (shared across models) ---
         evaluators = []
@@ -127,6 +137,7 @@ class EvalRunner:
 
         # Collect per-model reporters for comparison
         model_reporters = {}  # model_name -> EvalReporter
+        model_run_results = []
 
         # --- Run per-model ---
         for model_cfg in models_cfg:
@@ -229,6 +240,17 @@ class EvalRunner:
             reporter.print_summary()
 
             model_reporters[model_name] = reporter
+            model_run_results.append(
+                {
+                    "model_name": model_name,
+                    "run_dir": str(reporter.run_dir),
+                    "summary_path": str(summary_path),
+                    "detailed_path": str(detailed_path),
+                }
+            )
+
+        comparison_result = None
+        comparison_dir = None
 
         # --- Comparison mode ---
         if run_comparison and len(model_reporters) > 1:
@@ -245,5 +267,19 @@ class EvalRunner:
             for model_name, reporter in model_reporters.items():
                 comp_reporter.add_model_results(model_name, reporter._results)
 
-            comp_reporter.save_comparison()
+            summary_path, detailed_path = comp_reporter.save_comparison()
             comp_reporter.print_comparison()
+            comparison_dir = str(comp_reporter.run_dir)
+            comparison_result = {
+                "summary_path": str(summary_path),
+                "detailed_path": str(detailed_path),
+            }
+
+        return {
+            "dry_run": False,
+            "run_name": run_name,
+            "output_dir": output_dir,
+            "model_runs": model_run_results,
+            "comparison_dir": comparison_dir,
+            "comparison": comparison_result,
+        }

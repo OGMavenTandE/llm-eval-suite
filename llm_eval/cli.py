@@ -1,28 +1,8 @@
 import argparse
 import sys
 
-from llm_eval.runner import EvalRunner
-
-
-def _load_yaml(path: str) -> dict:
-    try:
-        import yaml
-    except ImportError:
-        print(
-            "Error: pyyaml is not installed. Install it with: pip install pyyaml",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return yaml.safe_load(f)
-    except FileNotFoundError:
-        print(f"Error: Config file not found: {path}", file=sys.stderr)
-        sys.exit(1)
-    except Exception as exc:
-        print(f"Error: Failed to parse YAML config '{path}': {exc}", file=sys.stderr)
-        sys.exit(1)
+from llm_eval.core.config_service import ConfigService
+from llm_eval.core.run_service import RunService
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -71,30 +51,42 @@ def main(argv=None):
     parser = build_parser()
     args = parser.parse_args(argv)
 
-    config = _load_yaml(args.config)
+    config_service = ConfigService()
+    run_service = RunService(config_service=config_service)
 
-    if not isinstance(config, dict):
-        print(
-            f"Error: YAML config must be a mapping (got {type(config).__name__}).",
-            file=sys.stderr,
-        )
+    try:
+        config = config_service.load_yaml(args.config)
+    except FileNotFoundError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
+    except ImportError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as exc:
+        print(f"Error: Failed to parse YAML config '{args.config}': {exc}", file=sys.stderr)
         sys.exit(1)
 
-    required_keys = ["models", "evaluators", "dataset"]
-    missing = [k for k in required_keys if k not in config]
-    if missing:
-        print(
-            f"Error: Config is missing required key(s): {', '.join(missing)}",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+    structure_errors = config_service.validate_config_structure(config)
+    if structure_errors:
+        config_service.exit_on_errors(structure_errors)
 
-    # CLI overrides
     if args.output_dir is not None:
         config["output_dir"] = args.output_dir
 
-    runner = EvalRunner(config=config, dry_run=args.dry_run, verbose=args.verbose, compare=args.compare)
-    runner.run()
+    config["_config_path"] = args.config
+
+    if args.dry_run:
+        result = run_service.run_dry_run(config, verbose=args.verbose)
+        if result.status == "failed_validation":
+            config_service.exit_on_errors(result.validation.errors if result.validation else [])
+        return
+
+    result = run_service.start_run(config, verbose=args.verbose, compare=args.compare)
+    if result.status == "failed_validation":
+        config_service.exit_on_errors(result.validation.errors if result.validation else [])
 
 
 if __name__ == "__main__":
