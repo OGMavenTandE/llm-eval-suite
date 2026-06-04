@@ -42,6 +42,8 @@ describe("StatusPage readiness", () => {
     );
 
     expect(await screen.findByText(/Ready to run evaluations/)).toBeInTheDocument();
-    expect(screen.getByText(/Profiles available/)).toBeInTheDocument();
+    expect(screen.getByText(/Can I start an evaluation now\?/)).toBeInTheDocument();
+    expect(screen.getByText("Readiness checklist")).toBeInTheDocument();
+    expect(screen.getByText("Profiles available")).toBeInTheDocument();
   });
 });

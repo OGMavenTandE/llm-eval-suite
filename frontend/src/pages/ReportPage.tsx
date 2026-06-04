@@ -9,7 +9,7 @@ import {
   formatMetricLabel,
   summarizeMetrics,
 } from "../lib/formatters";
-import { LoadingState, ErrorState, EmptyState, NotReadyState } from "../components/feedback/FeedbackStates";
+import { LoadingState, ErrorState, EmptyState, NotReadyState } from "../components/feedback";
 import { MetricCard } from "../components/cards/MetricCard";
 import { SectionCard } from "../components/cards/SectionCard";
 import { StatusBadge } from "../components/status/StatusBadge";
@@ -43,7 +43,8 @@ export function ReportPage() {
     return (
       <ErrorState
         title="Report unavailable"
-        message={(runQuery.error as Error | undefined)?.message || "This run could not be found."}
+        message="We could not load this evaluation report."
+        detail={(runQuery.error as Error | undefined)?.message || "This run could not be found."}
       />
     );
   }
@@ -161,7 +162,10 @@ export function ReportPage() {
                 ))}
               </div>
             ) : (
-              <EmptyState message="No detailed examples were available for this run." />
+              <EmptyState
+                title="No examples available"
+                message="No detailed examples were saved for this run."
+              />
             )}
           </SectionCard>
 
@@ -190,7 +194,10 @@ export function ReportPage() {
                 ))}
               </div>
             ) : (
-              <EmptyState message="No weak examples were identified." />
+              <EmptyState
+                title="No weak answers identified"
+                message="No examples scored low enough to highlight here."
+              />
             )}
           </SectionCard>
 

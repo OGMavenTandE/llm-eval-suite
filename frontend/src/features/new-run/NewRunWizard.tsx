@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import { WizardSteps } from "../../components/forms/WizardSteps";
-import { LoadingState, ErrorState } from "../../components/feedback/FeedbackStates";
+import { LoadingState, ErrorState } from "../../components/feedback";
 import { StatusBadge } from "../../components/status/StatusBadge";
 import { useNewRunWizard, WIZARD_STEPS } from "./useNewRunWizard";
 import { ModelStep } from "./steps/ModelStep";

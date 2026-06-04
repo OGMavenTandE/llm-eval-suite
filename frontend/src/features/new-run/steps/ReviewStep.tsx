@@ -1,4 +1,5 @@
 import { ModelSummary, ProfileDetail, DatasetSummary } from "../../../lib/types";
+import { ErrorState } from "../../../components/feedback";
 
 interface ReviewStepProps {
   selectedModel: ModelSummary | null;
@@ -85,7 +86,13 @@ export function ReviewStep({
         ) : null}
       </div>
 
-      {submitError ? <div className="feedback-box error">{submitError.message}</div> : null}
+      {submitError ? (
+        <ErrorState
+          title="Could not start evaluation"
+          message="The run did not start. Check your selections and try again."
+          detail={submitError.message}
+        />
+      ) : null}
     </section>
   );
 }

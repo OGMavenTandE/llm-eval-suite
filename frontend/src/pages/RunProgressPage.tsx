@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../lib/api";
 import { formatDate, isFailureStatus, isSuccessStatus, isTerminalStatus } from "../lib/formatters";
-import { LoadingState, ErrorState, InProgressState } from "../components/feedback/FeedbackStates";
+import { LoadingState, ErrorState, InProgressState } from "../components/feedback";
 import { SectionCard } from "../components/cards/SectionCard";
 import { StatusBadge } from "../components/status/StatusBadge";
 
@@ -38,7 +38,8 @@ export function RunProgressPage() {
     return (
       <ErrorState
         title="Run not found"
-        message={(runQuery.error as Error | undefined)?.message || "This evaluation could not be loaded."}
+        message="We could not load this evaluation."
+        detail={(runQuery.error as Error | undefined)?.message || "This evaluation could not be loaded."}
       />
     );
   }
@@ -68,7 +69,13 @@ export function RunProgressPage() {
             <strong>Last updated:</strong> {formatDate(run.completed_at || run.started_at || run.created_at)}
           </p>
           {run.message ? <p>{run.message}</p> : null}
-          {run.error_message ? <div className="feedback-box error">{run.error_message}</div> : null}
+          {run.error_message ? (
+            <ErrorState
+              title="Evaluation stopped with an error"
+              message="This run did not complete successfully."
+              detail={run.error_message}
+            />
+          ) : null}
         </div>
       </SectionCard>
 

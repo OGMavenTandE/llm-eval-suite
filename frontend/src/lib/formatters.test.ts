@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getArtifactGroupLabel, getArtifactLabel } from "./formatters";
+import { getArtifactGroupLabel, getArtifactLabel, groupArtifactsBySection } from "./formatters";
 import { ArtifactFile } from "./types";
 
 describe("artifact labeling", () => {
@@ -18,5 +18,14 @@ describe("artifact labeling", () => {
     };
     expect(getArtifactLabel(file)).toBe("Sample-by-sample results (llama3)");
     expect(getArtifactGroupLabel("detailed")).toBe("Detailed Samples");
+  });
+
+  it("groups artifacts by section label", () => {
+    const grouped = groupArtifactsBySection([
+      { kind: "audit", path: "/tmp/audit.json", exists: true },
+      { kind: "summary", path: "/tmp/summary.csv", exists: true },
+    ]);
+    expect(grouped.Audit).toHaveLength(1);
+    expect(grouped.Results).toHaveLength(1);
   });
 });

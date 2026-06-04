@@ -1,11 +1,17 @@
 import { Link } from "react-router-dom";
 import { RunSummary } from "../../lib/types";
 import { basename, formatDate } from "../../lib/formatters";
+import { EmptyState } from "../feedback";
 import { StatusBadge } from "../status/StatusBadge";
 
 export function RunsTable({ runs }: { runs: RunSummary[] }) {
   if (!runs.length) {
-    return <div className="feedback-box empty">No runs yet. Start a new evaluation to see results here.</div>;
+    return (
+      <EmptyState
+        title="No runs yet"
+        message="Start a new evaluation to see results here."
+      />
+    );
   }
 
   return (
@@ -25,7 +31,7 @@ export function RunsTable({ runs }: { runs: RunSummary[] }) {
           <tr key={run.run_id}>
             <td>
               <Link to={`/runs/${run.run_id}`}>{run.run_name || run.run_id}</Link>
-              <div style={{ color: "#52606d", fontSize: "0.85rem" }}>{run.run_id}</div>
+              <div className="run-id-hint">{run.run_id}</div>
             </td>
             <td>
               <StatusBadge status={run.status} />
