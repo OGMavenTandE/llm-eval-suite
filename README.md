@@ -1,181 +1,143 @@
 # LLM Eval Suite
 
-A modular, offline-capable Python evaluation suite for large language models. Built for AI Test & Evaluation (T&E) personnel who need auditable, reproducible assessments of LLM performance — especially quantized and open-weight models running on edge platforms.
+Offline AI evaluation workbench engine for local LLM benchmarking. Built for operational users and AI Test & Evaluation (T&E) teams who need auditable, reproducible assessments of LLM performance, especially on air-gapped or edge deployments.
 
-## Features
+## Overview
 
-- **YAML-driven evaluations** — define what to test without writing code
-- **Vendor-agnostic** — pluggable model adapters (Ollama, OpenAI-compatible, extensible)
-- **Offline-first** — runs fully air-gapped with local models via Ollama
-- **Auditable output** — timestamped per-sample JSON traces and summary CSVs
-- **5 built-in evaluators** — correctness, latency, robustness, consistency, cost
-- **Model comparison mode** — run multiple models side-by-side with automatic comparison reports
-- **Scalable** — add new models or evaluators by subclassing a base class
+This repo is the backend core of an **Offline AI Evaluation Workbench**. It runs YAML-driven evaluations against local or API-backed models, produces timestamped artifacts, and exposes a structured service layer that a local API and guided UI can build on in later milestones.
 
-## Quick Start
+Milestone 1 stabilized the engine: installable packaging, typed schemas, filesystem storage/indexing, and a thin service layer over the existing evaluation runner.
+
+## Current capabilities
+
+- YAML-driven evaluations with no code changes required
+- Pluggable model adapters (Ollama, OpenAI-compatible)
+- Five built-in evaluators: correctness, latency, robustness, consistency, cost
+- Model comparison mode with side-by-side reports
+- Dry-run validation without inference
+- Structured run results, audit metadata, and a filesystem run index
+- Service layer ready for CLI, API, and UI consumers
+
+## Install
 
 ```bash
-# Install dependencies
-pip install -r requirements.txt
+pip install -e .
 
-# Run an evaluation (requires Ollama running locally)
-python -m llm_eval --config config/example_eval.yaml
+# With test dependencies
+pip install -e ".[dev]"
+```
 
-# Dry run (validate config without running inference)
+Requires Python 3.10+. Core dependencies: `pydantic`, `pyyaml`, `requests`.
+
+## Run from CLI
+
+```bash
+# Validate config and dataset (no inference)
 python -m llm_eval --config config/example_eval.yaml --dry-run
+
+# Full evaluation (requires a running model, e.g. Ollama)
+python -m llm_eval --config config/example_eval.yaml
 
 # Compare multiple models
 python -m llm_eval --config config/example_eval.yaml --compare
+
+# Console script entry point (same behavior)
+llm-eval --config config/example_eval.yaml --dry-run
 ```
 
-For a detailed step-by-step walkthrough, see **[docs/TUTORIAL.md](docs/TUTORIAL.md)**.
+For a step-by-step walkthrough, see [docs/TUTORIAL.md](docs/TUTORIAL.md).
 
-## Project Structure
+## Architecture
 
 ```
 llm-eval-suite/
+├── apps/api/                  # Placeholder for Milestone 2 local API
 ├── config/                    # YAML evaluation configs
-│   └── example_eval.yaml
-├── datasets/                  # Test datasets (JSONL/CSV)
-│   └── sample_correctness.jsonl
-├── docs/
-│   └── TUTORIAL.md            # Detailed beginner's tutorial
-├── llm_eval/                  # Main package
-│   ├── cli.py                 # CLI entry point
-│   ├── runner.py              # Orchestrator
+├── datasets/                  # JSONL/CSV test datasets
+├── llm_eval/
+│   ├── cli.py                 # CLI (uses service layer)
+│   ├── core/                  # Application services
+│   │   ├── run_service.py     # Orchestration wrapper around EvalRunner
+│   │   ├── config_service.py  # Config load/validate/normalize
+│   │   ├── result_service.py  # Load summaries and detailed results
+│   │   └── audit_service.py   # Build and persist audit metadata
+│   ├── schemas/               # Pydantic contracts (RunRequest, RunStartResult, etc.)
+│   ├── storage/               # Filesystem run index and artifact helpers
+│   ├── runner.py              # Evaluation orchestrator
 │   ├── models/                # Model adapters
-│   │   ├── base.py            # Abstract interface
-│   │   ├── ollama_model.py    # Local Ollama adapter
-│   │   └── openai_model.py    # OpenAI-compatible adapter
 │   ├── evaluators/            # Evaluation modules
-│   │   ├── base.py            # Abstract interface
-│   │   ├── correctness.py     # Exact, fuzzy, LLM-as-judge
-│   │   ├── latency.py         # Response time benchmarking
-│   │   ├── robustness.py      # Prompt perturbation testing
-│   │   ├── consistency.py     # Determinism / repeatability
-│   │   └── cost.py            # Token usage & cost estimation
-│   ├── datasets/
-│   │   └── loader.py          # JSONL/CSV dataset loader
-│   └── reporting/
-│       ├── reporter.py        # Per-model JSON/CSV results
-│       └── comparison.py      # Multi-model comparison reports
-└── results/                   # Output directory (auto-created)
+│   ├── datasets/              # Dataset loader
+│   └── reporting/             # JSON/CSV reporters
+└── tests/
+    ├── unit/
+    └── integration/
 ```
 
-## Evaluators
+### Service layer
 
-| Evaluator | What it measures | Key config |
-|-----------|-----------------|------------|
-| **correctness** | Answer accuracy (exact, fuzzy, or LLM-as-judge) | `mode`, `threshold` |
-| **latency** | Response time | `max_ms` |
-| **robustness** | Stability under prompt perturbations (typos, case, rephrasing) | `perturbations`, `threshold` |
-| **consistency** | Determinism — same prompt N times, how similar are the answers? | `num_runs`, `threshold` |
-| **cost** | Token usage tracking and cost estimation | `cost_per_1k_tokens`, `max_tokens_per_response` |
+The service layer is the stable contract for future UI and API work:
+
+| Service | Role |
+|---------|------|
+| `RunService` | Validate, dry-run, start runs; list/get runs and results |
+| `ConfigService` | Load YAML, validate structure, normalize to `RunRequest` |
+| `ResultService` | Load summary CSV and detailed JSON from artifact paths |
+| `AuditService` | Build and persist structured audit records per run |
+
+Example (Python):
+
+```python
+from llm_eval.core.run_service import RunService
+from llm_eval.core.config_service import ConfigService
+
+config = ConfigService().load_yaml("config/example_eval.yaml")
+result = RunService().run_dry_run(config)
+print(result.status, result.audit.audit_path)
+```
+
+## Output and run artifacts
+
+Each evaluation run writes outputs under the configured `output_dir` (default `results/`).
+
+**Per-model run directory** (`{output_dir}/{run_name}_{timestamp}/`):
+
+- `results_detailed.json` — per-sample traces
+- `results_summary.csv` — aggregated metrics
+
+**Comparison directory** (multi-model runs):
+
+- `comparison_summary.csv`
+- `comparison_detailed.json`
+
+**Run index and audit** (Milestone 1):
+
+- `{output_dir}/.llm_eval_runs.json` — lightweight index of all runs
+- `{output_dir}/audit/{run_id}.json` — structured audit metadata per run
+
+Use `RunService.list_runs()`, `get_run()`, `get_run_audit()`, and `get_run_results()` to retrieve indexed runs programmatically.
+
+## Development and tests
+
+```bash
+pip install -e ".[dev]"
+python3 -m pytest -v
+```
+
+Tests cover dataset loader validation, dry-run via the service layer, reporter outputs, storage/index behavior, and audit persistence. Full runs with live inference are not required for the test suite.
+
+## Roadmap / next step
+
+**Milestone 2** will add a local FastAPI layer in `apps/api/` exposing `RunService` endpoints, followed by a guided local web UI for non-technical operational users.
 
 ## Configuration
 
-Evaluations are defined in YAML:
+See [config/example_eval.yaml](config/example_eval.yaml) for a full multi-model config. Required keys: `dataset`, `models`, `evaluators`.
 
-```yaml
-run_name: "multi-model-eval"
-models:
-  - name: "qwen3:8b"
-    provider: "ollama"
-    params:
-      temperature: 0.0
-      max_tokens: 512
-      base_url: "http://localhost:11434"
-  - name: "llama3:8b"
-    provider: "ollama"
-    params:
-      temperature: 0.0
-      max_tokens: 512
+Dataset format (JSONL):
 
-evaluators:
-  - name: "correctness"
-    mode: "fuzzy_match"
-    threshold: 0.8
-  - name: "latency"
-    max_ms: 5000
-  - name: "robustness"
-    perturbations: [typo, case, rephrase]
-    threshold: 0.7
-  - name: "consistency"
-    num_runs: 3
-    threshold: 0.8
-  - name: "cost"
-    cost_per_1k_tokens: 0.0
-    max_tokens_per_response: 512
-
-dataset: "datasets/sample_correctness.jsonl"
-output_dir: "results/"
-```
-
-## Dataset Format
-
-JSONL (one JSON object per line):
 ```json
 {"prompt": "What is 2+2?", "expected_answer": "4", "category": "math"}
 ```
-
-CSV with headers: `prompt`, `expected_answer`, and optionally `category`, `difficulty`, `metadata`.
-
-## Adding a New Model Adapter
-
-Create a file in `llm_eval/models/` that subclasses `BaseModel`:
-
-```python
-from llm_eval.models.base import BaseModel, ModelResponse
-
-class MyModel(BaseModel):
-    def generate(self, prompt, **kwargs):
-        # Your inference logic here
-        return ModelResponse(text=..., latency_ms=..., tokens_used=..., metadata={})
-```
-
-Then register it in `llm_eval/models/__init__.py`.
-
-## Adding a New Evaluator
-
-Create a file in `llm_eval/evaluators/` that subclasses `BaseEvaluator`:
-
-```python
-from llm_eval.evaluators.base import BaseEvaluator, EvalResult
-
-class MyEvaluator(BaseEvaluator):
-    def evaluate(self, prompt, expected, response, **kwargs):
-        # Your evaluation logic here
-        return EvalResult(score=..., passed=..., details={}, metric_name="my_metric")
-```
-
-Then register it in `llm_eval/evaluators/__init__.py`.
-
-## CLI Options
-
-```
-python -m llm_eval --config CONFIG   Path to YAML config (required)
-                   --output-dir DIR  Override output directory
-                   --verbose         Enable verbose logging
-                   --dry-run         Validate config without running inference
-                   --compare         Force comparison mode (auto-enabled with 2+ models)
-```
-
-## Output
-
-Each run creates timestamped directories under `results/` containing:
-- `results_detailed.json` — per-sample traces with prompts, responses, and all scores
-- `results_summary.csv` — aggregated metrics per evaluator
-
-When comparing multiple models, an additional comparison directory is created with:
-- `comparison_summary.csv` — side-by-side scores per model per metric
-- `comparison_detailed.json` — per-sample responses from all models
-
-## Requirements
-
-- Python 3.10+
-- `requests` — HTTP client for model APIs
-- `pyyaml` — YAML config parsing
-- No ML frameworks required for core operation
 
 ## License
 

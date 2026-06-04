@@ -41,6 +41,8 @@ class RunIndex:
         completed_at: datetime | None = None,
         config_path: str | None = None,
         artifact_paths: dict | None = None,
+        audit_path: str | None = None,
+        error: str | None = None,
     ) -> dict:
         """Add or update a run entry in the index."""
         entries = self._load()
@@ -54,6 +56,8 @@ class RunIndex:
             "completed_at": completed_at.isoformat() if completed_at else None,
             "config_path": config_path,
             "artifact_paths": artifact_paths,
+            "audit_path": audit_path,
+            "error": error,
         }
 
         updated = False

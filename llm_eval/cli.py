@@ -82,11 +82,17 @@ def main(argv=None):
         result = run_service.run_dry_run(config, verbose=args.verbose)
         if result.status == "failed_validation":
             config_service.exit_on_errors(result.validation.errors if result.validation else [])
+        if result.status == "failed":
+            print(f"Error: {result.error or result.message}", file=sys.stderr)
+            sys.exit(1)
         return
 
     result = run_service.start_run(config, verbose=args.verbose, compare=args.compare)
     if result.status == "failed_validation":
         config_service.exit_on_errors(result.validation.errors if result.validation else [])
+    if result.status == "failed":
+        print(f"Error: {result.error or result.message}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
