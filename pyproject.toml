@@ -9,8 +9,8 @@ description = "Offline AI evaluation workbench engine for local LLM benchmarking
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"
-authors = [{ name = "LLM Eval Suite Contributors" }]
-keywords = ["llm", "evaluation", "benchmark", "offline"]
+authors = [{ name = "OG Maven T&E" }]
+keywords = ["llm", "evaluation", "benchmark", "offline", "audit"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -36,7 +36,9 @@ dev = [
 llm-eval = "llm_eval.cli:main"
 
 [project.urls]
-Repository = "https://github.com/example/llm-eval-suite"
+Homepage = "https://github.com/OGMavenTandE/llm-eval-suite"
+Repository = "https://github.com/OGMavenTandE/llm-eval-suite"
+Issues = "https://github.com/OGMavenTandE/llm-eval-suite/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]

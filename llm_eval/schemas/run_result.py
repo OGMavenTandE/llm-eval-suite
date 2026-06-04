@@ -38,7 +38,9 @@ class RunStartResult(BaseModel):
     completed_at: datetime | None = None
     artifacts: RunArtifactPaths | None = None
     validation: "RunValidationResult | None" = None
+    audit: "AuditMetadata | None" = None
     message: str | None = None
+    error: str | None = None
 
 
 class AuditMetadata(BaseModel):
@@ -58,3 +60,15 @@ class AuditMetadata(BaseModel):
     output_dir: str = "results/"
     status: str = "unknown"
     artifact_paths: RunArtifactPaths | None = None
+    audit_path: str | None = None
+    error: str | None = None
+
+
+from llm_eval.schemas.run_request import RunValidationResult  # noqa: E402
+
+RunStartResult.model_rebuild(
+    _types_namespace={
+        "RunValidationResult": RunValidationResult,
+        "AuditMetadata": AuditMetadata,
+    }
+)
