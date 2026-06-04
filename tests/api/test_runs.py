@@ -96,6 +96,7 @@ def test_run_detail_results_audit_and_artifacts(client, api_workspace):
     assert audit_response.status_code == 200
     audit_payload = audit_response.json()
     assert audit_payload["run_id"] == run_id
+    assert audit_payload["ready"] is True
     assert audit_payload["audit"]["run_id"] == run_id
     assert audit_payload["audit"]["dataset_sample_count"] == 1
 
