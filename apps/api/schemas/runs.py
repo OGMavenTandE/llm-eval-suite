@@ -50,6 +50,8 @@ class RunDetailResponse(RunSummaryResponse):
     config_hash: str | None = None
     artifact_paths: dict | None = None
     message: str | None = None
+    in_progress: bool = False
+    ready: bool = True
 
 
 class RunResultsResponse(BaseModel):
@@ -59,11 +61,16 @@ class RunResultsResponse(BaseModel):
     output_dir: str | None = None
     model_results: list[dict] = Field(default_factory=list)
     comparison: dict | None = None
+    ready: bool = True
+    message: str | None = None
 
 
 class RunAuditResponse(BaseModel):
     run_id: str
-    audit: dict
+    status: str | None = None
+    audit: dict | None = None
+    ready: bool = True
+    message: str | None = None
 
 
 class ArtifactFileResponse(BaseModel):
@@ -76,4 +83,7 @@ class ArtifactFileResponse(BaseModel):
 class RunArtifactsResponse(BaseModel):
     run_id: str
     output_dir: str | None = None
+    status: str | None = None
     files: list[ArtifactFileResponse] = Field(default_factory=list)
+    ready: bool = True
+    message: str | None = None

@@ -56,6 +56,19 @@ llm-eval-api
 
 The API wraps the service layer with typed JSON endpoints for health checks, profile/dataset/model discovery, and run lifecycle management. See [apps/api/README.md](apps/api/README.md) for endpoint details.
 
+## Local UI (Milestone 3)
+
+```bash
+pip install -e ".[api]"
+llm-eval-api
+
+cd frontend
+npm install
+npm run dev
+```
+
+Open http://localhost:5173 for the guided evaluation workbench UI. See [frontend/README.md](frontend/README.md).
+
 ## Architecture
 
 ```

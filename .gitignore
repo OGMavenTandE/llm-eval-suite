@@ -4,6 +4,9 @@ __pycache__/
 .pytest_cache/
 results/
 test_results/
+frontend/node_modules/
+frontend/dist/
+*.tsbuildinfo
 *.egg-info/
 dist/
 build/

@@ -110,39 +110,65 @@ def build_run_results(payload: dict | None) -> RunResultsResponse:
     return RunResultsResponse(**payload)
 
 
-def build_run_audit(run_id: str, audit: dict) -> RunAuditResponse:
-    return RunAuditResponse(run_id=run_id, audit=audit)
+def build_run_audit(
+    *,
+    run_id: str,
+    audit: dict | None,
+    ready: bool,
+    message: str | None = None,
+    status: str | None = None,
+) -> RunAuditResponse:
+    return RunAuditResponse(
+        run_id=run_id,
+        audit=audit,
+        ready=ready,
+        message=message,
+        status=status,
+    )
 
 
-def build_run_artifacts(run_id: str, output_dir: str | None, artifact_paths: dict | None) -> RunArtifactsResponse:
+def build_run_artifacts(
+    *,
+    run_id: str,
+    output_dir: str | None,
+    artifact_paths: dict | None,
+    ready: bool,
+    message: str | None = None,
+    status: str | None = None,
+) -> RunArtifactsResponse:
     files: list[ArtifactFileResponse] = []
-    if not artifact_paths:
-        return RunArtifactsResponse(run_id=run_id, output_dir=output_dir, files=files)
-
-    for model_entry in artifact_paths.get("model_artifacts", []):
-        model_name = model_entry.get("model_name")
-        for kind, key in (("summary", "summary_path"), ("detailed", "detailed_path")):
-            path = model_entry.get(key)
-            if path:
-                files.append(
-                    ArtifactFileResponse(
-                        kind=kind,
-                        path=path,
-                        exists=True,
-                        model_name=model_name,
+    if artifact_paths:
+        for model_entry in artifact_paths.get("model_artifacts", []):
+            model_name = model_entry.get("model_name")
+            for kind, key in (("summary", "summary_path"), ("detailed", "detailed_path")):
+                path = model_entry.get(key)
+                if path:
+                    files.append(
+                        ArtifactFileResponse(
+                            kind=kind,
+                            path=path,
+                            exists=True,
+                            model_name=model_name,
+                        )
                     )
-                )
 
-    for kind, key in (
-        ("comparison_summary", "comparison_summary_path"),
-        ("comparison_detailed", "comparison_detailed_path"),
-    ):
-        path = artifact_paths.get(key)
-        if path:
-            files.append(ArtifactFileResponse(kind=kind, path=path, exists=True))
+        for kind, key in (
+            ("comparison_summary", "comparison_summary_path"),
+            ("comparison_detailed", "comparison_detailed_path"),
+        ):
+            path = artifact_paths.get(key)
+            if path:
+                files.append(ArtifactFileResponse(kind=kind, path=path, exists=True))
 
-    audit_path = artifact_paths.get("audit_path")
-    if audit_path:
-        files.append(ArtifactFileResponse(kind="audit", path=audit_path, exists=True))
+        audit_path = artifact_paths.get("audit_path")
+        if audit_path:
+            files.append(ArtifactFileResponse(kind="audit", path=audit_path, exists=True))
 
-    return RunArtifactsResponse(run_id=run_id, output_dir=output_dir, files=files)
+    return RunArtifactsResponse(
+        run_id=run_id,
+        output_dir=output_dir,
+        status=status,
+        files=files,
+        ready=ready,
+        message=message,
+    )

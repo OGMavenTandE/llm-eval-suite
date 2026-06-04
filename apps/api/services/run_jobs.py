@@ -1,4 +1,5 @@
 import logging
+import threading
 from datetime import datetime
 from uuid import uuid4
 
@@ -35,12 +36,15 @@ class RunJobManager:
     """
     Lightweight in-process job registry for local run execution.
 
-    Persisted run state remains authoritative via RunService and the filesystem index.
+    Designed for a single local API process. An in-memory dict tracks live
+    pending/running state; the filesystem run index and audit JSON remain the
+    long-term source of truth after a run finishes.
     """
 
     def __init__(self, run_service: RunService):
         self._run_service = run_service
         self._jobs: dict[str, RunJob] = {}
+        self._lock = threading.RLock()
 
     def create_run_id(self) -> str:
         return uuid4().hex[:12]
@@ -61,9 +65,8 @@ class RunJobManager:
             dry_run=dry_run,
             run_name=run_name,
         )
-        self._jobs[run_id] = job
-
-        import threading
+        with self._lock:
+            self._jobs[run_id] = job
 
         thread = threading.Thread(
             target=self._execute,
@@ -75,13 +78,16 @@ class RunJobManager:
         return job
 
     def get_live_job(self, run_id: str) -> RunJob | None:
-        return self._jobs.get(run_id)
+        with self._lock:
+            return self._jobs.get(run_id)
 
     def list_live_jobs(self) -> list[RunJob]:
-        return list(self._jobs.values())
+        with self._lock:
+            return list(self._jobs.values())
 
     def get_merged_run(self, run_id: str, output_dir: str) -> dict | None:
-        live = self.get_live_job(run_id)
+        with self._lock:
+            live = self._jobs.get(run_id)
         persisted = self._run_service.get_run(run_id, output_dir)
         if persisted is None and live is None:
             return None
@@ -95,7 +101,9 @@ class RunJobManager:
 
     def list_merged_runs(self, output_dir: str) -> list[dict]:
         persisted = {entry["run_id"]: entry for entry in self._run_service.list_runs(output_dir)}
-        for job in self.list_live_jobs():
+        with self._lock:
+            live_jobs = list(self._jobs.values())
+        for job in live_jobs:
             if job.output_dir != output_dir:
                 continue
             job_dict = self._job_to_dict(job)
@@ -110,23 +118,27 @@ class RunJobManager:
         return runs
 
     def _execute(self, job: RunJob, config: dict, dry_run: bool, compare: bool) -> None:
-        job.status = "running"
-        job.started_at = datetime.now()
+        with self._lock:
+            job.status = "running"
+            job.started_at = datetime.now()
         try:
             if dry_run:
                 result = self._run_service.run_dry_run(config, run_id=job.run_id)
             else:
                 result = self._run_service.start_run(config, compare=compare, run_id=job.run_id)
-            job.status = result.status
-            job.message = result.message
-            job.error_message = result.error_message
+            with self._lock:
+                job.status = result.status
+                job.message = result.message
+                job.error_message = result.error_message
         except Exception as exc:
             logger.exception("Background run %s failed unexpectedly", job.run_id)
-            job.status = "failed_runtime"
-            job.error_message = str(exc)
-            job.message = f"Run failed: {exc}"
+            with self._lock:
+                job.status = "failed_runtime"
+                job.error_message = str(exc)
+                job.message = f"Run failed: {exc}"
         finally:
-            job.completed_at = datetime.now()
+            with self._lock:
+                job.completed_at = datetime.now()
 
     @staticmethod
     def _job_to_dict(job: RunJob) -> dict:
