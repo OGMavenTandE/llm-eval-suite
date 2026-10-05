@@ -79,6 +79,16 @@ python -m llm_eval.dioptra smoke
 
 Writes `results/dioptra/smoke-experiment.json`. See [docs/dioptra-light-pilot.md](docs/dioptra-light-pilot.md).
 
+## RAMPART pytest smoke
+
+Offline crib of a Microsoft RAMPART safety result. No RAMPART install, LLM credentials, Docker, or GPU is required.
+
+```bash
+python -m llm_eval.rampart smoke
+```
+
+Writes `results/rampart/smoke-report.json`. See [docs/rampart-pytest-smoke.md](docs/rampart-pytest-smoke.md).
+
 ## Architecture
 
 ```
@@ -100,7 +110,8 @@ llm-eval-suite/
 │   ├── evaluators/            # Evaluation modules
 │   ├── datasets/              # Dataset loader
 │   ├── reporting/             # JSON/CSV reporters
-│   └── dioptra/               # Offline Dioptra-shaped experiment records
+│   ├── dioptra/               # Offline Dioptra-shaped experiment records
+│   └── rampart/               # Offline RAMPART-shaped pytest smoke records
 └── tests/
     ├── unit/
     └── integration/
