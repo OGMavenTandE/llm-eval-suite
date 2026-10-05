@@ -69,6 +69,16 @@ npm run dev
 
 Open http://localhost:5173 for the guided evaluation workbench UI. See [frontend/README.md](frontend/README.md).
 
+## Dioptra light pilot
+
+Offline crib of a NIST Dioptra experiment record. No Dioptra server, Docker stack, or GPU is required.
+
+```bash
+python -m llm_eval.dioptra smoke
+```
+
+Writes `results/dioptra/smoke-experiment.json`. See [docs/dioptra-light-pilot.md](docs/dioptra-light-pilot.md).
+
 ## Architecture
 
 ```
@@ -89,7 +99,8 @@ llm-eval-suite/
 │   ├── models/                # Model adapters
 │   ├── evaluators/            # Evaluation modules
 │   ├── datasets/              # Dataset loader
-│   └── reporting/             # JSON/CSV reporters
+│   ├── reporting/             # JSON/CSV reporters
+│   └── dioptra/               # Offline Dioptra-shaped experiment records
 └── tests/
     ├── unit/
     └── integration/
