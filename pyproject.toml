@@ -42,6 +42,7 @@ api = [
 llm-eval = "llm_eval.cli:main"
 llm-eval-api = "apps.api.main:run_server"
 llm-eval-dioptra = "llm_eval.dioptra.cli:main"
+llm-eval-rampart = "llm_eval.rampart.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/OGMavenTandE/llm-eval-suite"
