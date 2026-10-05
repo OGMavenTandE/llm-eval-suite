@@ -89,6 +89,16 @@ python -m llm_eval.rampart smoke
 
 Writes `results/rampart/smoke-report.json`. See [docs/rampart-pytest-smoke.md](docs/rampart-pytest-smoke.md).
 
+## Garak fixture eval
+
+Offline crib of an NVIDIA garak scan report. No garak install, live model, GPU, or NVIDIA service is required.
+
+```bash
+python -m llm_eval.garak smoke
+```
+
+Writes `results/garak/smoke-report.jsonl`. See [docs/garak-fixture-eval.md](docs/garak-fixture-eval.md).
+
 ## Architecture
 
 ```
@@ -96,6 +106,7 @@ llm-eval-suite/
 ├── apps/api/                  # Placeholder for Milestone 2 local API
 ├── config/                    # YAML evaluation configs
 ├── datasets/                  # JSONL/CSV test datasets
+├── fixtures/garak/            # Canned probe/response rows for the garak smoke
 ├── llm_eval/
 │   ├── cli.py                 # CLI (uses service layer)
 │   ├── core/                  # Application services
@@ -111,7 +122,8 @@ llm-eval-suite/
 │   ├── datasets/              # Dataset loader
 │   ├── reporting/             # JSON/CSV reporters
 │   ├── dioptra/               # Offline Dioptra-shaped experiment records
-│   └── rampart/               # Offline RAMPART-shaped pytest smoke records
+│   ├── rampart/               # Offline RAMPART-shaped pytest smoke records
+│   └── garak/                 # Offline garak-shaped fixture reports
 └── tests/
     ├── unit/
     └── integration/
