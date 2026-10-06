@@ -22,7 +22,7 @@ from llm_eval.models.base import BaseModel
 from llm_eval.models.local_openai_server import LocalOpenAIServer
 from llm_eval.rampart.smoke import run_smoke as rampart_smoke
 from llm_eval.models.context import strip_think_blocks
-from llm_eval_suite.matching import match_expected
+from llm_eval_suite.matching import match_expected, normalize_answer_text
 from llm_eval_suite.presets import _probe_count
 
 FIXTURE_LABEL = "Fixture / smoke (no live model call)"
@@ -37,6 +37,7 @@ class SuiteContext:
     cancel: object
     completed_ids: set[str] = field(default_factory=set)
     on_item: Callable[[dict], None] | None = None
+    on_progress: Callable[[int], None] | None = None
 
 
 class SuiteRunner(Protocol):
@@ -119,6 +120,8 @@ def score_fact_detail(prompt: str, expected: str, response: str) -> dict:
 
     ``Newport`` inside ``Newport News`` is a partial match and does not pass.
     """
+    expected = normalize_answer_text(expected)
+    response = normalize_answer_text(response)
     found = match_expected(expected, response)
     evidence = {
         "span": found.get("span") or "",
@@ -341,6 +344,7 @@ class GarakRunner:
                 mode=_garak_mode(ctx.connection),
                 log_path=ctx.run_dir / "run.log",
                 skip_probes=skip,
+                on_progress=ctx.on_progress,
             )
         finally:
             if server is not None:

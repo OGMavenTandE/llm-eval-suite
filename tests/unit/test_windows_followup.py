@@ -515,4 +515,5 @@ def test_demo_start_uses_the_same_preset(tmp_path: Path, monkeypatch):
     quick = next(row for row in presets.json()["presets"] if row["id"] == "quick")
     assert quick["probe_count"] == 5
     assert quick["prompt_count"] > 0
-    assert quick["estimated_seconds"] > 0
+    assert quick["estimated_seconds"] is None
+    assert quick["estimate_source"] == "estimating"

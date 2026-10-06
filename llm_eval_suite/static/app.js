@@ -301,7 +301,11 @@ async function loadConnections() {
 /* ---------- Run ---------- */
 
 async function loadPresets() {
-  const data = await api("/api/presets");
+  const dataset = state.datasetId || "sample";
+  const connection = $("run-connection").value || "";
+  let url = "/api/presets?dataset_id=" + encodeURIComponent(dataset);
+  if (connection) url += "&connection_id=" + encodeURIComponent(connection);
+  const data = await api(url);
   state.presets = data.presets;
   const select = $("run-preset");
   select.innerHTML = "";
@@ -324,10 +328,17 @@ function showPreset() {
   const probes = preset.probe_count == null ? "Unspecified" : preset.probe_count;
   const prompts = preset.prompt_count == null ? "Unspecified" : preset.prompt_count;
   const facts = preset.factcheck_count == null ? 0 : preset.factcheck_count;
-  const estimate = preset.estimated_seconds == null ? "Not estimated" : formatSeconds(preset.estimated_seconds);
-  const source = preset.estimate_source === "measured"
-    ? "Estimate uses measured speed on this machine: " + preset.seconds_per_prompt + " s per prompt."
-    : "Estimate assumes " + preset.seconds_per_prompt + " s per prompt until a run is measured.";
+  let estimate = "Estimating…";
+  let source = "No measured speed for this model, endpoint, and suite yet.";
+  if (preset.estimate_source === "unbounded") {
+    estimate = "Not estimated";
+    source = "This preset has no prompt cap, so the time is not estimated.";
+  } else if (preset.estimated_seconds != null && preset.estimate_source !== "estimating") {
+    estimate = formatSeconds(preset.estimated_seconds);
+    source = preset.estimate_source === "measured"
+      ? "Estimate uses measured speed for this model and suite: " + preset.seconds_per_prompt + " s per prompt."
+      : "Estimate assumes " + preset.seconds_per_prompt + " s per prompt until a run of this model is measured.";
+  }
   const cell = (term, value) => "<div><dt>" + escapeHtml(term) + "</dt><dd>" + escapeHtml(value) + "</dd></div>";
   $("preset-estimate").innerHTML = '<dl class="estimate-grid">' +
     cell("Garak probes", probes) +
@@ -338,12 +349,13 @@ function showPreset() {
 }
 
 $("run-preset").addEventListener("change", showPreset);
+$("run-connection").addEventListener("change", () => {
+  loadPresets().catch((err) => progressMessage(err.message));
+});
 
 $("run-dataset").addEventListener("change", async () => {
   state.datasetId = $("run-dataset").value;
-  const data = await api("/api/presets?dataset_id=" + encodeURIComponent(state.datasetId || "sample"));
-  state.presets = data.presets;
-  showPreset();
+  await loadPresets();
 });
 
 function progressMessage(text) {
@@ -437,7 +449,10 @@ function renderProgress(run) {
     let eta = raw ? raw.charAt(0).toUpperCase() + raw.slice(1).replace(/_/g, " ") : "";
     const showEta = running && !suiteDone && suite.eta_seconds != null && Number(suite.eta_seconds) > 0;
     if (showEta) {
-      eta = "About " + formatSeconds(suite.eta_seconds) + " left at " + suite.seconds_per_prompt + " s per prompt";
+      const rate = suite.seconds_per_prompt == null ? "" : " at " + suite.seconds_per_prompt + " s per prompt";
+      eta = "About " + formatSeconds(suite.eta_seconds) + " left" + rate;
+    } else if (running && !suiteDone) {
+      eta = "Estimating…";
     }
     html += '<div class="progress-row">' +
       '<span class="name">' + escapeHtml(suite.name) + "</span>" +
@@ -571,15 +586,18 @@ function fixtureMeterText(percent) {
 
 function garakMeterNote(run) {
   if (!run || (!run.garak_pass_rate_label && !run.garak_wording)) return "";
+  const invalid = run.validity === "invalid" || run.status === "invalid";
+  const wording = run.garak_wording || "Pass rate is 1 minus garak's attack success rate (ASR).";
+  if (invalid) return "";
   const pass = run.garak_pass_rate == null ? "n/a" : Math.round(run.garak_pass_rate * 1000) / 10 + "%";
   const asr = run.garak_attack_success_rate == null ? "n/a" : Math.round(run.garak_attack_success_rate * 1000) / 10 + "%";
   const label = run.garak_pass_rate_label || "Pass rate (1 - ASR)";
-  const wording = run.garak_wording || "Pass rate is 1 minus garak's attack success rate (ASR).";
   return label + ": " + pass + ". ASR: " + asr + ". " + wording;
 }
 
 function meterRow(row, bar, note) {
   const status = row.status === "not_run" ? "not_run"
+    : row.status === "withheld" ? "withheld"
     : row.source && row.source !== "live" && row.status === "fixture" ? "fixture"
       : row.status === "pass" ? "pass"
         : row.status === "fail" ? "fail"
@@ -594,25 +612,30 @@ function meterRow(row, bar, note) {
   }
   const value = status === "not_run"
     ? "Not run"
+    : status === "withheld" ? "Score withheld"
     : status === "fixture" ? escapeHtml(fixtureMeterText(row.pass_percent))
       : row.pass_percent == null ? "Not measured" : Number(row.pass_percent).toFixed(1) + "<small>%</small>";
   const badge = status === "pass" ? '<span class="badge badge-pass">Pass</span>'
     : status === "fail" ? '<span class="badge badge-fail">Below bar</span>'
       : status === "fixture" ? '<span class="badge badge-fixture">Fixture</span>'
+        : status === "withheld" ? '<span class="badge badge-neutral">Withheld</span>'
         : '<span class="badge badge-neutral">Not run</span>';
-  const barText = bar == null ? "" : " Pass bar " + bar + "%.";
+  const barText = bar == null || status === "withheld" ? "" : " Pass bar " + bar + "%.";
   const label = status === "not_run"
     ? row.label + ": not run"
+    : status === "withheld"
+      ? row.label + ": score withheld"
     : row.label + ": " + (status === "fixture"
       ? fixtureMeterText(row.pass_percent)
       : (row.pass_percent == null ? row.status : row.pass_percent + "% pass")) + ", " + sub + "." + barText;
-  const barMark = bar == null ? "" : '<div class="meter-pass-bar" style="--bar:' + bar + '%"></div>';
-  const noteHtml = note ? '<span class="meter-note">' + escapeHtml(note) + "</span>" : "";
+  const barMark = bar == null || status === "withheld" ? "" : '<div class="meter-pass-bar" style="--bar:' + bar + '%"></div>';
+  const noteHtml = note && status !== "withheld" ? '<span class="meter-note">' + escapeHtml(note) + "</span>" : "";
+  const showFill = status !== "not_run" && status !== "withheld";
   return '<div class="meter-row" data-status="' + status + '">' +
     '<div><span class="meter-name">' + escapeHtml(row.label) + '</span><span class="meter-sub">' + escapeHtml(sub) + "</span>" +
     noteHtml + "</div>" +
     '<div class="meter" role="img" aria-label="' + escapeHtml(label) + '">' +
-    (status === "not_run" ? "" : '<div class="meter-fill" style="--v:' + pct + '%"></div>') +
+    (showFill ? '<div class="meter-fill" style="--v:' + pct + '%"></div>' : "") +
     barMark + "</div>" +
     '<div class="meter-value">' + value + "</div>" + badge + "</div>";
 }
@@ -648,7 +671,19 @@ async function showResults() {
   const bar = barPercent(card);
   const garakNote = garakMeterNote(run);
   renderReadout(run, card);
-  $("scorecard").innerHTML = (card.categories || []).map((row) => {
+  const categories = (card.categories || []).map((row) => {
+    if (!invalid || row.status === "not_run") return row;
+    return {
+      category: row.category,
+      label: row.label,
+      status: "withheld",
+      pass_rate: null,
+      pass_percent: null,
+      sample_count: row.sample_count,
+      source: row.source,
+    };
+  });
+  $("scorecard").innerHTML = categories.map((row) => {
     const note = row.category === "security_jailbreak" ? garakNote : "";
     return meterRow(row, bar, note);
   }).join("");
@@ -758,27 +793,33 @@ $("download-report").addEventListener("click", () => {
 
 /* ---------- Compare ---------- */
 
-function compareBar(label, rate, later) {
+function compareBar(label, rate, later, invalid) {
+  const withheld = !!invalid;
   const pct = rate == null ? 0 : Math.max(0, Math.min(100, Number(rate) * 100));
-  const bar = barPercent();
+  const bar = withheld ? null : barPercent();
   const barMark = bar == null ? "" : '<div class="meter-pass-bar" style="--bar:' + bar + '%"></div>';
+  const text = withheld ? "Score withheld" : (rate == null ? "Not run" : formatPercent(rate));
   return '<div class="compare-bar' + (later ? " later" : "") + '"><span>' + label + "</span>" +
-    '<div class="meter">' + (rate == null ? "" : '<div class="meter-fill" style="--v:' + pct + '%"></div>') +
+    '<div class="meter">' + (withheld || rate == null ? "" : '<div class="meter-fill" style="--v:' + pct + '%"></div>') +
     barMark + "</div>" +
-    '<span class="val">' + (rate == null ? "Not run" : formatPercent(rate)) + "</span></div>";
+    '<span class="val">' + text + "</span></div>";
 }
 
 $("do-compare").addEventListener("click", async () => {
   const out = $("compare-out");
   try {
     const data = await api("/api/compare?left=" + encodeURIComponent($("compare-left").value) + "&right=" + encodeURIComponent($("compare-right").value));
+    const invalidSide = !!(data.left_invalid || data.right_invalid);
     const cats = data.categories.map((row) => {
-      const delta = formatDelta(row.delta, true);
+      const delta = invalidSide ? { text: "Not compared", cls: "delta-flat" } : formatDelta(row.delta, true);
       return '<div class="compare-row"><div class="meter-name">' + escapeHtml(row.label) + "</div>" +
-        '<div class="compare-bars">' + compareBar("Earlier", row.left_pass_rate, false) + compareBar("Later", row.right_pass_rate, true) + "</div>" +
+        '<div class="compare-bars">' + compareBar("Earlier", row.left_pass_rate, false, data.left_invalid) + compareBar("Later", row.right_pass_rate, true, data.right_invalid) + "</div>" +
         '<div class="compare-delta ' + delta.cls + '">' + escapeHtml(delta.text) + "</div></div>";
     }).join("");
-    let html = '<div class="panel"><div class="panel-head"><h3>Pass rate by category</h3>' +
+    const warning = invalidSide
+      ? '<div class="banner banner-fail">An invalid run has no category score. Deltas against it are not shown.</div>'
+      : "";
+    let html = warning + '<div class="panel"><div class="panel-head"><h3>Pass rate by category</h3>' +
       '<p class="hint">Change is in percentage points, later minus earlier.</p></div>' +
       '<div class="compare-cats">' + (cats || emptyNote("Neither run has category scores.")) + "</div></div>";
     if (data.items && data.items.length) {
@@ -846,6 +887,7 @@ async function loadJudges() {
   state.judges = data.judges || [];
   $("chairman").value = data.chairman || "";
   if (data.timeout) $("judge-timeout").value = data.timeout;
+  if (data.max_tokens) $("judge-max-tokens").value = data.max_tokens;
   renderJudges();
 }
 
@@ -863,6 +905,7 @@ $("save-judges").addEventListener("click", async () => {
         chairman: $("chairman").value.trim(),
         judges: state.judges,
         timeout: Number($("judge-timeout").value) || 90,
+        max_tokens: Number($("judge-max-tokens").value) || 1200,
       }),
     });
     state.judges = saved.judges;
@@ -875,8 +918,8 @@ $("save-judges").addEventListener("click", async () => {
 /* ---------- Boot ---------- */
 
 async function boot() {
-  await loadPresets();
   await loadConnections();
+  await loadPresets();
   await loadRuns();
   await loadJudges();
   updateLocalWeights();

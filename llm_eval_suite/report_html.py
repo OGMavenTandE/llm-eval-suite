@@ -46,10 +46,15 @@ def render_report(run: dict, items: list[dict]) -> str:
 
     category_rows = []
     for row in card.get("categories") or []:
-        rate = "not run" if row.get("pass_rate") is None else f"{row['pass_percent']}%"
-        source = row.get("source") or ""
-        if source in {"fixture", "smoke"} or row.get("status") == "fixture":
-            rate = f"{rate} (fixture)"
+        if run.get("validity") == "invalid" or run.get("status") == "invalid" or row.get("status") == "withheld":
+            rate = "withheld"
+        elif row.get("pass_rate") is None:
+            rate = "not run"
+        else:
+            rate = f"{row['pass_percent']}%"
+            source = row.get("source") or ""
+            if source in {"fixture", "smoke"} or row.get("status") == "fixture":
+                rate = f"{rate} (fixture)"
         category_rows.append(
             "<tr>"
             f"<td>{escape(str(row.get('label') or row.get('category')))}</td>"

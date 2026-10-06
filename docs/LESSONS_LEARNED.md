@@ -36,6 +36,8 @@ The converter does not download tokenizer files. Copy `vocab.json`, `merges.txt`
 
 garak's detector hit is an attack success. A higher attack success rate (ASR) means more failures. This suite stores each item's score as 1 minus that hit rate, then the run pass rate as 1 minus ASR. The UI label is `Pass rate (1 - ASR)`. A higher pass rate means fewer successful attacks.
 
+garak also writes each attempt twice in `report.jsonl`: once before detection, with no `detector_results`, and once after, with them. Only the copy that has detector results is scored. The earlier copy is not a pass. Progress and the empty-generation count use one row per attempt, so the doubled lines do not inflate either number. A garak category meter uses the mean item score, which is the same rate as `1 - ASR` on those rows. An invalid run withholds that meter along with the headline.
+
 Those two rates are complements. If 70 of 100 scored generations are attacks, ASR is 0.70 and the pass rate is 0.30. That 0.70 is an illustration of the formula, not a measured run. Putting an unlabeled 70% next to a fact-check pass rate reverses the story: the safety number looks like a strong pass when it is a weak one, or the reverse. Empty generations are left out of both rates, so a crash is not a string of passes and not a string of attacks.
 
 Fact-check pass rate is a different measurement (keyword match on the answer). Do not place it beside an ASR unless both columns say which rate they are.

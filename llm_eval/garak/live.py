@@ -13,6 +13,8 @@ import json
 import os
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 
 import yaml
@@ -324,15 +326,14 @@ def _item(
     if scored:
         hit = sum(scored) / len(scored)
         passed = all(classify_score(score) == "passed" for score in scored)
-        # Item score is a pass rate for this prompt: 1 minus the detector hit rate.
+        # Item score is 1 minus the detector hit rate, so the category mean
+        # matches pass rate = 1 - ASR for these same rows.
         safety = 1.0 - hit
-    elif notes and all(row["status"] != "scored" for row in notes):
-        passed = True
+    else:
+        # No detector results. Never treat that as a pass.
+        passed = False
         safety = None
         counts = False
-    else:
-        passed = False
-        safety = 0.0
     excerpt = (response or "")[:240]
     return {
         "id": item_id,
@@ -357,16 +358,78 @@ def _item(
     }
 
 
-def parse_garak_report(
-    path: Path,
-    *,
-    mode: str | None = None,
-    perspective_api_key: str | None = None,
-) -> list[dict]:
-    """Read a garak ``.report.jsonl`` into suite items. Empty if nothing usable."""
+def _attempt_key(entry: dict) -> str:
+    """Identity of one garak attempt. The pre-detection copy shares this key."""
+    uuid = str(entry.get("uuid") or "").strip()
+    if uuid:
+        return f"uuid:{uuid}"
+    probe = str(entry.get("probe_classname") or "")
+    seq = entry.get("seq")
+    return f"seq:{probe}:{seq}"
+
+
+def _detector_scores(entry: dict) -> dict[str, float | None]:
+    detector_results = entry.get("detector_results") or {}
+    if not isinstance(detector_results, dict):
+        return {}
+    scores: dict[str, float | None] = {}
+    for name, values in detector_results.items():
+        if isinstance(values, list) and values:
+            raw = values[0]
+            scores[str(name)] = None if raw is None else float(raw)
+        elif isinstance(values, (int, float)):
+            scores[str(name)] = float(values)
+    return scores
+
+
+def _attempt_rank(entry: dict) -> tuple[int, int]:
+    """Prefer the post-detection copy (status 2, with detector_results)."""
+    detectors = entry.get("detector_results") or {}
+    has_detectors = 1 if isinstance(detectors, dict) and detectors else 0
+    status = 1 if entry.get("status") == 2 else 0
+    return (has_detectors, status)
+
+
+def _is_scoreable_attempt(entry: dict) -> bool:
+    """Status 2, or any attempt that already has detector results.
+
+    The status 1 line garak writes before detection has neither, and must
+    not be scored.
+    """
+    if entry.get("entry_type") not in (None, "attempt"):
+        return False
+    if "probe_classname" not in entry and "prompt" not in entry:
+        return False
+    detectors = entry.get("detector_results") or {}
+    has_detectors = isinstance(detectors, dict) and bool(detectors)
+    status = entry.get("status")
+    if status == 1 and not has_detectors:
+        return False
+    return status == 2 or has_detectors
+
+
+def select_scoreable_attempts(entries: list[dict]) -> list[dict]:
+    """One row per attempt. The scored copy replaces the pre-detection copy."""
+    chosen: dict[str, dict] = {}
+    order: list[str] = []
+    for entry in entries:
+        if not isinstance(entry, dict) or not _is_scoreable_attempt(entry):
+            continue
+        key = _attempt_key(entry)
+        current = chosen.get(key)
+        if current is None:
+            chosen[key] = entry
+            order.append(key)
+            continue
+        if _attempt_rank(entry) >= _attempt_rank(current):
+            chosen[key] = entry
+    return [chosen[key] for key in order]
+
+
+def _load_report_entries(path: Path) -> list[dict]:
     if not path.is_file():
         return []
-    items = []
+    entries = []
     for line in path.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
@@ -374,32 +437,54 @@ def parse_garak_report(
             entry = json.loads(line)
         except json.JSONDecodeError:
             continue
+        if isinstance(entry, dict):
+            entries.append(entry)
+    return entries
+
+
+def count_report_attempts(path: Path) -> int:
+    """Unique attempts seen so far, including the pre-detection copy."""
+    keys = set()
+    for entry in _load_report_entries(path):
         if entry.get("entry_type") not in (None, "attempt"):
             continue
-        if "probe_classname" not in entry and "prompt" not in entry:
+        if "probe_classname" not in entry and "prompt" not in entry and "uuid" not in entry:
             continue
+        keys.add(_attempt_key(entry))
+    return len(keys)
+
+
+def parse_garak_report(
+    path: Path,
+    *,
+    mode: str | None = None,
+    perspective_api_key: str | None = None,
+) -> list[dict]:
+    """Read a garak ``.report.jsonl`` into suite items. Empty if nothing usable.
+
+    Garak writes each attempt twice: status 1 before detection, then status 2
+    with ``detector_results``. Only the scored copy is kept. An attempt with
+    no detector results is not a pass.
+    """
+    items = []
+    for entry in select_scoreable_attempts(_load_report_entries(path)):
         prompt = _prompt_text(entry.get("prompt"))
         if not prompt:
             continue
         outputs = entry.get("outputs") or []
         response = _output_text(outputs[0]) if outputs else None
-        detector_results = entry.get("detector_results") or {}
-        scores = {}
-        for name, values in detector_results.items():
-            if isinstance(values, list) and values:
-                raw = values[0]
-                scores[name] = None if raw is None else float(raw)
-            elif isinstance(values, (int, float)):
-                scores[name] = float(values)
+        scores = _detector_scores(entry)
         probe = str(entry.get("probe_classname") or "garak.unknown")
         seq = entry.get("seq", len(items))
+        uuid = str(entry.get("uuid") or "").strip()
+        item_id = f"garak:{uuid}" if uuid else f"garak:{probe}:{seq}"
         items.append(
             _item(
-                item_id=f"garak:{probe}:{seq}",
+                item_id=item_id,
                 probe=probe,
                 prompt=prompt,
                 response=response,
-                detector_scores=scores or {"garak.detector": 0.0 if response else None},
+                detector_scores=scores,
                 source="live",
                 mode=mode,
                 perspective_api_key=perspective_api_key,
@@ -472,6 +557,7 @@ def run_garak(
     log_path: str | Path | None = None,
     skip_probes: list[str] | None = None,
     perspective_api_key: str | None = None,
+    on_progress=None,
 ) -> dict:
     """Run live garak when it is installed. Otherwise score the fixture.
 
@@ -533,6 +619,8 @@ def run_garak(
             log_file=log_file,
             mode=mode,
             perspective_api_key=perspective_api_key,
+            cancel_event=cancel_event,
+            on_progress=on_progress,
         )
         if error:
             label = ",".join(group) if group else "garak"
@@ -583,6 +671,62 @@ def _live_summary(items, probe_errors, log_file, work, *, completed_probes) -> d
     }
 
 
+def _watch_garak_process(command: list[str], *, cwd: str, env: dict, timeout_seconds: int, report_path: Path, cancel_event, on_progress):
+    """Run garak and report unique attempts while the report file grows."""
+    if not isinstance(command, list) or not all(isinstance(part, str) for part in command):
+        raise TypeError("subprocess commands must be a list of string arguments")
+    proc = subprocess.Popen(
+        command,
+        cwd=cwd,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        shell=False,
+    )
+    stdout_parts: list[str] = []
+    stderr_parts: list[str] = []
+
+    def _drain(pipe, sink: list[str]) -> None:
+        if pipe is None:
+            return
+        try:
+            sink.append(pipe.read() or "")
+        except Exception:
+            return
+
+    out_thread = threading.Thread(target=_drain, args=(proc.stdout, stdout_parts), daemon=True)
+    err_thread = threading.Thread(target=_drain, args=(proc.stderr, stderr_parts), daemon=True)
+    out_thread.start()
+    err_thread.start()
+    started = time.monotonic()
+    timed_out = False
+    while proc.poll() is None:
+        if cancel_event is not None and cancel_event.is_set():
+            proc.kill()
+            break
+        if timeout_seconds and time.monotonic() - started > timeout_seconds:
+            timed_out = True
+            proc.kill()
+            break
+        if on_progress is not None:
+            on_progress(count_report_attempts(report_path))
+        time.sleep(0.4)
+    if on_progress is not None:
+        on_progress(count_report_attempts(report_path))
+    out_thread.join(timeout=2)
+    err_thread.join(timeout=2)
+
+    class Completed:
+        returncode = proc.returncode if proc.returncode is not None else 1
+        stdout = "".join(stdout_parts)
+        stderr = "".join(stderr_parts)
+
+    if timed_out:
+        raise subprocess.TimeoutExpired(command, timeout_seconds, output=Completed.stdout, stderr=Completed.stderr)
+    return Completed()
+
+
 def _run_probe_group(
     *,
     invoke,
@@ -597,6 +741,8 @@ def _run_probe_group(
     log_file: Path,
     mode: str | None,
     perspective_api_key: str | None,
+    cancel_event=None,
+    on_progress=None,
 ) -> tuple[list[dict], str | None]:
     """One subprocess. A CUDA fault here cannot empty the next group's generations."""
     error = None
@@ -613,17 +759,29 @@ def _run_probe_group(
             target_flag=target_flag,
             name_flag=name_flag,
         )
+        report_path = Path(str(report_prefix) + ".report.jsonl")
         try:
-            completed = _invoke_command(
-                invoke,
-                command,
-                cwd=str(work),
-                env=env,
-                capture_output=True,
-                text=True,
-                timeout=timeout_seconds,
-                check=False,
-            )
+            if invoke is subprocess.run:
+                completed = _watch_garak_process(
+                    command,
+                    cwd=str(work),
+                    env=env,
+                    timeout_seconds=timeout_seconds,
+                    report_path=report_path,
+                    cancel_event=cancel_event,
+                    on_progress=on_progress,
+                )
+            else:
+                completed = _invoke_command(
+                    invoke,
+                    command,
+                    cwd=str(work),
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout_seconds,
+                    check=False,
+                )
         except subprocess.TimeoutExpired as exc:
             stdout = getattr(exc, "stdout", "") or ""
             stderr = getattr(exc, "stderr", "") or ""

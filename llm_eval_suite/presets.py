@@ -26,6 +26,7 @@ def list_presets(
     dataset_rows: int = 50,
     seconds_per_prompt: float | None = None,
     estimate_source: str = "default",
+    suite_rates: dict | None = None,
 ) -> list[dict]:
     presets = load_presets(path)
     rows = []
@@ -35,6 +36,7 @@ def list_presets(
             dataset_rows=dataset_rows,
             seconds_per_prompt=seconds_per_prompt,
             estimate_source=estimate_source,
+            suite_rates=suite_rates,
         )
         rows.append(
             {
@@ -67,8 +69,15 @@ def estimate_preset(
     dataset_rows: int = 50,
     seconds_per_prompt: float | None = None,
     estimate_source: str = "default",
+    suite_rates: dict | None = None,
 ) -> dict:
-    """Prompt ceiling and a runtime estimate. Uncapped garak lists stay unestimated."""
+    """Prompt ceiling and a runtime estimate. Uncapped garak lists stay unestimated.
+
+    ``suite_rates`` maps a suite name to seconds per prompt for this model and
+    endpoint. A missing suite rate means the preset time is still estimating.
+    ``seconds_per_prompt`` is the single-rate path used when a caller already
+    has one rate for every suite.
+    """
     rate = DEFAULT_SECONDS_PER_PROMPT if seconds_per_prompt is None else float(seconds_per_prompt)
     source = estimate_source if seconds_per_prompt is not None else "default"
     garak = body.get("garak") or {}
@@ -100,15 +109,46 @@ def estimate_preset(
         consistency_prompts = rows * int(consistency.get("num_runs") or 3)
     known = [count for count in (garak_prompts, fact_prompts, robust_prompts, consistency_prompts) if count is not None]
     prompt_count = sum(known) if not unbounded else None
-    estimated = None if prompt_count is None else round(prompt_count * rate, 1)
+    if suite_rates is not None and not unbounded:
+        counts = {
+            "garak": garak_prompts or 0,
+            "factcheck": fact_prompts,
+            "robustness": robust_prompts,
+            "consistency": consistency_prompts,
+        }
+        used = []
+        total_seconds = 0.0
+        missing = False
+        for name, count in counts.items():
+            if not count:
+                continue
+            suite_rate = suite_rates.get(name)
+            if suite_rate is None:
+                missing = True
+                break
+            used.append(float(suite_rate))
+            total_seconds += count * float(suite_rate)
+        if missing or not used:
+            estimated = None
+            source = "estimating"
+            rate = None
+        else:
+            estimated = round(total_seconds, 1)
+            source = "measured"
+            rate = sum(used) / len(used)
+    else:
+        estimated = None if prompt_count is None else round(prompt_count * rate, 1)
+        if estimated is None and source != "estimating":
+            source = "unbounded"
     return {
         "probe_count": probe_count,
         "prompt_count": prompt_count,
         "factcheck_count": fact_prompts,
         "garak_prompt_count": garak_prompts,
         "estimated_seconds": estimated,
-        "seconds_per_prompt": round(rate, 4),
-        "estimate_source": source if estimated is not None else "unbounded",
+        "seconds_per_prompt": None if rate is None else round(rate, 4),
+        "estimate_source": source if estimated is not None else source,
+        "suite_rates": dict(suite_rates or {}),
     }
 
 
