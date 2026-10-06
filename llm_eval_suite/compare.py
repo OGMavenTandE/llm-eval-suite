@@ -108,9 +108,16 @@ def compare_runs(left: dict, right: dict, left_items: list[dict], right_items: l
                 "right_passed": other.get("passed"),
             }
         )
-    unpaired_by_category: dict[str, int] = defaultdict(int)
-    for item in left_unpaired + right_unpaired:
-        unpaired_by_category[str(item.get("category") or "")] += 1
+    left_by_category: dict[str, int] = defaultdict(int)
+    right_by_category: dict[str, int] = defaultdict(int)
+    for item in left_unpaired:
+        left_by_category[str(item.get("category") or "")] += 1
+    for item in right_unpaired:
+        right_by_category[str(item.get("category") or "")] += 1
+    unpaired_by_category = {
+        key: {"left": left_by_category.get(key, 0), "right": right_by_category.get(key, 0)}
+        for key in [*left_by_category.keys(), *right_by_category.keys()]
+    }
     item_deltas.sort(key=lambda row: (-abs(row["delta"]), -row["delta"], str(row.get("id") or "")))
     return {
         "left_run_id": left.get("run_id"),
@@ -121,7 +128,9 @@ def compare_runs(left: dict, right: dict, left_items: list[dict], right_items: l
         "right_created_at": _run_stamp(right),
         "unchanged_prompts": unchanged_prompts,
         "unpaired_prompts": len(left_unpaired) + len(right_unpaired),
-        "unpaired_by_category": dict(unpaired_by_category),
+        "unpaired_left": len(left_unpaired),
+        "unpaired_right": len(right_unpaired),
+        "unpaired_by_category": unpaired_by_category,
         "left_invalid": left_invalid,
         "right_invalid": right_invalid,
         "categories": categories,
