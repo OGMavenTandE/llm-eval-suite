@@ -27,10 +27,16 @@ from llm_eval.models.ollama_model import OllamaModel
 from llm_eval.models.openai_model import OpenAIModel
 from llm_eval_suite.compare import compare_runs
 from llm_eval_suite.connections import ConnectionStore, build_model, judge_max_tokens, judge_timeout
-from llm_eval_suite.council import judge_generate, run_council, template_narrative, unmatched_numbers
-from llm_eval_suite.presets import estimate_preset, load_presets
+from llm_eval_suite.council import (
+    judge_generate,
+    run_council,
+    strip_meta_notes,
+    template_narrative,
+    unmatched_numbers,
+)
+from llm_eval_suite.presets import MEASURED_ESTIMATE_SCALE, estimate_preset, load_presets
 from llm_eval_suite.report_html import render_report
-from llm_eval_suite.runs import RunManager, factcheck_empty_validity, smooth_item_seconds
+from llm_eval_suite.runs import RunManager, factcheck_empty_validity, finished_progress, smooth_item_seconds
 from llm_eval_suite.scoring import pass_percent_text, scorecard, withhold_category_scores
 from llm_eval_suite.timing import TimingStore
 from llm_eval_suite.suites import planned_suite_total, score_fact
@@ -219,23 +225,19 @@ def test_eta_uses_the_suite_total_and_clears_when_finished(tmp_path: Path):
     manager._stamp_eta(run_dir, unknown, "eta")
     assert unknown["eta_seconds"] is None
     now = time.perf_counter()
-    manager._eta_state[("eta", "garak")] = {"started": now - 1.0, "last": now - 0.4, "rate": None}
+    manager._eta_state[("eta", "garak")] = {"started": now - 5.0, "last": now, "done": 0, "rate": None}
     early = {"name": "garak", "total": 10, "done": 1, "status": "running"}
     manager._stamp_eta(run_dir, early, "eta")
     assert early["eta_seconds"] is None
     assert early["eta_source"] == "estimating"
-    early["done"] = 3
+    # The first completed attempt starts the rate clock. The 5s before it is startup.
+    assert manager._eta_state[("eta", "garak")].get("rate") is None
+    manager._eta_state[("eta", "garak")]["timed_at"] = time.perf_counter() - 2.0
+    early["done"] = 5
     manager._stamp_eta(run_dir, early, "eta")
-    assert early["eta_seconds"] is not None
-    assert early["eta_seconds"] < 175 * 60
-    # A later poll that suddenly sees many attempts must not price each one
-    # at the poll gap. The rate is suite elapsed time divided by attempts.
-    started = time.perf_counter() - 20.0
-    manager._eta_state[("eta", "burst")] = {"started": started, "mark": started, "done": 10, "rate": 2.0}
-    burst = {"name": "burst", "total": 78, "done": 40, "status": "running"}
-    manager._stamp_eta(run_dir, burst, "eta")
-    assert burst["seconds_per_prompt"] == pytest.approx(0.5, rel=0.05)
-    assert burst["eta_seconds"] == pytest.approx(19.0, rel=0.05)
+    assert early["seconds_per_prompt"] == pytest.approx(0.5, abs=0.05)
+    assert early["eta_seconds"] == pytest.approx(2.5, abs=0.3)
+    assert early["seconds_per_prompt"] < 1.0
     early["status"] = "completed"
     manager._stamp_eta(run_dir, early, "eta")
     assert early["eta_seconds"] is None
@@ -273,6 +275,8 @@ def test_compare_surfaces_a_gain_among_zeros():
     )
     assert compared["items"][0]["id"] == "39"
     assert compared["items"][0]["delta"] == 1.0
+    assert len(compared["items"]) == 1
+    assert compared["unchanged_prompts"] == 39
 
 
 def test_number_words_and_expected_aliases(tmp_path: Path):
@@ -795,8 +799,14 @@ def test_compare_orders_by_time_and_labels_the_runs():
     compared = compare_runs(later, earlier, [], [])
     assert compared["left_run_id"] == "old"
     assert compared["right_run_id"] == "new"
-    assert compared["left_label"].startswith("qwen2.5, ")
-    assert compared["right_label"].startswith("qwen3, ")
+    assert compared["left_label"] == "qwen2.5"
+    assert compared["right_label"] == "qwen3"
+    assert compared["left_created_at"] == "2026-10-06T12:00:00+00:00"
+    assert compared["right_created_at"] == "2026-10-06T18:00:00+00:00"
+    same = [{"id": "fact-1", "score": 1.0, "prompt": "Capital of France?"}]
+    flat = compare_runs(earlier, later, same, same)
+    assert flat["items"] == []
+    assert flat["unchanged_prompts"] == 1
 
 
 def test_chairman_ranking_point_passes_the_number_guard():
@@ -857,3 +867,156 @@ def test_chairman_ranking_point_passes_the_number_guard():
     assert council["narrative"] == "Councils rankings 4.0"
     assert council["source_label"].startswith("Council:")
     assert council["rankings"][0]["points"] == 4.0
+
+
+def test_garak_eta_starts_after_the_first_attempt(tmp_path: Path):
+    manager = RunManager(tmp_path / "runs")
+    run_dir = manager.runs_dir / "warmup"
+    manager._write_run(run_dir, {"run_id": "warmup", "estimate": {"suite_rates": {}}})
+    started = time.perf_counter() - 5.0
+    manager._eta_state[("warmup", "garak")] = {"started": started, "done": 0, "rate": None}
+    first = {"name": "garak", "total": 78, "done": 1, "status": "running"}
+    manager._stamp_eta(run_dir, first, "warmup")
+    assert first["eta_seconds"] is None
+    assert manager._eta_state[("warmup", "garak")].get("rate") is None
+    manager._eta_state[("warmup", "garak")]["timed_at"] = time.perf_counter() - 4.0
+    first["done"] = 9
+    manager._stamp_eta(run_dir, first, "warmup")
+    # 8 attempts in 4 seconds. Folding in the 5s startup would be 9s / 9 attempts.
+    assert first["seconds_per_prompt"] == pytest.approx(0.5, abs=0.05)
+    assert first["eta_seconds"] == pytest.approx(34.5, abs=1.0)
+
+
+def test_finished_garak_row_stays_done_for_the_next_suite(tmp_path: Path):
+    manager = RunManager(tmp_path / "runs")
+    run_dir = manager.runs_dir / "progress"
+    manager._write_run(run_dir, {"run_id": "progress", "status": "running"})
+    garak = finished_progress(
+        {"name": "garak", "done": 78, "total": 78, "status": "running"},
+        30.7,
+    )
+    assert garak["status"] == "completed"
+    assert garak["elapsed_seconds"] == 30.7
+    assert garak["eta_seconds"] is None
+    manager._update_progress(run_dir, garak, [garak])
+    fact = {"name": "factcheck", "done": 1, "total": 50, "status": "running", "eta_seconds": None}
+    manager._update_progress(run_dir, fact, [garak])
+    rows = {row["name"]: row for row in manager._read_run(run_dir)["progress"]["suites"]}
+    assert rows["garak"]["status"] == "completed"
+    assert rows["garak"]["elapsed_seconds"] == 30.7
+    assert rows["factcheck"]["status"] == "running"
+
+
+def test_measured_estimate_uses_the_observed_ratio(monkeypatch):
+    monkeypatch.setattr("llm_eval_suite.presets.garak_is_installed", lambda: False)
+    monkeypatch.setattr("llm_eval_suite.presets.planned_garak_attempts", lambda *_args, **_kwargs: None)
+    assert MEASURED_ESTIMATE_SCALE == pytest.approx(((30.7 / 35.0) + (27.8 / 32.0)) / 2.0)
+    body = {
+        "garak": {"probes": ["dan.Dan_11_0"], "max_prompts_per_probe": 10, "generations": 1},
+        "factcheck": {"max_items": 10, "trials": 1},
+    }
+    estimate = estimate_preset(
+        body,
+        dataset_rows=10,
+        suite_rates={"garak": 1.0, "factcheck": 1.0},
+    )
+    assert estimate["estimate_source"] == "measured"
+    assert estimate["prompt_count"] == 20
+    assert estimate["estimated_seconds"] == round(20 * MEASURED_ESTIMATE_SCALE, 1)
+    unscaled = estimate_preset(body, dataset_rows=10, seconds_per_prompt=1.0, estimate_source="measured")
+    assert unscaled["estimated_seconds"] == 20.0
+
+
+def test_complement_and_empty_chairman_retry():
+    assert unmatched_numbers("31.6% failing", {"pass_percent": 68.4}) == []
+    assert unmatched_numbers("99% invented", {"pass_percent": 68.4}) == ["99%"]
+    assert unmatched_numbers("The gap is 10.", {"left": 40, "right": 30}) == []
+    assert unmatched_numbers("Together 70.", {"left": 40, "right": 30}) == []
+    cleaned = strip_meta_notes(
+        "The jailbreak probes failed. I omitted numbers that were not in the results."
+    )
+    assert "omitted" not in cleaned.lower()
+    assert "failed" in cleaned
+
+    run = {
+        "run_id": "council",
+        "preset": "quick",
+        "status": "completed",
+        "validity": "ok",
+        "connection": {"model": "under-test", "type": "ollama"},
+        "scorecard": {
+            "failure_count": 1,
+            "live_item_count": 2,
+            "item_count": 2,
+            "categories": [],
+            "overall_pass_rate": 0.684,
+            "overall_pass_percent": 68.4,
+        },
+    }
+    items = [
+        {
+            "id": "a",
+            "passed": False,
+            "score": 0.0,
+            "source": "live",
+            "counts_toward_score": True,
+            "prompt": "Q",
+            "response": "no",
+            "category": "hallucination_factuality",
+        }
+    ]
+    chair_calls = {"n": 0}
+
+    def generate_for(_judge):
+        def generate(prompt: str) -> str:
+            if prompt.startswith("TASK: rank"):
+                return "RANKING: Review A > Review B"
+            if prompt.startswith("TASK: chair"):
+                chair_calls["n"] += 1
+                if chair_calls["n"] == 1:
+                    return ""
+                return (
+                    "31.6% failing. The failure count is 1. "
+                    "I omitted numbers that were not in the results."
+                )
+            return "The failure count is 1."
+
+        return generate
+
+    judges = [
+        {"model": "qwen3:8b", "type": "ollama", "base_url": "http://127.0.0.1:11434"},
+        {"model": "llama3.2:3b", "type": "ollama", "base_url": "http://127.0.0.1:11434"},
+    ]
+    council = run_council(
+        run,
+        items,
+        judges,
+        under_test=run["connection"],
+        generate_for=generate_for,
+    )
+    assert chair_calls["n"] == 2
+    assert council["source_label"].startswith("Council:")
+    assert council["mode"] == "council"
+    assert "31.6%" in council["narrative"]
+    assert "omitted" not in council["narrative"].lower()
+    assert council["number_guard"] == "pass"
+
+    def empty_for(_judge):
+        def generate(prompt: str) -> str:
+            if prompt.startswith("TASK: rank"):
+                return "RANKING: Review A > Review B"
+            if prompt.startswith("TASK: chair"):
+                return "   "
+            return "The failure count is 1."
+
+        return generate
+
+    fallback = run_council(
+        run,
+        items,
+        judges,
+        under_test=run["connection"],
+        generate_for=empty_for,
+    )
+    assert fallback["source_label"] == "Template"
+    assert fallback["mode"] == "template"

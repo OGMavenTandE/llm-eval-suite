@@ -448,9 +448,15 @@ function renderProgress(run) {
     const raw = suite.status || suite.source || "";
     let eta = raw ? raw.charAt(0).toUpperCase() + raw.slice(1).replace(/_/g, " ") : "";
     const showEta = running && !suiteDone && suite.eta_seconds != null && Number(suite.eta_seconds) > 0;
-    if (showEta) {
+    if (suite.status === "cancelled") {
+      eta = "Stopped";
+    } else if (suiteDone) {
+      eta = suite.elapsed_seconds != null ? "Done in " + formatSeconds(suite.elapsed_seconds) : "Done";
+    } else if (showEta) {
       const rate = suite.seconds_per_prompt == null ? "" : " at " + suite.seconds_per_prompt + " s per prompt";
       eta = "About " + formatSeconds(suite.eta_seconds) + " left" + rate;
+    } else if (running && total != null && done >= total && total > 0) {
+      eta = suite.elapsed_seconds != null ? "Done in " + formatSeconds(suite.elapsed_seconds) : "Done";
     } else if (running && !suiteDone) {
       eta = "Estimating…";
     }
@@ -793,6 +799,12 @@ $("download-report").addEventListener("click", () => {
 
 /* ---------- Compare ---------- */
 
+function compareSlotLabel(name, createdAt, fallback) {
+  const title = name || fallback;
+  const when = formatDate(createdAt);
+  return when ? title + ", " + when : title;
+}
+
 function compareBar(label, rate, later, invalid) {
   const withheld = !!invalid;
   const pct = rate == null ? 0 : Math.max(0, Math.min(100, Number(rate) * 100));
@@ -810,8 +822,8 @@ $("do-compare").addEventListener("click", async () => {
   try {
     const data = await api("/api/compare?left=" + encodeURIComponent($("compare-left").value) + "&right=" + encodeURIComponent($("compare-right").value));
     const invalidSide = !!(data.left_invalid || data.right_invalid);
-    const leftLabel = data.left_label || "Earlier";
-    const rightLabel = data.right_label || "Later";
+    const leftLabel = compareSlotLabel(data.left_label, data.left_created_at, "Earlier");
+    const rightLabel = compareSlotLabel(data.right_label, data.right_created_at, "Later");
     const cats = data.categories.map((row) => {
       const delta = invalidSide ? { text: "Not compared", cls: "delta-flat" } : formatDelta(row.delta, true);
       return '<div class="compare-row"><div class="meter-name">' + escapeHtml(row.label) + "</div>" +
@@ -835,6 +847,9 @@ $("do-compare").addEventListener("click", async () => {
             return [td(row.prompt, "clip"), td(formatScore(row.left_score), "num"), td(formatScore(row.right_score), "num"), td(delta.text, "num " + delta.cls)];
           }),
         ) + "</div></div>";
+    } else if (!invalidSide && data.unchanged_prompts) {
+      html += '<div class="panel"><div class="panel-head"><h3>Prompts that changed most</h3>' +
+        '<p class="hint">No prompt scores changed.</p></div></div>';
     }
     out.innerHTML = html;
   } catch (err) {

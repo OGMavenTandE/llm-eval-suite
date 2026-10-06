@@ -30,6 +30,22 @@ ETA_SMOOTHING = 0.3
 ETA_MIN_ITEMS = 3
 
 
+def finished_progress(progress: dict, elapsed_seconds: float | None) -> dict:
+    """Keep a finished suite visible as done, with its elapsed time.
+
+    The next suite replaces the active progress row. This snapshot is what
+    stays in the list, so a finished garak row does not fall back to
+    Estimating.
+    """
+    done = dict(progress)
+    if done.get("status") != "cancelled":
+        done["status"] = "completed"
+    done["eta_seconds"] = None
+    if elapsed_seconds is not None:
+        done["elapsed_seconds"] = round(float(elapsed_seconds), 1)
+    return done
+
+
 def smooth_item_seconds(previous: float | None, sample: float, *, fallback: float, alpha: float = ETA_SMOOTHING) -> float:
     """Blend the latest item time into the running per-item rate."""
     base = fallback if previous is None else previous
@@ -426,15 +442,22 @@ class RunManager:
                 # completed_ids at start should be the pre-resume set, not grow mid-run
                 ctx.completed_ids = set(self._completed_ids_snapshot(existing_items))
                 result = runner.run(ctx, suite)
+                state = self._eta_state.get((run_id, suite_name)) or {}
+                elapsed = None
+                if state.get("started") is not None:
+                    elapsed = time.perf_counter() - float(state["started"])
                 progress["status"] = "cancelled" if result.get("cancelled") or cancel.is_set() else "completed"
                 progress["done"] = result.get("done", progress["done"])
                 progress["total"] = result.get("total", progress["done"])
                 progress["source"] = result.get("source")
                 progress["label"] = result.get("label")
-                progress["eta_seconds"] = None
+                progress.update(finished_progress(progress, elapsed))
                 summary = {key: result[key] for key in SUITE_FIELDS if key in result}
                 summary["done"] = progress["done"]
                 summary["total"] = progress["total"]
+                summary["status"] = progress["status"]
+                if progress.get("elapsed_seconds") is not None:
+                    summary["elapsed_seconds"] = progress["elapsed_seconds"]
                 suites.append(summary)
                 if (
                     self.timing is not None
@@ -557,13 +580,18 @@ class RunManager:
         if "mark" not in state:
             state["mark"] = state.get("last", state.get("started", now))
         previous_done = int(state.get("done") or 0)
-        # Rate is time since this suite started, divided by attempts so far.
-        # A poll that only sees a burst is not the time for one prompt, and a
-        # new subprocess that reports a smaller count does not reset the rate.
+        # The clock for the rate starts at the first completed attempt.
+        # Garak's process startup sits before that attempt and is not a prompt.
+        # A later poll that reports a smaller count does not move the baseline.
         if done > previous_done and done > 0:
-            elapsed = max(0.0, now - float(state.get("started", now)))
-            if elapsed > 0:
-                state["rate"] = elapsed / done
+            if state.get("timed_at") is None:
+                state["timed_at"] = now
+                state["timed_done"] = done
+            else:
+                gained = done - int(state.get("timed_done") or 0)
+                elapsed = max(0.0, now - float(state["timed_at"]))
+                if gained > 0 and elapsed > 0:
+                    state["rate"] = elapsed / gained
             state["mark"] = now
             state["done"] = done
         suite_rates = estimate.get("suite_rates") or {}

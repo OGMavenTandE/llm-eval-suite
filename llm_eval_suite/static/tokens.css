@@ -489,7 +489,8 @@ td.strong { font-weight: 600; }
 }
 .compare-row:first-child { border-top: 0; padding-top: 0; }
 .compare-bars { display: flex; flex-direction: column; gap: 6px; }
-.compare-bar { display: grid; grid-template-columns: 52px minmax(0, 1fr) 54px; gap: var(--space-3); align-items: center; font-size: var(--text-xs); color: var(--ink-2); }
+.compare-bar { display: grid; grid-template-columns: max-content minmax(0, 1fr) 54px; gap: var(--space-3); align-items: center; font-size: var(--text-xs); color: var(--ink-2); }
+.compare-bar > span:first-child { white-space: nowrap; }
 .compare-bar .meter { height: 8px; }
 .compare-bar .meter-fill { background: var(--ink-3); }
 .compare-bar.later .meter-fill { background: var(--accent); }
