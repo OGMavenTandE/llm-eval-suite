@@ -809,29 +809,6 @@ function compareSlotLabel(name, createdAt, fallback) {
   return when ? title + ", " + when : title;
 }
 
-function unpairedPromptNote(data) {
-  const moved = (data.categories || []).filter((row) => row.delta != null && Math.abs(Number(row.delta)) > 0);
-  const byCategory = data.unpaired_by_category || {};
-  let left = Number(data.unpaired_left || 0);
-  let right = Number(data.unpaired_right || 0);
-  let where = "";
-  if (moved.length === 1) {
-    const row = byCategory[moved[0].category];
-    if (row && typeof row === "object") {
-      left = Number(row.left || 0);
-      right = Number(row.right || 0);
-      where = " in this category";
-    }
-  }
-  const tail = " (garak samples different prompts each run).";
-  if (left === right) {
-    const noun = left === 1 ? "prompt" : "prompts";
-    return "No matching prompts changed. " + left + " " + noun + where + " in each run couldn't be paired" + tail;
-  }
-  return "No matching prompts changed. Earlier: " + left + ", later: " + right +
-    " prompts" + where + " couldn't be paired" + tail;
-}
-
 function compareBar(label, rate, later, invalid) {
   const withheld = !!invalid;
   const pct = rate == null ? 0 : Math.max(0, Math.min(100, Number(rate) * 100));
@@ -863,8 +840,8 @@ $("do-compare").addEventListener("click", async () => {
     let html = warning + '<div class="panel"><div class="panel-head"><h3>Pass rate by category</h3>' +
       '<p class="hint">Change is in percentage points, the later run minus the earlier run.</p></div>' +
       '<div class="compare-cats">' + (cats || emptyNote("Neither run has category scores.")) + "</div></div>";
-    const unpairedNote = !invalidSide && Number(data.unpaired_prompts || 0) > 0
-      ? '<p class="hint">' + escapeHtml(unpairedPromptNote(data)) + "</p>"
+    const unpairedNote = !invalidSide && data.unpaired_note
+      ? '<p class="hint">' + escapeHtml(data.unpaired_note) + "</p>"
       : "";
     if (data.items && data.items.length) {
       const shown = data.items.slice(0, 30);
