@@ -1,0 +1,50 @@
+{"prompt": "What is the capital of France?", "expected_answer": "Paris", "category": "geography", "source": "public geographic fact"}
+{"prompt": "What is the capital of Japan?", "expected_answer": "Tokyo", "category": "geography", "source": "public geographic fact"}
+{"prompt": "What is the capital of Canada?", "expected_answer": "Ottawa", "category": "geography", "source": "public geographic fact"}
+{"prompt": "What is the largest ocean on Earth?", "expected_answer": "Pacific Ocean", "category": "geography", "source": "public geographic fact"}
+{"prompt": "What planet is closest to the Sun?", "expected_answer": "Mercury", "category": "geography", "source": "public geographic fact"}
+{"prompt": "What is the longest river in the world?", "expected_answer": "Nile", "category": "geography", "source": "public geographic fact"}
+{"prompt": "On which continent is the Sahara Desert?", "expected_answer": "Africa", "category": "geography", "source": "public geographic fact"}
+{"prompt": "What is the capital of Australia?", "expected_answer": "Canberra", "category": "geography", "source": "public geographic fact"}
+{"prompt": "What ocean lies between Europe and North America?", "expected_answer": "Atlantic Ocean", "category": "geography", "source": "public geographic fact"}
+{"prompt": "What is the capital of Italy?", "expected_answer": "Rome", "category": "geography", "source": "public geographic fact"}
+{"prompt": "What is the chemical symbol for water?", "expected_answer": "H2O", "category": "science", "source": "public science fact"}
+{"prompt": "What gas do plants absorb during photosynthesis?", "expected_answer": "carbon dioxide", "category": "science", "source": "public science fact"}
+{"prompt": "What is the atomic number of carbon?", "expected_answer": "6", "category": "science", "source": "public science fact"}
+{"prompt": "How many planets are in the Solar System?", "expected_answer": "8", "category": "science", "source": "public science fact"}
+{"prompt": "What is the boiling point of water in Celsius at sea level?", "expected_answer": "100", "category": "science", "source": "public science fact"}
+{"prompt": "What force pulls objects toward Earth?", "expected_answer": "gravity", "category": "science", "source": "public science fact"}
+{"prompt": "What is the chemical symbol for gold?", "expected_answer": "Au", "category": "science", "source": "public science fact"}
+{"prompt": "How many bones are in the adult human body?", "expected_answer": "206", "category": "science", "source": "public science fact"}
+{"prompt": "What planet is known for its rings?", "expected_answer": "Saturn", "category": "science", "source": "public science fact"}
+{"prompt": "What is the speed of light in a vacuum, in km/s, to the nearest thousand?", "expected_answer": "300000", "category": "science", "source": "public science fact"}
+{"prompt": "What is 12 multiplied by 13?", "expected_answer": "156", "category": "math", "source": "public arithmetic"}
+{"prompt": "How many sides does a hexagon have?", "expected_answer": "6", "category": "math", "source": "public arithmetic"}
+{"prompt": "What is the square root of 144?", "expected_answer": "12", "category": "math", "source": "public arithmetic"}
+{"prompt": "What is 2 raised to the power of 10?", "expected_answer": "1024", "category": "math", "source": "public arithmetic"}
+{"prompt": "What is 15 percent of 200?", "expected_answer": "30", "category": "math", "source": "public arithmetic"}
+{"prompt": "What is the sum of angles in a triangle, in degrees?", "expected_answer": "180", "category": "math", "source": "public arithmetic"}
+{"prompt": "What is 7 times 8?", "expected_answer": "56", "category": "math", "source": "public arithmetic"}
+{"prompt": "How many degrees are in a right angle?", "expected_answer": "90", "category": "math", "source": "public arithmetic"}
+{"prompt": "What is 100 divided by 4?", "expected_answer": "25", "category": "math", "source": "public arithmetic"}
+{"prompt": "What is the next prime number after 7?", "expected_answer": "11", "category": "math", "source": "public arithmetic"}
+{"prompt": "In what year did the first crewed Moon landing occur?", "expected_answer": "1969", "category": "history", "source": "public historical fact"}
+{"prompt": "Who was the first President of the United States?", "expected_answer": "George Washington", "category": "history", "source": "public historical fact"}
+{"prompt": "In what year did World War II end?", "expected_answer": "1945", "category": "history", "source": "public historical fact"}
+{"prompt": "Who wrote the play Romeo and Juliet?", "expected_answer": "William Shakespeare", "category": "history", "source": "public historical fact"}
+{"prompt": "What wall in Europe was opened in 1989?", "expected_answer": "Berlin Wall", "category": "history", "source": "public historical fact"}
+{"prompt": "Which country gifted the Statue of Liberty to the United States?", "expected_answer": "France", "category": "history", "source": "public historical fact"}
+{"prompt": "In what century did Christopher Columbus first sail to the Americas?", "expected_answer": "15th", "category": "history", "source": "public historical fact"}
+{"prompt": "Who was the British prime minister for most of World War II?", "expected_answer": "Winston Churchill", "category": "history", "source": "public historical fact"}
+{"prompt": "What document, signed in 1776, declared the American colonies independent?", "expected_answer": "Declaration of Independence", "category": "history", "source": "public historical fact"}
+{"prompt": "Which ancient civilization built the pyramids at Giza?", "expected_answer": "ancient Egypt", "category": "history", "source": "public historical fact"}
+{"prompt": "How many stripes are on the flag of the United States?", "expected_answer": "13", "category": "civics", "source": "public civics fact"}
+{"prompt": "How many stars are on the flag of the United States?", "expected_answer": "50", "category": "civics", "source": "public civics fact"}
+{"prompt": "How many amendments are in the United States Bill of Rights?", "expected_answer": "10", "category": "civics", "source": "public civics fact"}
+{"prompt": "What is the supreme law of the United States?", "expected_answer": "the Constitution", "category": "civics", "source": "public civics fact"}
+{"prompt": "How many voting members are in the United States House of Representatives?", "expected_answer": "435", "category": "civics", "source": "public civics fact"}
+{"prompt": "How many United States senators does each state have?", "expected_answer": "2", "category": "civics", "source": "public civics fact"}
+{"prompt": "What are the three branches of the United States government?", "expected_answer": "legislative, executive, and judicial", "category": "civics", "source": "public civics fact"}
+{"prompt": "Who signs federal bills into law in the United States?", "expected_answer": "the President", "category": "civics", "source": "public civics fact"}
+{"prompt": "What is the capital of the United States?", "expected_answer": "Washington, D.C.", "category": "civics", "source": "public civics fact"}
+{"prompt": "How many years is one term for a United States president?", "expected_answer": "4", "category": "civics", "source": "public civics fact"}

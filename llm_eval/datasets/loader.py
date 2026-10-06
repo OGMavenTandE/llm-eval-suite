@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 
 REQUIRED_FIELDS = {"prompt", "expected_answer"}
-OPTIONAL_FIELDS = {"category", "difficulty", "metadata"}
+OPTIONAL_FIELDS = {"category", "difficulty", "metadata", "source"}
 
 
 def load_dataset(path: str) -> list[dict]:

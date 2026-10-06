@@ -1,0 +1,68 @@
+{
+  "quick": {
+    "label": "Quick",
+    "description": "A short pass: five garak probes capped at 25 prompts each, up to 50 fact-check questions, a RAMPART smoke check, and a Dioptra record.",
+    "warning": "",
+    "garak": {
+      "probes": [
+        "dan.Dan_11_0",
+        "promptinject.HijackHateHumans",
+        "encoding.InjectBase64",
+        "leakreplay.LiteratureCloze",
+        "lmrc.Profanity"
+      ],
+      "max_prompts_per_probe": 25,
+      "generations": 1
+    },
+    "factcheck": {"max_items": 50, "trials": 1},
+    "robustness": null,
+    "consistency": null,
+    "rampart": {"mode": "smoke"},
+    "dioptra": {"mode": "record"}
+  },
+  "standard": {
+    "label": "Standard",
+    "description": "Garak's fast probe list, capped at 64 prompts each, the full fact-check set, and robustness on 20 questions. RAMPART stays a smoke check.",
+    "warning": "",
+    "garak": {
+      "probes": "dan,promptinject,encoding,latentinjection,realtoxicityprompts,malwaregen,misleading,packagehallucination,snowball,xss,grandma,leakreplay,lmrc,continuation,web_injection,goodside,donotanswer",
+      "max_prompts_per_probe": 64,
+      "generations": 1
+    },
+    "factcheck": {"max_items": null, "trials": 1},
+    "robustness": {"max_items": 20, "perturbations": ["case"]},
+    "consistency": null,
+    "rampart": {"mode": "smoke"},
+    "dioptra": {"mode": "record"}
+  },
+  "full": {
+    "label": "Full",
+    "description": "Garak's active probes at default settings, the fact-check set, robustness, and a 3-run consistency check. This can take many hours on one local model.",
+    "warning": "Full can make tens of thousands of model calls when garak is installed.",
+    "garak": {
+      "probes": "all",
+      "max_prompts_per_probe": null,
+      "generations": 5
+    },
+    "factcheck": {"max_items": null, "trials": 1},
+    "robustness": {"max_items": null, "perturbations": ["case", "typo", "rephrase"]},
+    "consistency": {"max_items": 20, "num_runs": 3},
+    "rampart": {"mode": "smoke"},
+    "dioptra": {"mode": "record"}
+  },
+  "government_te": {
+    "label": "Government T&E",
+    "description": "Standard coverage plus three fact-check trials and a Dioptra evidence record, for a Department of War test and evaluation packet. Retrieval stays empty until a retrieval set is provided.",
+    "warning": "Repeated trials multiply the fact-check calls by three.",
+    "garak": {
+      "probes": "dan,promptinject,encoding,latentinjection,realtoxicityprompts,malwaregen,misleading,packagehallucination,snowball,xss,grandma,leakreplay,lmrc,continuation,web_injection,goodside,donotanswer",
+      "max_prompts_per_probe": 64,
+      "generations": 1
+    },
+    "factcheck": {"max_items": null, "trials": 3},
+    "robustness": {"max_items": 20, "perturbations": ["case"]},
+    "consistency": null,
+    "rampart": {"mode": "smoke"},
+    "dioptra": {"mode": "record"}
+  }
+}

@@ -37,6 +37,10 @@ api = [
     "uvicorn[standard]>=0.23",
     "httpx>=0.24",
 ]
+hf = [
+    "torch",
+    "transformers",
+]
 
 [project.scripts]
 llm-eval = "llm_eval.cli:main"
@@ -44,6 +48,7 @@ llm-eval-api = "apps.api.main:run_server"
 llm-eval-dioptra = "llm_eval.dioptra.cli:main"
 llm-eval-rampart = "llm_eval.rampart.cli:main"
 llm-eval-garak = "llm_eval.garak.cli:main"
+llm-eval-suite = "llm_eval_suite.app:main"
 
 [project.urls]
 Homepage = "https://github.com/OGMavenTandE/llm-eval-suite"
@@ -52,7 +57,10 @@ Issues = "https://github.com/OGMavenTandE/llm-eval-suite/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["llm_eval*", "apps*"]
+include = ["llm_eval*", "apps*", "llm_eval_suite*"]
+
+[tool.setuptools.package-data]
+llm_eval_suite = ["static/*", "presets.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LLM Eval Suite</title>
+  <link rel="stylesheet" href="/static/tokens.css">
+</head>
+<body>
+<header>
+  <h1>LLM Eval Suite</h1>
+  <p class="muted">Point at a model, pick a preset, and run a local evaluation. Nothing is sent off this computer unless you choose a cloud endpoint.</p>
+  <nav>
+    <button class="tab" data-tab="connect">Connect</button>
+    <button class="tab" data-tab="run">Run</button>
+    <button class="tab" data-tab="results">Results</button>
+    <button class="tab" data-tab="compare">Compare</button>
+    <button class="tab" data-tab="judges">Judges</button>
+  </nav>
+</header>
+<main>
+  <section id="connect" class="panel">
+    <h2>Connect a model</h2>
+    <p class="muted">Local servers do not need an API key. Leave it blank for Ollama, LM Studio, llama.cpp, and other OpenAI-compatible endpoints on this machine.</p>
+    <label for="conn-name">Name</label>
+    <input id="conn-name" value="Local model">
+    <label for="conn-type">Type</label>
+    <select id="conn-type">
+      <option value="ollama">Ollama</option>
+      <option value="openai">OpenAI-compatible endpoint</option>
+      <option value="hf">Hugging Face folder</option>
+      <option value="nanogpt">nanoGPT checkpoint</option>
+    </select>
+    <label for="conn-url">Base URL</label>
+    <input id="conn-url" value="http://127.0.0.1:11434" placeholder="http://127.0.0.1:11434">
+    <label for="conn-model">Model name</label>
+    <input id="conn-model" placeholder="llama3.2:3b">
+    <div class="row">
+      <button id="list-models" type="button">List Ollama models</button>
+      <select id="ollama-models"></select>
+    </div>
+    <label for="conn-key">API key (optional)</label>
+    <input id="conn-key" type="password" autocomplete="off">
+    <label for="conn-mode">Mode</label>
+    <select id="conn-mode">
+      <option value="chat">Chat completions</option>
+      <option value="completions">Completions (base models, no chat template)</option>
+    </select>
+    <label for="conn-context">Max context (tokens, optional)</label>
+    <input id="conn-context" type="number" min="8" placeholder="1024 for GPT-2">
+    <label for="conn-folder">Folder or checkpoint path</label>
+    <input id="conn-folder" placeholder="C:\models\gpt2-medium">
+    <div class="row">
+      <button id="detect-path" type="button">Detect path</button>
+      <button id="convert-nanogpt" type="button">Convert to Hugging Face folder</button>
+    </div>
+    <p id="detect-note" class="muted"></p>
+    <label for="convert-out">Converter output folder</label>
+    <input id="convert-out" placeholder="C:\models\gpt2-export">
+    <div id="cloud-banner" class="banner hidden">This endpoint is not on this computer. Prompts will leave the machine.</div>
+    <div class="row">
+      <button id="test-connection" class="primary" type="button">Test connection</button>
+      <button id="save-connection" type="button">Save connection</button>
+    </div>
+    <pre id="test-result" class="hidden"></pre>
+    <h3>Saved connections</h3>
+    <div id="connection-list"></div>
+  </section>
+
+  <section id="run" class="panel hidden">
+    <h2>Run an evaluation</h2>
+    <label for="run-connection">Connection</label>
+    <select id="run-connection"></select>
+    <label for="run-preset">Preset</label>
+    <select id="run-preset"></select>
+    <p id="preset-note" class="muted"></p>
+    <div id="preset-warning" class="banner hidden"></div>
+    <label for="run-dataset">Fact-check set</label>
+    <select id="run-dataset">
+      <option value="sample">Sample public facts (50)</option>
+    </select>
+    <label for="dataset-file">Upload CSV or JSONL (prompt, expected_answer, optional category and source)</label>
+    <input id="dataset-file" type="file" accept=".jsonl,.csv,text/csv,application/json">
+    <p id="dataset-note" class="muted"></p>
+    <div class="row">
+      <button id="start-run" class="primary" type="button">Run</button>
+      <button id="cancel-run" type="button" disabled>Cancel</button>
+    </div>
+    <div id="progress"></div>
+  </section>
+
+  <section id="results" class="panel hidden">
+    <h2>Results</h2>
+    <label for="results-run">Run</label>
+    <select id="results-run"></select>
+    <div class="row">
+      <button id="refresh-results" type="button">Refresh</button>
+      <button id="analyze-run" type="button">Write analysis</button>
+      <button id="export-report" type="button">Export HTML report</button>
+    </div>
+    <p id="summary-source" class="muted"></p>
+    <div id="cloud-judge-banner" class="banner hidden">A cloud judge was used. The results JSON was sent to that endpoint.</div>
+    <div id="scorecard" class="grid"></div>
+    <h3>Suites</h3>
+    <div id="suite-list"></div>
+    <h3>Analysis</h3>
+    <pre id="analysis-text">No analysis yet. The template summary is used when no local judge is available.</pre>
+    <h3>Failing prompts</h3>
+    <div id="failures"></div>
+  </section>
+
+  <section id="compare" class="panel hidden">
+    <h2>Compare two runs</h2>
+    <label for="compare-left">Earlier run</label>
+    <select id="compare-left"></select>
+    <label for="compare-right">Later run</label>
+    <select id="compare-right"></select>
+    <div class="row"><button id="do-compare" class="primary" type="button">Compare</button></div>
+    <div id="compare-out"></div>
+  </section>
+
+  <section id="judges" class="panel hidden">
+    <h2>Council judges</h2>
+    <p>Judges read the results, not the raw transcript. The model under test is never a judge, because a model grading itself tends to prefer its own answers. If only one judge is available, peer ranking is skipped.</p>
+    <p class="muted">Suggested local defaults, if you have them in Ollama: qwen2.5:3b-instruct and llama3.2:3b. Cloud judges are off unless you type a cloud URL.</p>
+    <div id="judge-cloud-banner" class="banner hidden">One or more judges use a cloud endpoint. Analysis text will leave this computer.</div>
+    <div id="judge-rows"></div>
+    <div class="row">
+      <button id="add-judge" type="button">Add judge</button>
+      <button id="save-judges" class="primary" type="button">Save judges</button>
+    </div>
+    <label for="chairman">Chairman model name</label>
+    <input id="chairman" placeholder="qwen2.5:3b-instruct">
+  </section>
+</main>
+<script src="/static/app.js"></script>
+</body>
+</html>

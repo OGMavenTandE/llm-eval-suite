@@ -4,6 +4,12 @@ __pycache__/
 .pytest_cache/
 results/
 test_results/
+runs/
+data/
+*.pt
+*.gguf
+*.safetensors
+*.bin
 frontend/node_modules/
 frontend/dist/
 *.tsbuildinfo
