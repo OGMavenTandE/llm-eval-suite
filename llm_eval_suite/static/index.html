@@ -7,142 +7,310 @@
   <link rel="stylesheet" href="/static/tokens.css">
 </head>
 <body>
-<header>
-  <h1>LLM Eval Suite</h1>
-  <p class="muted">Point at a model, pick a preset, and run a local evaluation. Nothing is sent off this computer unless you choose a cloud endpoint.</p>
-  <nav>
-    <button class="tab" data-tab="connect">Connect</button>
-    <button class="tab" data-tab="run">Run</button>
-    <button class="tab" data-tab="results">Results</button>
-    <button class="tab" data-tab="compare">Compare</button>
-    <button class="tab" data-tab="judges">Judges</button>
-  </nav>
-</header>
-<main>
-  <section id="connect" class="panel">
-    <h2>Connect a model</h2>
-    <p class="muted">Local servers do not need an API key. Leave it blank for Ollama, LM Studio, llama.cpp, and other OpenAI-compatible endpoints on this machine.</p>
-    <label for="conn-name">Name</label>
-    <input id="conn-name" value="Local model">
-    <label for="conn-type">Type</label>
-    <select id="conn-type">
-      <option value="ollama">Ollama</option>
-      <option value="openai">OpenAI-compatible endpoint</option>
-      <option value="hf">Hugging Face folder</option>
-      <option value="nanogpt">nanoGPT checkpoint</option>
-    </select>
-    <label for="conn-url">Base URL</label>
-    <input id="conn-url" value="http://127.0.0.1:11434" placeholder="http://127.0.0.1:11434">
-    <label for="conn-model">Model name</label>
-    <input id="conn-model" placeholder="llama3.2:3b">
-    <div class="row">
-      <button id="list-models" type="button">List Ollama models</button>
-      <select id="ollama-models"></select>
+<div class="shell">
+  <aside class="rail">
+    <div class="brand">
+      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+        <rect x="1" y="1" width="30" height="30" rx="7" fill="none" stroke="currentColor" stroke-width="2"/>
+        <path d="M8 21h4V14H8zM14 21h4V9h-4zM20 21h4V17h-4z" fill="currentColor"/>
+        <path d="M6 12.5h20" stroke="var(--rail-accent)" stroke-width="1.6" stroke-dasharray="2 2"/>
+      </svg>
+      <div>
+        <h1>LLM Eval Suite</h1>
+        <p class="brand-sub">Offline test and evaluation</p>
+      </div>
     </div>
-    <label for="conn-key">API key (optional)</label>
-    <input id="conn-key" type="password" autocomplete="off">
-    <label for="conn-mode">Mode</label>
-    <select id="conn-mode">
-      <option value="chat">Chat completions</option>
-      <option value="completions">Completions (base models, no chat template)</option>
-    </select>
-    <label for="conn-context">Max context (tokens, optional)</label>
-    <input id="conn-context" type="number" min="8" placeholder="1024 for GPT-2">
-    <label for="conn-folder">Folder or checkpoint path</label>
-    <input id="conn-folder" placeholder="C:\models\gpt2-medium">
-    <div class="row">
-      <button id="detect-path" type="button">Detect path</button>
-      <button id="convert-nanogpt" type="button">Convert to Hugging Face folder</button>
-    </div>
-    <p id="detect-note" class="muted"></p>
-    <label for="convert-out">Converter output folder</label>
-    <input id="convert-out" placeholder="C:\models\gpt2-export">
-    <div id="cloud-banner" class="banner hidden">This endpoint is not on this computer. Prompts will leave the machine.</div>
-    <div class="row">
-      <button id="test-connection" class="primary" type="button">Test connection</button>
-      <button id="save-connection" type="button">Save connection</button>
-    </div>
-    <pre id="test-result" class="hidden"></pre>
-    <h3>Saved connections</h3>
-    <div id="connection-list"></div>
-  </section>
+    <nav aria-label="Workbench sections">
+      <button class="tab" data-tab="connect" aria-current="page">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 3v4M13 3v4M5 7h10v3a5 5 0 0 1-10 0zM10 15v3"/></svg>
+        Connect
+      </button>
+      <button class="tab" data-tab="run">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6 4l10 6-10 6z"/></svg>
+        Run
+      </button>
+      <button class="tab" data-tab="results">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 16h14M5 13V9M10 13V4M15 13v-3"/></svg>
+        Results
+      </button>
+      <button class="tab" data-tab="compare">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 6h9l-3-3M16 14H7l3 3"/></svg>
+        Compare
+      </button>
+      <button class="tab" data-tab="judges">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="7" cy="7" r="2.5"/><circle cx="14" cy="8" r="2"/><path d="M2.5 16a4.5 4.5 0 0 1 9 0M11 16a3.5 3.5 0 0 1 6.5-1.8"/></svg>
+        Judges
+      </button>
+    </nav>
+    <p class="rail-note"><span class="local-dot" aria-hidden="true"></span>Runs on this computer. Nothing leaves it unless you choose a cloud endpoint.</p>
+  </aside>
 
-  <section id="run" class="panel hidden">
-    <h2>Run an evaluation</h2>
-    <label for="run-connection">Connection</label>
-    <select id="run-connection"></select>
-    <label for="run-preset">Preset</label>
-    <select id="run-preset"></select>
-    <p id="preset-note" class="muted"></p>
-    <p id="preset-estimate" class="muted"></p>
-    <div id="preset-warning" class="banner hidden"></div>
-    <h3>Demo: DVIDS fine-tune vs base</h3>
-    <p class="muted">Runs the same preset on a local fine-tune folder and on gpt2-medium, then opens Compare on that pair. The folder is editable. Weights are not downloaded until you start the demo.</p>
-    <label for="demo-folder">Fine-tune folder</label>
-    <input id="demo-folder" value="C:\AI Eval\LLMs\nanoGPT-master\nanoGPT-master\hf-dow-news">
-    <div class="row"><button id="start-demo" type="button">Run demo pair</button></div>
-    <label for="run-dataset">Fact-check set</label>
-    <select id="run-dataset">
-      <option value="sample">Sample public facts (50)</option>
-    </select>
-    <label for="dataset-file">Upload CSV or JSONL (prompt, expected_answer, optional category and source)</label>
-    <input id="dataset-file" type="file" accept=".jsonl,.csv,text/csv,application/json">
-    <p id="dataset-note" class="muted"></p>
-    <div class="row">
-      <button id="start-run" class="primary" type="button">Run</button>
-      <button id="cancel-run" type="button" disabled>Cancel</button>
-    </div>
-    <div id="progress"></div>
-  </section>
+  <main>
+    <section id="connect" class="page">
+      <header class="page-head">
+        <h2>Connect a model</h2>
+        <p class="lede">Local servers do not need an API key. Leave it blank for Ollama, LM Studio, llama.cpp, and other OpenAI-compatible endpoints on this machine.</p>
+      </header>
+      <div class="layout-split">
+        <div class="stack">
+          <div class="panel">
+            <h3>Endpoint</h3>
+            <div class="fields">
+              <div class="field">
+                <label for="conn-name">Name</label>
+                <input id="conn-name" value="Local model">
+              </div>
+              <div class="field">
+                <label for="conn-type">Type</label>
+                <select id="conn-type">
+                  <option value="ollama">Ollama</option>
+                  <option value="openai">OpenAI-compatible endpoint</option>
+                  <option value="hf">Hugging Face folder</option>
+                  <option value="nanogpt">nanoGPT checkpoint</option>
+                </select>
+              </div>
+              <div class="field span-2">
+                <label for="conn-url">Base URL</label>
+                <input id="conn-url" value="http://127.0.0.1:11434" placeholder="http://127.0.0.1:11434" spellcheck="false">
+              </div>
+              <div class="field">
+                <label for="conn-model">Model name</label>
+                <input id="conn-model" placeholder="llama3.2:3b" spellcheck="false">
+              </div>
+              <div class="field">
+                <label for="ollama-models">Installed Ollama models</label>
+                <div class="input-with-button">
+                  <select id="ollama-models"><option value="">Not listed yet</option></select>
+                  <button id="list-models" type="button">List models</button>
+                </div>
+              </div>
+              <div class="field">
+                <label for="conn-key">API key <span class="optional">optional</span></label>
+                <input id="conn-key" type="password" autocomplete="off">
+              </div>
+              <div class="field">
+                <label for="conn-mode">Mode</label>
+                <select id="conn-mode">
+                  <option value="chat">Chat completions</option>
+                  <option value="completions">Completions (base models, no chat template)</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="conn-context">Max context in tokens <span class="optional">optional</span></label>
+                <input id="conn-context" type="number" min="8" placeholder="1024 for GPT-2">
+              </div>
+            </div>
+            <div id="cloud-banner" class="banner banner-warn hidden">This endpoint is not on this computer. Prompts will leave the machine.</div>
+          </div>
 
-  <section id="results" class="panel hidden">
-    <h2>Results</h2>
-    <label for="results-run">Run</label>
-    <select id="results-run"></select>
-    <div class="row">
-      <button id="refresh-results" type="button">Refresh</button>
-      <button id="analyze-run" type="button">Write analysis</button>
-      <button id="export-report" type="button">Export HTML report</button>
-    </div>
-    <p id="summary-source" class="muted"></p>
-    <div id="cloud-judge-banner" class="banner hidden">A cloud judge was used. The results JSON was sent to that endpoint.</div>
-    <div id="validity-banner" class="banner hidden"></div>
-    <p id="garak-path" class="muted"></p>
-    <div id="scorecard" class="grid"></div>
-    <h3>Suites</h3>
-    <div id="suite-list"></div>
-    <h3>Analysis</h3>
-    <pre id="analysis-text">No analysis yet. The template summary is used when no local judge is available.</pre>
-    <h3>Failing prompts</h3>
-    <div id="failures"></div>
-    <h3>Scores and evidence</h3>
-    <div id="evidence"></div>
-  </section>
+          <div class="panel">
+            <h3>Local weights</h3>
+            <p class="hint">For a Hugging Face folder or a nanoGPT <code>ckpt.pt</code> on this machine.</p>
+            <div class="fields">
+              <div class="field span-2">
+                <label for="conn-folder">Folder or checkpoint path</label>
+                <input id="conn-folder" placeholder="C:\models\gpt2-medium" spellcheck="false">
+              </div>
+              <div class="field span-2">
+                <label for="convert-out">Converter output folder</label>
+                <input id="convert-out" placeholder="C:\models\gpt2-export" spellcheck="false">
+              </div>
+            </div>
+            <div class="actions">
+              <button id="detect-path" type="button">Detect path</button>
+              <button id="convert-nanogpt" type="button">Convert to Hugging Face folder</button>
+            </div>
+            <p id="detect-note" class="hint"></p>
+          </div>
 
-  <section id="compare" class="panel hidden">
-    <h2>Compare two runs</h2>
-    <label for="compare-left">Earlier run</label>
-    <select id="compare-left"></select>
-    <label for="compare-right">Later run</label>
-    <select id="compare-right"></select>
-    <div class="row"><button id="do-compare" class="primary" type="button">Compare</button></div>
-    <div id="compare-out"></div>
-  </section>
+          <div class="actions actions-primary">
+            <button id="test-connection" class="primary" type="button">Test connection</button>
+            <button id="save-connection" type="button">Save connection</button>
+          </div>
+        </div>
 
-  <section id="judges" class="panel hidden">
-    <h2>Council judges</h2>
-    <p>Judges read the results, not the raw transcript. The model under test is never a judge, because a model grading itself tends to prefer its own answers. If only one judge is available, peer ranking is skipped.</p>
-    <p class="muted">Suggested local defaults, if you have them in Ollama: qwen2.5:3b-instruct and llama3.2:3b. Cloud judges are off unless you type a cloud URL.</p>
-    <div id="judge-cloud-banner" class="banner hidden">One or more judges use a cloud endpoint. Analysis text will leave this computer.</div>
-    <div id="judge-rows"></div>
-    <div class="row">
-      <button id="add-judge" type="button">Add judge</button>
-      <button id="save-judges" class="primary" type="button">Save judges</button>
-    </div>
-    <label for="chairman">Chairman model name</label>
-    <input id="chairman" placeholder="qwen2.5:3b-instruct">
-  </section>
-</main>
+        <div class="stack">
+          <div class="panel">
+            <h3>Connection test</h3>
+            <p id="test-empty" class="hint">Run a test to see the model's reply, latency, and throughput.</p>
+            <pre id="test-result" class="hidden"></pre>
+          </div>
+          <div class="panel">
+            <h3>Saved connections</h3>
+            <div id="connection-list" class="list"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="run" class="page hidden">
+      <header class="page-head">
+        <h2>Run an evaluation</h2>
+        <p class="lede">Pick a saved connection and a preset. The estimate updates once a run on this machine has been measured.</p>
+      </header>
+      <div class="layout-split">
+        <div class="stack">
+          <div class="panel">
+            <div class="fields">
+              <div class="field">
+                <label for="run-connection">Connection</label>
+                <select id="run-connection"></select>
+              </div>
+              <div class="field">
+                <label for="run-preset">Preset</label>
+                <select id="run-preset"></select>
+              </div>
+            </div>
+            <p id="preset-note" class="preset-note"></p>
+            <div id="preset-estimate" class="estimate"></div>
+            <div id="preset-warning" class="banner banner-warn hidden"></div>
+            <div class="fields">
+              <div class="field">
+                <label for="run-dataset">Fact-check set</label>
+                <select id="run-dataset">
+                  <option value="sample">Sample public facts (50)</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="dataset-file">Upload your own set</label>
+                <input id="dataset-file" type="file" accept=".jsonl,.csv,text/csv,application/json">
+              </div>
+            </div>
+            <p class="hint">CSV or JSONL with <code>prompt</code> and <code>expected_answer</code>, plus optional <code>category</code> and <code>source</code>.</p>
+            <p id="dataset-note" class="hint"></p>
+            <div class="actions actions-primary">
+              <button id="start-run" class="primary" type="button">Start run</button>
+              <button id="cancel-run" type="button" disabled>Cancel run</button>
+            </div>
+          </div>
+          <div class="panel">
+            <h3>Progress</h3>
+            <div id="progress" class="progress"><p class="hint">No run in progress.</p></div>
+          </div>
+        </div>
+        <div class="stack">
+          <div class="panel panel-quiet">
+            <h3>Demo: DVIDS fine-tune vs base</h3>
+            <p class="hint">Runs the same preset on a local fine-tune folder and on gpt2-medium, then opens Compare on that pair. Weights are not downloaded until you start the demo.</p>
+            <div class="field">
+              <label for="demo-folder">Fine-tune folder</label>
+              <input id="demo-folder" value="C:\AI Eval\LLMs\nanoGPT-master\nanoGPT-master\hf-dow-news" spellcheck="false">
+            </div>
+            <div class="actions"><button id="start-demo" type="button">Run demo pair</button></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="results" class="page hidden">
+      <header class="page-head page-head-row">
+        <div>
+          <h2>Results</h2>
+          <p class="lede">Categories pass at 80% of prompts. Hatched bars are fixture or smoke data, not live model calls, and do not count toward the overall score.</p>
+        </div>
+        <div class="toolbar">
+          <div class="field field-inline">
+            <label for="results-run">Run</label>
+            <select id="results-run"></select>
+          </div>
+          <button id="refresh-results" type="button">Refresh</button>
+          <button id="analyze-run" type="button">Write analysis</button>
+          <button id="export-report" type="button">Export HTML report</button>
+        </div>
+      </header>
+
+      <div id="validity-banner" class="banner banner-fail hidden"></div>
+      <div id="cloud-judge-banner" class="banner banner-warn hidden">A cloud judge was used. The results JSON was sent to that endpoint.</div>
+
+      <div class="panel dashboard">
+        <div id="readout" class="readout"><p class="hint">Choose a run to see its scorecard.</p></div>
+        <div id="scorecard" class="meters"></div>
+        <div class="meter-legend" aria-hidden="true">
+          <span><i class="swatch swatch-pass"></i>Pass</span>
+          <span><i class="swatch swatch-fail"></i>Below bar</span>
+          <span><i class="swatch swatch-fixture"></i>Fixture or smoke</span>
+          <span><i class="swatch swatch-bar"></i>80% pass bar</span>
+        </div>
+      </div>
+
+      <div class="layout-even">
+        <div class="panel">
+          <h3>Suites</h3>
+          <div id="suite-list" class="list"></div>
+          <p id="garak-path" class="paths"></p>
+        </div>
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Analysis</h3>
+            <p id="summary-source" class="hint"></p>
+          </div>
+          <pre id="analysis-text" class="analysis">No analysis yet. The template summary is used when no local judge is available.</pre>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h3>Failing prompts</h3>
+        <div id="failures" class="table-wrap"></div>
+      </div>
+      <div class="panel">
+        <h3>Scores and evidence</h3>
+        <div id="evidence" class="table-wrap"></div>
+      </div>
+    </section>
+
+    <section id="compare" class="page hidden">
+      <header class="page-head">
+        <h2>Compare two runs</h2>
+        <p class="lede">Pass rates by category, then the prompts whose scores moved most between the two runs.</p>
+      </header>
+      <div class="panel">
+        <div class="fields fields-compare">
+          <div class="field">
+            <label for="compare-left">Earlier run</label>
+            <select id="compare-left"></select>
+          </div>
+          <div class="field">
+            <label for="compare-right">Later run</label>
+            <select id="compare-right"></select>
+          </div>
+          <div class="field field-end">
+            <button id="do-compare" class="primary" type="button">Compare runs</button>
+          </div>
+        </div>
+      </div>
+      <div id="compare-out" class="stack"></div>
+    </section>
+
+    <section id="judges" class="page hidden">
+      <header class="page-head">
+        <h2>Council judges</h2>
+        <p class="lede">Judges read the results, not the raw transcript. The model under test is never a judge, because a model grading itself tends to prefer its own answers. If only one judge is available, peer ranking is skipped.</p>
+      </header>
+      <div class="layout-split">
+        <div class="stack">
+          <div id="judge-cloud-banner" class="banner banner-warn hidden">One or more judges use a cloud endpoint. Analysis text will leave this computer.</div>
+          <div id="judge-rows" class="stack"></div>
+          <div class="actions actions-primary">
+            <button id="add-judge" type="button">Add judge</button>
+            <button id="save-judges" class="primary" type="button">Save judges</button>
+          </div>
+        </div>
+        <div class="stack">
+          <div class="panel">
+            <div class="field">
+              <label for="chairman">Chairman model name</label>
+              <input id="chairman" placeholder="qwen2.5:3b-instruct" spellcheck="false">
+            </div>
+            <p class="hint">The chairman writes the final summary from the judges' reviews.</p>
+          </div>
+          <div class="panel panel-quiet">
+            <p class="hint">Suggested local judges, if you have them in Ollama: <code>qwen2.5:3b-instruct</code> and <code>llama3.2:3b</code>. Cloud judges stay off unless you type a cloud URL.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
 <script src="/static/app.js"></script>
 </body>
 </html>
