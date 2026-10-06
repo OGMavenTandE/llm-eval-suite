@@ -27,8 +27,11 @@ class RunIndex:
 
     def _save(self, entries: list[dict]) -> None:
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        with self.index_path.open("w", encoding="utf-8") as f:
-            json.dump(entries, f, indent=2, default=str)
+        # Replace the file in one step. Opening it with "w" first empties it,
+        # and a reader in that window gets a JSON decode error.
+        temporary = self.index_path.with_name(self.index_path.name + ".tmp")
+        temporary.write_text(json.dumps(entries, indent=2, default=str), encoding="utf-8")
+        temporary.replace(self.index_path)
 
     def register_run(
         self,
