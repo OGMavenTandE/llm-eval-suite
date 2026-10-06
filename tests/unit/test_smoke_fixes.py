@@ -1062,9 +1062,11 @@ def test_complement_and_empty_chairman_retry():
 def test_category_rate_allows_the_security_failure_count():
     """76 samples at 68.4% pass is 24 failures, with no failed count stored.
 
-    Integers 10 through 199, and every one-decimal percent from 0.0% through
-    100.0%, are the same checks as the offline smoke. That smoke sampled 500
-    of the percents (55 accepted) and accepted 12 of the 190 integers.
+    The slack is half a count plus the stored rate's rounding step, so 23, 25,
+    and 4 (from 50 at 94%, which is 3 failures) are rejected. Integers 10
+    through 199 now pass 15 of 190. Every one-decimal percent from 0.0%
+    through 100.0% passes 106 of 1001. The offline smoke on the wider window
+    sampled 500 of the percents (55 accepted) and accepted 12 of 190 integers.
     """
     payload = {
         "failure_count": 27,
@@ -1106,17 +1108,20 @@ def test_category_rate_allows_the_security_failure_count():
         "aggregate_ranking": [{"label": "Review A", "points": 3.0}, {"label": "Review B", "points": 3.0}],
     }
     assert unmatched_numbers("24 failures", payload) == []
-    assert unmatched_numbers("23 failures", payload) == []
-    assert unmatched_numbers("25 failures", payload) == []
-    assert unmatched_numbers("22 failures", payload) == ["22"]
+    assert unmatched_numbers("23 failures", payload) == ["23"]
+    assert unmatched_numbers("25 failures", payload) == ["25"]
+    assert unmatched_numbers("4.0 points", payload) == ["4.0"]
+    assert unmatched_numbers("31.6% failing", payload) == []
     assert unmatched_numbers("250 items", payload) == ["250"]
     assert unmatched_numbers("42 items", payload) == ["42"]
     assert unmatched_numbers("99.1%", payload) == ["99.1%"]
     integers = [n for n in range(10, 200) if unmatched_numbers(f"{n} items", payload) == []]
     percents = [i for i in range(1001) if unmatched_numbers(f"{i / 10:.1f}%", payload) == []]
-    assert len(integers) == 21
-    assert len(percents) == 112
+    assert integers == [24, 27, 31, 32, 47, 50, 52, 68, 69, 76, 94, 96, 100, 128, 130]
+    assert len(percents) == 106
     assert 24 in integers
+    assert 23 not in integers
+    assert 25 not in integers
     assert 42 not in integers
     assert 250 not in integers
 
