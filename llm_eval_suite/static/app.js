@@ -805,6 +805,20 @@ function compareSlotLabel(name, createdAt, fallback) {
   return when ? title + ", " + when : title;
 }
 
+function unpairedPromptNote(data) {
+  const moved = (data.categories || []).filter((row) => row.delta != null && Math.abs(Number(row.delta)) > 0);
+  const byCategory = data.unpaired_by_category || {};
+  let count = Number(data.unpaired_prompts || 0);
+  let where = "";
+  if (moved.length === 1 && byCategory[moved[0].category] != null) {
+    count = Number(byCategory[moved[0].category]);
+    where = " in this category";
+  }
+  const noun = count === 1 ? "prompt" : "prompts";
+  return "No matching prompts changed. " + count + " " + noun + where +
+    " couldn't be paired between runs (garak samples different prompts each run).";
+}
+
 function compareBar(label, rate, later, invalid) {
   const withheld = !!invalid;
   const pct = rate == null ? 0 : Math.max(0, Math.min(100, Number(rate) * 100));
@@ -836,10 +850,14 @@ $("do-compare").addEventListener("click", async () => {
     let html = warning + '<div class="panel"><div class="panel-head"><h3>Pass rate by category</h3>' +
       '<p class="hint">Change is in percentage points, the later run minus the earlier run.</p></div>' +
       '<div class="compare-cats">' + (cats || emptyNote("Neither run has category scores.")) + "</div></div>";
+    const unpairedNote = !invalidSide && Number(data.unpaired_prompts || 0) > 0
+      ? '<p class="hint">' + escapeHtml(unpairedPromptNote(data)) + "</p>"
+      : "";
     if (data.items && data.items.length) {
       const shown = data.items.slice(0, 30);
       html += '<div class="panel"><div class="panel-head"><h3>Prompts that changed most</h3>' +
-        '<p class="hint">Largest changes first. Positive means the later run scored higher.</p></div><div class="table-wrap">' +
+        '<p class="hint">Largest changes first. Positive means the later run scored higher.</p>' +
+        unpairedNote + '</div><div class="table-wrap">' +
         tableHtml(
           [{ label: "Prompt" }, { label: leftLabel, num: true }, { label: rightLabel, num: true }, { label: "Change", num: true }],
           shown.map((row) => {
@@ -847,6 +865,9 @@ $("do-compare").addEventListener("click", async () => {
             return [td(row.prompt, "clip"), td(formatScore(row.left_score), "num"), td(formatScore(row.right_score), "num"), td(delta.text, "num " + delta.cls)];
           }),
         ) + "</div></div>";
+    } else if (!invalidSide && Number(data.unpaired_prompts || 0) > 0) {
+      html += '<div class="panel"><div class="panel-head"><h3>Prompts that changed most</h3>' +
+        unpairedNote + "</div></div>";
     } else if (!invalidSide && data.unchanged_prompts) {
       html += '<div class="panel"><div class="panel-head"><h3>Prompts that changed most</h3>' +
         '<p class="hint">No prompt scores changed.</p></div></div>';

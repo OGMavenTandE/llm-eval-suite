@@ -28,6 +28,10 @@ from llm_eval_suite.worker import build_worker_command
 FACTCHECK_EMPTY_INVALID_RATE = 0.5
 ETA_SMOOTHING = 0.3
 ETA_MIN_ITEMS = 3
+# Early garak probes are slower than later ones. The live rate only takes
+# over once most of the suite is done, so its weight is the completed
+# fraction cubed.
+ETA_LIVE_WEIGHT_POWER = 3
 
 
 def finished_progress(progress: dict, elapsed_seconds: float | None) -> dict:
@@ -44,6 +48,35 @@ def finished_progress(progress: dict, elapsed_seconds: float | None) -> dict:
     if elapsed_seconds is not None:
         done["elapsed_seconds"] = round(float(elapsed_seconds), 1)
     return done
+
+
+def blend_forecast(live_seconds: float | None, prior_seconds: float | None, fraction: float) -> float | None:
+    """Blend the live remaining time with the pre-run remaining time.
+
+    ``fraction`` is how much of the suite is already done, from 0 to 1.
+    The live forecast's weight is that fraction to the power
+    ``ETA_LIVE_WEIGHT_POWER``. A missing side is the other side alone.
+    """
+    if live_seconds is None and prior_seconds is None:
+        return None
+    if live_seconds is None:
+        return float(prior_seconds)
+    if prior_seconds is None:
+        return float(live_seconds)
+    done_fraction = min(1.0, max(0.0, float(fraction)))
+    live_weight = done_fraction ** ETA_LIVE_WEIGHT_POWER
+    return (live_weight * float(live_seconds)) + ((1.0 - live_weight) * float(prior_seconds))
+
+
+def displayed_elapsed(state: dict, now: float) -> float:
+    """Elapsed seconds for the progress row. Frozen once the suite hits its total."""
+    frozen = state.get("frozen_elapsed")
+    if frozen is not None:
+        return float(frozen)
+    started = state.get("started")
+    if started is None:
+        return 0.0
+    return max(0.0, now - float(started))
 
 
 def smooth_item_seconds(previous: float | None, sample: float, *, fallback: float, alpha: float = ETA_SMOOTHING) -> float:
@@ -444,8 +477,8 @@ class RunManager:
                 result = runner.run(ctx, suite)
                 state = self._eta_state.get((run_id, suite_name)) or {}
                 elapsed = None
-                if state.get("started") is not None:
-                    elapsed = time.perf_counter() - float(state["started"])
+                if state.get("started") is not None or state.get("frozen_elapsed") is not None:
+                    elapsed = displayed_elapsed(state, time.perf_counter())
                 progress["status"] = "cancelled" if result.get("cancelled") or cancel.is_set() else "completed"
                 progress["done"] = result.get("done", progress["done"])
                 progress["total"] = result.get("total", progress["done"])
@@ -594,19 +627,31 @@ class RunManager:
                     state["rate"] = elapsed / gained
             state["mark"] = now
             state["done"] = done
+        total_count = None if total is None else int(total)
+        if total_count and done >= total_count and state.get("frozen_elapsed") is None:
+            state["frozen_elapsed"] = max(0.0, now - float(state["started"]))
         suite_rates = estimate.get("suite_rates") or {}
         known = suite_rates.get(str(progress.get("name") or ""))
         observed = state.get("rate") if done >= ETA_MIN_ITEMS and state.get("rate") else None
         rate = observed if observed is not None else (float(known) if known is not None else None)
-        remaining = None if total is None else max(0, int(total) - done)
-        progress["seconds_per_prompt"] = None if rate is None else round(rate, 3)
-        progress["elapsed_seconds"] = round(now - float(state["started"]), 1)
-        if rate is None or remaining is None or remaining <= 0:
+        remaining = None if total_count is None else max(0, total_count - done)
+        progress["elapsed_seconds"] = round(displayed_elapsed(state, now), 1)
+        if remaining is None or remaining <= 0 or (observed is None and rate is None):
+            progress["seconds_per_prompt"] = None if rate is None else round(rate, 3)
             progress["eta_seconds"] = None
             progress["eta_source"] = "estimating" if rate is None else "measured"
+        elif observed is not None:
+            live_eta = remaining * float(observed)
+            prior_eta = None if known is None else remaining * float(known)
+            fraction = 0.0 if not total_count else done / total_count
+            blended = blend_forecast(live_eta, prior_eta, fraction)
+            progress["eta_seconds"] = None if blended is None else round(blended, 1)
+            progress["seconds_per_prompt"] = None if blended is None else round(blended / remaining, 3)
+            progress["eta_source"] = "measured"
         else:
-            progress["eta_seconds"] = round(remaining * rate, 1)
-            progress["eta_source"] = "measured" if observed is not None else "matched"
+            progress["seconds_per_prompt"] = round(float(rate), 3)
+            progress["eta_seconds"] = round(remaining * float(rate), 1)
+            progress["eta_source"] = "matched"
 
     def _watch_cancel(self, run_dir: Path, cancel: threading.Event) -> None:
         while not cancel.is_set():
