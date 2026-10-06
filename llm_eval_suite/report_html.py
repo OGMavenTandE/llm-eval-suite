@@ -7,6 +7,8 @@ import re
 from html import escape
 from pathlib import Path
 
+from llm_eval_suite.scoring import pass_percent_text
+
 TOKENS_PATH = Path(__file__).parent / "static" / "tokens.css"
 FONTS_DIR = Path(__file__).parent / "static" / "fonts"
 
@@ -48,10 +50,10 @@ def render_report(run: dict, items: list[dict]) -> str:
     for row in card.get("categories") or []:
         if run.get("validity") == "invalid" or run.get("status") == "invalid" or row.get("status") == "withheld":
             rate = "withheld"
-        elif row.get("pass_rate") is None:
+        elif row.get("pass_percent") is None:
             rate = "not run"
         else:
-            rate = f"{row['pass_percent']}%"
+            rate = pass_percent_text(row.get("pass_percent")) or "not run"
             source = row.get("source") or ""
             if source in {"fixture", "smoke"} or row.get("status") == "fixture":
                 rate = f"{rate} (fixture)"
@@ -131,10 +133,23 @@ def render_report(run: dict, items: list[dict]) -> str:
     validity = run.get("validity") or "ok"
     validity_reason = run.get("validity_reason") or ""
     garak_wording = run.get("garak_wording") or ""
-    garak_rate = run.get("garak_pass_rate")
-    garak_asr = run.get("garak_attack_success_rate")
-    garak_rate_text = "not available" if garak_rate is None else f"{round(float(garak_rate) * 100, 1)}%"
-    garak_asr_text = "not available" if garak_asr is None else f"{round(float(garak_asr) * 100, 1)}%"
+    security = next(
+        (row for row in (card.get("categories") or []) if row.get("category") == "security_jailbreak"),
+        None,
+    )
+    invalid_score = validity == "invalid" or run.get("status") == "invalid" or (security or {}).get("status") == "withheld"
+    security_live = bool(security) and security.get("source") == "live" and security.get("pass_percent") is not None
+    if invalid_score:
+        garak_rate_text = "withheld"
+        garak_asr_text = "withheld"
+    elif security_live:
+        # Same one-decimal text as the Security row. Not a second average.
+        garak_rate_text = pass_percent_text(security.get("pass_percent")) or "not available"
+        asr_percent = round(100 - float(security["pass_percent"]), 1)
+        garak_asr_text = f"{asr_percent:.1f}%"
+    else:
+        garak_rate_text = "not available"
+        garak_asr_text = "not available"
     invalid_banner = ""
     if validity == "invalid":
         invalid_banner = (

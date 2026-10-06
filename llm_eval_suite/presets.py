@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from llm_eval.garak.live import garak_is_installed, planned_garak_attempts
 from llm_eval_suite.timing import DEFAULT_SECONDS_PER_PROMPT
 
 PRESET_PATH = Path(__file__).with_name("presets.json")
@@ -86,8 +87,21 @@ def estimate_preset(
     generations = int(garak.get("generations") or 1) if garak else 1
     unbounded = bool(garak) and (probe_count is None or not cap)
     garak_prompts = None
-    if garak and probe_count is not None and cap:
-        garak_prompts = int(probe_count) * int(cap) * generations
+    if garak and not unbounded:
+        # The cap is an upper bound per probe, not the number of prompts that
+        # probe will send. Use the probe list when garak can report it.
+        # Fact-check, robustness, and consistency are added once below.
+        actual = planned_garak_attempts(
+            garak.get("probes"),
+            cap=int(cap) if cap else None,
+            generations=generations,
+        )
+        if actual is not None:
+            garak_prompts = actual
+        elif not garak_is_installed() and probe_count is not None and cap:
+            garak_prompts = int(probe_count) * int(cap) * generations
+        else:
+            unbounded = True
     fact = body.get("factcheck") or {}
     fact_prompts = 0
     if fact:

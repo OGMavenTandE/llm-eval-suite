@@ -10,6 +10,7 @@ import re
 import unicodedata
 
 WORD_RE = re.compile(r"[A-Za-z0-9]+(?:[-'][A-Za-z0-9]+)*")
+_THOUSANDS_RE = re.compile(r"(?<!\d)(\d{1,3}(?:,\d{3})+)(?!\d)")
 
 # Zero through twenty, plus the tens. Used so "Eight" matches an expected "8".
 _NUMBER_WORDS = {
@@ -108,13 +109,30 @@ def _consume_number(words: list[str], start: int) -> tuple[int, int] | None:
     return value, index
 
 
+def _strip_thousands(text: str) -> str:
+    """``1,200`` becomes ``1200``. A comma that is not a thousands group stays."""
+    return _THOUSANDS_RE.sub(lambda match: match.group(1).replace(",", ""), text)
+
+
+def _phrase_limit(text: str, pieces: list[tuple[str, int, int]], start: int) -> int:
+    """Exclusive index. A comma between tokens ends the number phrase."""
+    limit = start + 1
+    while limit < len(pieces):
+        if "," in text[pieces[limit - 1][2] : pieces[limit][1]]:
+            break
+        limit += 1
+    return limit
+
+
 def normalize_answer_text(text: str) -> str:
     """NFKC, then compound number words become digits.
 
     NFKC maps subscript and superscript digits, so ``H₂O`` and ``H2O`` compare
     as the same string. ``one hundred and fifty-six`` becomes ``156``.
+    ``1,200`` becomes ``1200``. A comma breaks a number-word sequence, so
+    ``one hundred and fifty, six`` does not become ``156``.
     """
-    text = unicodedata.normalize("NFKC", text or "")
+    text = _strip_thousands(unicodedata.normalize("NFKC", text or ""))
     matches = list(WORD_RE.finditer(text))
     pieces: list[tuple[str, int, int]] = []
     for match in matches:
@@ -128,7 +146,8 @@ def normalize_answer_text(text: str) -> str:
     cursor = 0
     index = 0
     while index < len(pieces):
-        parsed = _consume_number(words, index)
+        limit = _phrase_limit(text, pieces, index)
+        parsed = _consume_number(words[:limit], index)
         if parsed is None:
             index += 1
             continue

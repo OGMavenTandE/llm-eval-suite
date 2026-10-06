@@ -7,7 +7,25 @@ def _is_invalid(run: dict) -> bool:
     return run.get("validity") == "invalid" or run.get("status") == "invalid"
 
 
+def _run_stamp(run: dict) -> str:
+    return str(run.get("created_at") or run.get("completed_at") or "")
+
+
+def _slot_label(run: dict) -> str:
+    connection = run.get("connection") or {}
+    name = connection.get("model") or connection.get("name") or run.get("run_id") or "Run"
+    when = _run_stamp(run)
+    if not when:
+        return str(name)
+    return f"{name}, {when}"
+
+
 def compare_runs(left: dict, right: dict, left_items: list[dict], right_items: list[dict]) -> dict:
+    left_stamp = _run_stamp(left)
+    right_stamp = _run_stamp(right)
+    if left_stamp and right_stamp and right_stamp < left_stamp:
+        left, right = right, left
+        left_items, right_items = right_items, left_items
     left_card = {row["category"]: row for row in left.get("scorecard", {}).get("categories", [])}
     right_card = {row["category"]: row for row in right.get("scorecard", {}).get("categories", [])}
     left_invalid = _is_invalid(left)
@@ -58,6 +76,8 @@ def compare_runs(left: dict, right: dict, left_items: list[dict], right_items: l
     return {
         "left_run_id": left.get("run_id"),
         "right_run_id": right.get("run_id"),
+        "left_label": _slot_label(left),
+        "right_label": _slot_label(right),
         "left_invalid": left_invalid,
         "right_invalid": right_invalid,
         "categories": categories,

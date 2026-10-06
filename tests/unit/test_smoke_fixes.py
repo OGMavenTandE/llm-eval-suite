@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 import time
 import types
@@ -12,15 +13,25 @@ import pytest
 import yaml
 
 from llm_eval.datasets.loader import load_dataset
-from llm_eval.garak.live import attack_rates, count_report_attempts, parse_garak_report, run_garak, validity_from_items
+from llm_eval.garak.live import (
+    attack_rates,
+    count_report_attempts,
+    count_work_attempts,
+    parse_garak_report,
+    planned_garak_attempts,
+    run_garak,
+    validity_from_items,
+)
 from llm_eval.models.context import strip_think_blocks
 from llm_eval.models.ollama_model import OllamaModel
 from llm_eval.models.openai_model import OpenAIModel
 from llm_eval_suite.compare import compare_runs
 from llm_eval_suite.connections import ConnectionStore, build_model, judge_max_tokens, judge_timeout
-from llm_eval_suite.council import judge_generate, template_narrative
+from llm_eval_suite.council import judge_generate, run_council, template_narrative, unmatched_numbers
+from llm_eval_suite.presets import estimate_preset, load_presets
+from llm_eval_suite.report_html import render_report
 from llm_eval_suite.runs import RunManager, factcheck_empty_validity, smooth_item_seconds
-from llm_eval_suite.scoring import scorecard, withhold_category_scores
+from llm_eval_suite.scoring import pass_percent_text, scorecard, withhold_category_scores
 from llm_eval_suite.timing import TimingStore
 from llm_eval_suite.suites import planned_suite_total, score_fact
 
@@ -217,6 +228,14 @@ def test_eta_uses_the_suite_total_and_clears_when_finished(tmp_path: Path):
     manager._stamp_eta(run_dir, early, "eta")
     assert early["eta_seconds"] is not None
     assert early["eta_seconds"] < 175 * 60
+    # A later poll that suddenly sees many attempts must not price each one
+    # at the poll gap. The rate is suite elapsed time divided by attempts.
+    started = time.perf_counter() - 20.0
+    manager._eta_state[("eta", "burst")] = {"started": started, "mark": started, "done": 10, "rate": 2.0}
+    burst = {"name": "burst", "total": 78, "done": 40, "status": "running"}
+    manager._stamp_eta(run_dir, burst, "eta")
+    assert burst["seconds_per_prompt"] == pytest.approx(0.5, rel=0.05)
+    assert burst["eta_seconds"] == pytest.approx(19.0, rel=0.05)
     early["status"] = "completed"
     manager._stamp_eta(run_dir, early, "eta")
     assert early["eta_seconds"] is None
@@ -268,6 +287,10 @@ def test_number_words_and_expected_aliases(tmp_path: Path):
     assert water is True
     _score, big, _mode = score_fact("How many?", "9999", "nine thousand nine hundred and ninety-nine")
     assert big is True
+    _score, thousands, _mode = score_fact("How many?", "1,200", "one thousand two hundred")
+    assert thousands is True
+    _score, broken, _mode = score_fact("How many?", "156", "one hundred and fifty, six")
+    assert broken is False
     assert strip_think_blocks("<think>hidden</think>Eight") == "Eight"
     assert strip_think_blocks("<think>never closed") == ""
 
@@ -537,10 +560,9 @@ def test_duplicate_garak_attempts_score_once_and_agree(tmp_path: Path):
     card = scorecard(items)
     security = next(row for row in card["categories"] if row["category"] == "security_jailbreak")
     _attack, passed = attack_rates(items)
-    assert passed == pytest.approx(0.5)
-    assert security["pass_rate"] == pytest.approx(passed)
-    assert security["pass_percent"] == pytest.approx(passed * 100, abs=0.05)
-    assert security["pass_rate"] != pytest.approx(1 / 3, abs=0.01)
+    assert passed == pytest.approx(1 / 3)
+    assert security["pass_rate"] == round(passed, 4)
+    assert security["pass_percent"] == pytest.approx(round((1 / 3) * 100, 1))
 
     empty = tmp_path / "empty.report.jsonl"
     lines = []
@@ -646,3 +668,192 @@ def test_judge_generate_disables_think_and_caps_tokens(monkeypatch):
     assert seen["think"] is False
     assert generate("Summarize the run.") == "The jailbreak probes failed."
     assert seen["max_tokens"] == 1200
+
+
+def _garak_item(item_id, *, category, passed, score, source="live"):
+    return {
+        "id": item_id,
+        "suite": "garak" if source == "live" else "rampart",
+        "category": category,
+        "source": source,
+        "passed": passed,
+        "score": score,
+        "counts_toward_score": True,
+        "response": "reply",
+        "empty": False,
+        "prompt": item_id,
+    }
+
+
+def test_security_card_line_and_report_share_one_percent():
+    items = [
+        _garak_item("pass-full", category="security_jailbreak", passed=True, score=1.0),
+        _garak_item("pass-partial", category="security_jailbreak", passed=True, score=0.98),
+        _garak_item("fail", category="security_jailbreak", passed=False, score=0.0),
+        _garak_item("toxic", category="toxicity", passed=True, score=1.0),
+        _garak_item("smoke", category="security_jailbreak", passed=True, score=1.0, source="smoke"),
+    ]
+    card = scorecard(items)
+    security = next(row for row in card["categories"] if row["category"] == "security_jailbreak")
+    assert security["source"] == "live"
+    assert security["sample_count"] == 3
+    assert security["pass_percent"] == 66.7
+    text = pass_percent_text(security["pass_percent"])
+    _attack, passed = attack_rates([item for item in items if item["category"] == "security_jailbreak"])
+    assert security["pass_rate"] == round(passed, 4)
+    run = {
+        "run_id": "aligned",
+        "validity": "ok",
+        "status": "completed",
+        "connection": {"model": "demo"},
+        "scorecard": card,
+        "garak_pass_rate": 0.5,
+        "garak_attack_success_rate": 0.5,
+        "garak_wording": "Pass rate is 1 minus garak's attack success rate (ASR).",
+        "analysis": {},
+        "suites": [],
+    }
+    html = render_report(run, items)
+    line = re.search(r"Garak pass rate \(1 - ASR\): ([0-9.]+%)", html)
+    row = re.search(r"Security / jailbreak</td><td>fail</td><td>([^<]+)</td>", html)
+    assert line is not None and row is not None
+    assert line.group(1) == row.group(1) == text
+    assert "50.0%" not in html
+    assert "50%" not in line.group(1)
+
+
+def test_garak_progress_is_cumulative_across_reports(tmp_path: Path):
+    work = tmp_path / "garak"
+    work.mkdir()
+    first = work / "garak-live-0.report.jsonl"
+    second = work / "garak-live-1.report.jsonl"
+    first.write_text(
+        "\n".join(
+            json.dumps(
+                {
+                    "entry_type": "attempt",
+                    "uuid": f"shared-{index}",
+                    "status": 1,
+                    "probe_classname": "dan.Dan_11_0",
+                    "prompt": "p",
+                    "outputs": ["x"],
+                }
+            )
+            for index in range(3)
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    assert count_work_attempts(work) == 3
+    second.write_text(
+        json.dumps(
+            {
+                "entry_type": "attempt",
+                "uuid": "leak-1",
+                "status": 1,
+                "probe_classname": "leakreplay.LiteratureCloze",
+                "prompt": "p",
+                "outputs": ["x"],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    assert count_work_attempts(work) == 4
+    assert count_report_attempts(second) == 1
+
+
+def test_estimate_counts_each_prompt_once(monkeypatch):
+    monkeypatch.setattr("llm_eval_suite.presets.planned_garak_attempts", lambda *_args, **_kwargs: 78)
+    monkeypatch.setattr("llm_eval_suite.presets.garak_is_installed", lambda: True)
+    quick = load_presets()["quick"]
+    estimate = estimate_preset(quick, dataset_rows=50, seconds_per_prompt=1.0, estimate_source="measured")
+    assert estimate["garak_prompt_count"] == 78
+    assert estimate["factcheck_count"] == 50
+    assert estimate["prompt_count"] == 128
+    assert estimate["estimated_seconds"] == 128.0
+    assert planned_garak_attempts(["all"], cap=25, generations=1) is None
+
+
+def test_compare_orders_by_time_and_labels_the_runs():
+    earlier = {
+        "run_id": "old",
+        "created_at": "2026-10-06T12:00:00+00:00",
+        "connection": {"model": "qwen2.5"},
+        "status": "completed",
+        "validity": "ok",
+        "scorecard": {"categories": []},
+    }
+    later = {
+        "run_id": "new",
+        "created_at": "2026-10-06T18:00:00+00:00",
+        "connection": {"model": "qwen3"},
+        "status": "completed",
+        "validity": "ok",
+        "scorecard": {"categories": []},
+    }
+    compared = compare_runs(later, earlier, [], [])
+    assert compared["left_run_id"] == "old"
+    assert compared["right_run_id"] == "new"
+    assert compared["left_label"].startswith("qwen2.5, ")
+    assert compared["right_label"].startswith("qwen3, ")
+
+
+def test_chairman_ranking_point_passes_the_number_guard():
+    assert unmatched_numbers(
+        "Councils rankings 4.0",
+        {"aggregate_ranking": [{"label": "Review A", "points": 4.0}]},
+    ) == []
+    run = {
+        "run_id": "council",
+        "preset": "quick",
+        "status": "completed",
+        "validity": "ok",
+        "connection": {"model": "under-test", "type": "ollama"},
+        "scorecard": {
+            "failure_count": 1,
+            "live_item_count": 2,
+            "item_count": 2,
+            "categories": [],
+            "overall_pass_rate": None,
+            "overall_pass_percent": None,
+        },
+    }
+    items = [
+        {
+            "id": "a",
+            "passed": False,
+            "score": 0.0,
+            "source": "live",
+            "counts_toward_score": True,
+            "prompt": "Q",
+            "response": "no",
+            "category": "hallucination_factuality",
+        }
+    ]
+
+    def generate_for(_judge):
+        def generate(prompt: str) -> str:
+            if prompt.startswith("TASK: rank"):
+                return "RANKING: Review A > Review B"
+            if prompt.startswith("TASK: chair"):
+                return "Councils rankings 4.0"
+            return "The failure count is 1."
+
+        return generate
+
+    judges = [
+        {"model": "qwen2.5:3b-instruct", "type": "ollama", "base_url": "http://127.0.0.1:11434"},
+        {"model": "llama3.2:3b", "type": "ollama", "base_url": "http://127.0.0.1:11434"},
+    ]
+    council = run_council(
+        run,
+        items,
+        judges,
+        under_test=run["connection"],
+        generate_for=generate_for,
+    )
+    assert council["number_guard"] == "pass"
+    assert council["narrative"] == "Councils rankings 4.0"
+    assert council["source_label"].startswith("Council:")
+    assert council["rankings"][0]["points"] == 4.0

@@ -584,15 +584,16 @@ function fixtureMeterText(percent) {
   return text + "% fixture";
 }
 
-function garakMeterNote(run) {
-  if (!run || (!run.garak_pass_rate_label && !run.garak_wording)) return "";
+function garakMeterNote(run, row) {
+  if (!run || (!run.garak_pass_rate_label && !run.garak_wording && !row)) return "";
   const invalid = run.validity === "invalid" || run.status === "invalid";
-  const wording = run.garak_wording || "Pass rate is 1 minus garak's attack success rate (ASR).";
-  if (invalid) return "";
-  const pass = run.garak_pass_rate == null ? "n/a" : Math.round(run.garak_pass_rate * 1000) / 10 + "%";
-  const asr = run.garak_attack_success_rate == null ? "n/a" : Math.round(run.garak_attack_success_rate * 1000) / 10 + "%";
+  const live = row && (row.status === "pass" || row.status === "fail") && row.pass_percent != null;
+  if (invalid || !live) return "";
+  const pass = Number(row.pass_percent).toFixed(1);
+  const asr = (100 - Number(row.pass_percent)).toFixed(1);
   const label = run.garak_pass_rate_label || "Pass rate (1 - ASR)";
-  return label + ": " + pass + ". ASR: " + asr + ". " + wording;
+  const wording = run.garak_wording || "Pass rate is 1 minus garak's attack success rate (ASR).";
+  return label + ": " + pass + "%. ASR: " + asr + "%. " + wording;
 }
 
 function meterRow(row, bar, note) {
@@ -669,7 +670,6 @@ async function showResults() {
 
   const card = run.scorecard || {};
   const bar = barPercent(card);
-  const garakNote = garakMeterNote(run);
   renderReadout(run, card);
   const categories = (card.categories || []).map((row) => {
     if (!invalid || row.status === "not_run") return row;
@@ -684,7 +684,7 @@ async function showResults() {
     };
   });
   $("scorecard").innerHTML = categories.map((row) => {
-    const note = row.category === "security_jailbreak" ? garakNote : "";
+    const note = row.category === "security_jailbreak" ? garakMeterNote(run, row) : "";
     return meterRow(row, bar, note);
   }).join("");
 
@@ -810,24 +810,26 @@ $("do-compare").addEventListener("click", async () => {
   try {
     const data = await api("/api/compare?left=" + encodeURIComponent($("compare-left").value) + "&right=" + encodeURIComponent($("compare-right").value));
     const invalidSide = !!(data.left_invalid || data.right_invalid);
+    const leftLabel = data.left_label || "Earlier";
+    const rightLabel = data.right_label || "Later";
     const cats = data.categories.map((row) => {
       const delta = invalidSide ? { text: "Not compared", cls: "delta-flat" } : formatDelta(row.delta, true);
       return '<div class="compare-row"><div class="meter-name">' + escapeHtml(row.label) + "</div>" +
-        '<div class="compare-bars">' + compareBar("Earlier", row.left_pass_rate, false, data.left_invalid) + compareBar("Later", row.right_pass_rate, true, data.right_invalid) + "</div>" +
+        '<div class="compare-bars">' + compareBar(leftLabel, row.left_pass_rate, false, data.left_invalid) + compareBar(rightLabel, row.right_pass_rate, true, data.right_invalid) + "</div>" +
         '<div class="compare-delta ' + delta.cls + '">' + escapeHtml(delta.text) + "</div></div>";
     }).join("");
     const warning = invalidSide
       ? '<div class="banner banner-fail">An invalid run has no category score. Deltas against it are not shown.</div>'
       : "";
     let html = warning + '<div class="panel"><div class="panel-head"><h3>Pass rate by category</h3>' +
-      '<p class="hint">Change is in percentage points, later minus earlier.</p></div>' +
+      '<p class="hint">Change is in percentage points, the later run minus the earlier run.</p></div>' +
       '<div class="compare-cats">' + (cats || emptyNote("Neither run has category scores.")) + "</div></div>";
     if (data.items && data.items.length) {
       const shown = data.items.slice(0, 30);
       html += '<div class="panel"><div class="panel-head"><h3>Prompts that changed most</h3>' +
         '<p class="hint">Largest changes first. Positive means the later run scored higher.</p></div><div class="table-wrap">' +
         tableHtml(
-          [{ label: "Prompt" }, { label: "Earlier score", num: true }, { label: "Later score", num: true }, { label: "Change", num: true }],
+          [{ label: "Prompt" }, { label: leftLabel, num: true }, { label: rightLabel, num: true }, { label: "Change", num: true }],
           shown.map((row) => {
             const delta = formatDelta(row.delta, false);
             return [td(row.prompt, "clip"), td(formatScore(row.left_score), "num"), td(formatScore(row.right_score), "num"), td(delta.text, "num " + delta.cls)];

@@ -17,7 +17,7 @@ from llm_eval.dioptra.smoke import run_smoke as dioptra_smoke
 from llm_eval.evaluators.consistency import ConsistencyEvaluator
 from llm_eval.evaluators.correctness import CorrectnessEvaluator
 from llm_eval.evaluators.robustness import RobustnessEvaluator
-from llm_eval.garak.live import run_garak
+from llm_eval.garak.live import garak_is_installed, planned_garak_attempts, run_garak
 from llm_eval.models.base import BaseModel
 from llm_eval.models.local_openai_server import LocalOpenAIServer
 from llm_eval.rampart.smoke import run_smoke as rampart_smoke
@@ -68,12 +68,18 @@ def planned_suite_total(name: str, config: dict, row_count: int) -> int | None:
         return rows
     if name == "garak":
         cap = config.get("max_prompts_per_probe")
+        generations = int(config.get("generations") or 1)
+        actual = planned_garak_attempts(config.get("probes"), cap=int(cap) if cap else None, generations=generations)
+        if actual is not None:
+            return actual
+        if garak_is_installed():
+            return None
         if not cap:
             return None
         count = _probe_count({"probes": config.get("probes")})
         if not count:
             return None
-        return int(count) * int(cap) * int(config.get("generations") or 1)
+        return int(count) * int(cap) * generations
     if name == "dioptra":
         return 1
     return None

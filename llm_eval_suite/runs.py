@@ -401,12 +401,14 @@ class RunManager:
                     self._append_item(run_dir, item)
                     if item.get("source") == "live":
                         new_live += 1
-                    progress["done"] = int(progress.get("done") or 0) + 1
-                    self._stamp_eta(run_dir, progress, run_id)
+                    # Garak progress is the cumulative attempt count from on_progress.
+                    if suite_name != "garak":
+                        progress["done"] = int(progress.get("done") or 0) + 1
+                        self._stamp_eta(run_dir, progress, run_id)
                     self._update_progress(run_dir, progress, suites)
 
                 def on_suite_progress(done, progress=progress):
-                    progress["done"] = int(done)
+                    progress["done"] = max(int(progress.get("done") or 0), int(done))
                     progress["status"] = "running"
                     self._stamp_eta(run_dir, progress, run_id)
                     self._update_progress(run_dir, progress, suites)
@@ -517,10 +519,24 @@ class RunManager:
         device_name = getattr(model, "device_name", None)
         if device_name:
             record["device"] = device_name
+        security = next(
+            (
+                row
+                for row in (record.get("scorecard") or {}).get("categories") or []
+                if row.get("category") == "security_jailbreak" and row.get("source") == "live"
+            ),
+            None,
+        )
+        if security and security.get("pass_rate") is not None:
+            record["garak_pass_rate"] = security["pass_rate"]
+            record["garak_attack_success_rate"] = round(1.0 - float(security["pass_rate"]), 4)
+            record["garak_pass_rate_label"] = record.get("garak_pass_rate_label") or "Pass rate (1 - ASR)"
         if record["validity"] == "invalid" and status == "completed":
             record["status"] = "invalid"
         if record.get("validity") == "invalid" or record.get("status") == "invalid":
             record["scorecard"] = withhold_category_scores(record.get("scorecard") or {})
+            record["garak_pass_rate"] = None
+            record["garak_attack_success_rate"] = None
         self._write_run(run_dir, record)
         self._write_manifest(run_dir, record)
 
@@ -536,18 +552,23 @@ class RunManager:
         key = (run_id, str(progress.get("name") or ""))
         state = self._eta_state.get(key)
         if state is None:
-            state = {"started": now, "last": now, "rate": None}
+            state = {"started": now, "mark": now, "done": 0, "rate": None}
             self._eta_state[key] = state
-        sample = max(0.0, now - float(state["last"]))
-        state["last"] = now
+        if "mark" not in state:
+            state["mark"] = state.get("last", state.get("started", now))
+        previous_done = int(state.get("done") or 0)
+        # Rate is time since this suite started, divided by attempts so far.
+        # A poll that only sees a burst is not the time for one prompt, and a
+        # new subprocess that reports a smaller count does not reset the rate.
+        if done > previous_done and done > 0:
+            elapsed = max(0.0, now - float(state.get("started", now)))
+            if elapsed > 0:
+                state["rate"] = elapsed / done
+            state["mark"] = now
+            state["done"] = done
         suite_rates = estimate.get("suite_rates") or {}
         known = suite_rates.get(str(progress.get("name") or ""))
-        if sample > 0:
-            if state.get("rate") is None:
-                state["rate"] = sample
-            else:
-                state["rate"] = smooth_item_seconds(state["rate"], sample, fallback=state["rate"])
-        observed = state.get("rate") if done >= ETA_MIN_ITEMS else None
+        observed = state.get("rate") if done >= ETA_MIN_ITEMS and state.get("rate") else None
         rate = observed if observed is not None else (float(known) if known is not None else None)
         remaining = None if total is None else max(0, int(total) - done)
         progress["seconds_per_prompt"] = None if rate is None else round(rate, 3)
