@@ -10,6 +10,10 @@ from llm_eval_suite.timing import DEFAULT_SECONDS_PER_PROMPT
 
 PRESET_PATH = Path(__file__).with_name("presets.json")
 
+# Two measured pre-run totals finished faster than the estimate: 35s vs 30.7s,
+# and 32s vs 27.8s. The scale is the mean of those actual/estimate ratios.
+MEASURED_ESTIMATE_SCALE = ((30.7 / 35.0) + (27.8 / 32.0)) / 2.0
+
 SUITE_KEYS = ("garak", "factcheck", "robustness", "consistency", "rampart", "dioptra")
 
 DEMO_MODEL_A_FOLDER = r"C:\AI Eval\LLMs\nanoGPT-master\nanoGPT-master\hf-dow-news"
@@ -147,9 +151,9 @@ def estimate_preset(
             source = "estimating"
             rate = None
         else:
-            estimated = round(total_seconds, 1)
+            estimated = round(total_seconds * MEASURED_ESTIMATE_SCALE, 1)
             source = "measured"
-            rate = sum(used) / len(used)
+            rate = (sum(used) / len(used)) * MEASURED_ESTIMATE_SCALE
     else:
         estimated = None if prompt_count is None else round(prompt_count * rate, 1)
         if estimated is None and source != "estimating":

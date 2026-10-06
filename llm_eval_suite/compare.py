@@ -11,13 +11,10 @@ def _run_stamp(run: dict) -> str:
     return str(run.get("created_at") or run.get("completed_at") or "")
 
 
-def _slot_label(run: dict) -> str:
+def _slot_name(run: dict) -> str:
     connection = run.get("connection") or {}
     name = connection.get("model") or connection.get("name") or run.get("run_id") or "Run"
-    when = _run_stamp(run)
-    if not when:
-        return str(name)
-    return f"{name}, {when}"
+    return str(name)
 
 
 def compare_runs(left: dict, right: dict, left_items: list[dict], right_items: list[dict]) -> dict:
@@ -54,11 +51,16 @@ def compare_runs(left: dict, right: dict, left_items: list[dict], right_items: l
 
     right_by_id = {item["id"]: item for item in right_items}
     item_deltas = []
+    unchanged_prompts = 0
     for item in left_items:
         other = right_by_id.get(item["id"])
         if other is None:
             continue
         if item.get("score") is None or other.get("score") is None:
+            continue
+        delta = round(float(other["score"]) - float(item["score"]), 4)
+        if delta == 0:
+            unchanged_prompts += 1
             continue
         item_deltas.append(
             {
@@ -67,7 +69,7 @@ def compare_runs(left: dict, right: dict, left_items: list[dict], right_items: l
                 "category": item.get("category"),
                 "left_score": item.get("score"),
                 "right_score": other.get("score"),
-                "delta": round(float(other["score"]) - float(item["score"]), 4),
+                "delta": delta,
                 "left_passed": item.get("passed"),
                 "right_passed": other.get("passed"),
             }
@@ -76,8 +78,11 @@ def compare_runs(left: dict, right: dict, left_items: list[dict], right_items: l
     return {
         "left_run_id": left.get("run_id"),
         "right_run_id": right.get("run_id"),
-        "left_label": _slot_label(left),
-        "right_label": _slot_label(right),
+        "left_label": _slot_name(left),
+        "right_label": _slot_name(right),
+        "left_created_at": _run_stamp(left),
+        "right_created_at": _run_stamp(right),
+        "unchanged_prompts": unchanged_prompts,
         "left_invalid": left_invalid,
         "right_invalid": right_invalid,
         "categories": categories,

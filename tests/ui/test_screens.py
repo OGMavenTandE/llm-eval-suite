@@ -135,6 +135,58 @@ def _seed(runs: Path) -> None:
         },
         [],
     )
+    shared = {
+        "id": "fact-1",
+        "passed": True,
+        "source": "live",
+        "counts_toward_score": True,
+        "category": "hallucination_factuality",
+        "prompt": "Capital of France?",
+        "response": "Paris",
+        "expected": "Paris",
+        "score": 1,
+    }
+    card = {
+        "pass_bar_percent": 80.0,
+        "meets_bar": True,
+        "verdict": "Meets the 80% pass bar",
+        "live_category_count": 1,
+        "categories_below_bar": 0,
+        "overall_pass_percent": None,
+        "failure_count": 0,
+        "live_item_count": 1,
+        "categories": [
+            {
+                "category": "hallucination_factuality",
+                "label": "Hallucination / factuality",
+                "status": "pass",
+                "pass_percent": 100.0,
+                "pass_rate": 1.0,
+                "sample_count": 1,
+                "source": "live",
+            }
+        ],
+    }
+    for run_id, stamp in (
+        ("same-a", "2026-10-06T15:25:01.482193+00:00"),
+        ("same-b", "2026-10-06T16:10:00+00:00"),
+    ):
+        _write_run(
+            runs,
+            run_id,
+            {
+                "run_id": run_id,
+                "status": "completed",
+                "validity": "ok",
+                "created_at": stamp,
+                "preset": "quick",
+                "connection": {"model": "qwen2.5" if run_id == "same-a" else "qwen3"},
+                "scorecard": card,
+                "suites": [],
+                "analysis": {"narrative": "Same scores.", "source_label": "Template"},
+            },
+            [shared],
+        )
 
 
 def _launch():
@@ -222,6 +274,18 @@ def test_screens_load_and_invalid_score_is_withheld(tmp_path: Path):
         ok_text = page.locator("#readout").inner_text()
         assert "Score withheld" not in ok_text
         assert "Meets the 80% pass bar" in ok_text
+        page.click('button[data-tab="compare"]')
+        page.select_option("#compare-left", "same-b")
+        page.select_option("#compare-right", "same-a")
+        page.click("#do-compare")
+        page.wait_for_selector("#compare-out .panel")
+        compared = page.locator("#compare-out").inner_text()
+        option = page.locator("#compare-left option[value='same-a']").inner_text()
+        assert option.split(" (")[0] in compared
+        assert "No prompt scores changed" in compared
+        assert "Capital of France?" not in compared
+        assert "482193" not in compared
+        assert "T15:25" not in compared
         page.click('button[data-tab="connect"]')
         assert page.locator("#connect .panel").first.locator("#test-connection").count() == 1
         assert page.locator("#connect .panel").first.locator("#save-connection").count() == 1

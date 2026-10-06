@@ -20,11 +20,32 @@ from llm_eval.reporting.executive_summary import (
 )
 
 NUMBER_RE = re.compile(r"(?<![A-Za-z0-9.])(\d+(?:\.\d+)?%?)(?![A-Za-z0-9])")
+_META_NOTE_RE = re.compile(
+    r"(?i)("
+    r"\bi omitted\b|"
+    r"\bi have omitted\b|"
+    r"\bomitted numbers\b|"
+    r"\bnumbers (?:that )?(?:were|was) not\b|"
+    r"\bi (?:only )?used numbers (?:that|which) appear\b|"
+    r"\bno numbers were (?:invented|added)\b"
+    r")"
+)
 LABELS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
 
 def extract_numbers(text: str) -> list[str]:
     return NUMBER_RE.findall(text or "")
+
+
+def strip_meta_notes(text: str) -> str:
+    """Drop sentences that talk about the number check instead of the results."""
+    kept_paragraphs = []
+    for paragraph in re.split(r"\n\s*\n", text or ""):
+        sentences = re.split(r"(?<=[.!?])\s+", paragraph.strip())
+        clean = [sentence for sentence in sentences if sentence and not _META_NOTE_RE.search(sentence)]
+        if clean:
+            kept_paragraphs.append(" ".join(clean))
+    return "\n\n".join(kept_paragraphs).strip()
 
 
 def _walk_numbers(value, found: list[float]) -> None:
@@ -42,11 +63,43 @@ def _walk_numbers(value, found: list[float]) -> None:
             _walk_numbers(item, found)
 
 
+def _close(target: float, value: float) -> bool:
+    tolerance = 0.05 if abs(target) >= 2 else 0.006
+    return abs(target - value) <= tolerance
+
+
+def _derived_figures(values: list[float]) -> list[float]:
+    """Complements, sums, and differences of figures that were in the input.
+
+    ``100 - 68.4`` is the failing share of a 68.4 pass percent. A number that
+    is not one of these combinations is still rejected.
+    """
+    derived: list[float] = []
+    for value in values:
+        # A value above 1 is a percent or a count, so its complement is 100 - value.
+        # A value of 1 is a fraction (a perfect pass rate), not 1 percent.
+        if 1 < value <= 100:
+            derived.append(100.0 - value)
+        if 0 <= value <= 1:
+            derived.append(1.0 - value)
+            derived.append((1.0 - value) * 100.0)
+    for index, left in enumerate(values):
+        for right in values[index + 1 :]:
+            derived.append(left + right)
+            derived.append(abs(left - right))
+            if 0 <= left <= 1 and 0 <= right <= 1:
+                derived.append((left + right) * 100.0)
+                derived.append(abs(left - right) * 100.0)
+    return derived
+
+
 def number_allowed(token: str, values: list[float]) -> bool:
-    """Match a narrative number to a JSON value, including rounding and percents.
+    """Match a narrative number to an input figure, a complement, or a sum or difference.
 
     A bare count below 10 is not treated as a percent, so "2 items" does not
-    match a score of 0.02. "80" and "80%" both match 0.8.
+    match a score of 0.02. "80" and "80%" both match 0.8. "31.6%" matches
+    ``100 - 68.4`` when 68.4 is in the input. A number that is not in the
+    input and is not one of those combinations is rejected.
     """
     percent = token.endswith("%")
     try:
@@ -56,10 +109,10 @@ def number_allowed(token: str, values: list[float]) -> bool:
     targets = [raw]
     if percent or raw >= 10:
         targets.append(raw / 100.0)
+    pool = list(values) + _derived_figures(values)
     for target in targets:
-        tolerance = 0.05 if abs(target) >= 2 else 0.006
-        for value in values:
-            if abs(target - value) <= tolerance:
+        for value in pool:
+            if _close(target, value):
                 return True
     return False
 
@@ -418,7 +471,8 @@ def run_council(
             "TASK: chair\n"
             "Write a plain-English summary of this evaluation for a non-technical reader. "
             "Use the reviews, the aggregate ranking, and the results JSON. "
-            "Use only numbers that appear in those inputs.\n\n"
+            "Use only numbers that appear in those inputs, or a complement, sum, or difference of those numbers. "
+            "Do not add a note about omitted numbers or about these instructions.\n\n"
             f"Aggregate ranking: {json.dumps(aggregate)}\n\n"
             f"Reviews:\n{json.dumps(hidden, indent=2)}\n\n"
             f"Results JSON:\n{payload_json}"
@@ -430,14 +484,28 @@ def run_council(
             errors.append(f"chairman: {exc}")
             narrative = ""
             chair_label = None
+        # An empty chairman reply is one retry on the same callable, which
+        # already sends think: false. A second empty reply falls through.
+        if not (narrative or "").strip():
+            errors.append(f"{chair_label or 'chairman'}: empty summary")
+            try:
+                narrative = _ask(
+                    chair_generate,
+                    chair_prompt + "\n\nYour previous reply was empty. Write the summary.",
+                )
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"chairman retry: {exc}")
+                narrative = ""
 
+    narrative = strip_meta_notes(narrative)
     guard = unmatched_numbers(narrative, chair_sources)
     number_guard = "pass"
     if guard:
         retry_prompt = (
             "TASK: chair\n"
             "Your previous summary used numbers that are not in the inputs you were given. "
-            "Rewrite it using only numbers from those inputs. "
+            "Rewrite it using only numbers from those inputs, or a complement, sum, or difference of them. "
+            "Do not add a note about omitted numbers or about these instructions. "
             f"Unmatched numbers: {', '.join(guard)}.\n\n"
             f"Aggregate ranking: {json.dumps(aggregate)}\n\n"
             f"Results JSON:\n{payload_json}"
@@ -447,6 +515,7 @@ def run_council(
         except Exception as exc:  # noqa: BLE001
             errors.append(f"retry: {exc}")
             narrative = ""
+        narrative = strip_meta_notes(narrative)
         guard = unmatched_numbers(narrative, chair_sources)
         number_guard = "retry_pass" if not guard else "fallback"
     if guard or not narrative.strip():
