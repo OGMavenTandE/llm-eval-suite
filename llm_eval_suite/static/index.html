@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>LLM Eval Suite</title>
+  <link rel="icon" href="/favicon.ico">
   <link rel="stylesheet" href="/static/tokens.css">
 </head>
 <body>
@@ -22,15 +23,15 @@
     </div>
     <nav aria-label="Workbench sections">
       <button class="tab" data-tab="connect" aria-current="page">
-        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 3v4M13 3v4M5 7h10v3a5 5 0 0 1-10 0zM10 15v3"/></svg>
+        <span class="step-num">1</span>
         Connect
       </button>
       <button class="tab" data-tab="run">
-        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6 4l10 6-10 6z"/></svg>
+        <span class="step-num">2</span>
         Run
       </button>
       <button class="tab" data-tab="results">
-        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 16h14M5 13V9M10 13V4M15 13v-3"/></svg>
+        <span class="step-num">3</span>
         Results
       </button>
       <button class="tab" data-tab="compare">
@@ -42,6 +43,7 @@
         Judges
       </button>
     </nav>
+    <p class="nav-scroll-hint">Scroll for more sections</p>
     <p class="rail-note"><span class="local-dot" aria-hidden="true"></span>Runs on this computer. Nothing leaves it unless you choose a cloud endpoint.</p>
   </aside>
 
@@ -101,9 +103,13 @@
               </div>
             </div>
             <div id="cloud-banner" class="banner banner-warn hidden">This endpoint is not on this computer. Prompts will leave the machine.</div>
+            <div class="actions actions-primary">
+              <button id="test-connection" class="primary" type="button">Test connection</button>
+              <button id="save-connection" type="button">Save connection</button>
+            </div>
           </div>
 
-          <div class="panel">
+          <div id="local-weights" class="panel hidden">
             <h3>Local weights</h3>
             <p class="hint">For a Hugging Face folder or a nanoGPT <code>ckpt.pt</code> on this machine.</p>
             <div class="fields">
@@ -121,11 +127,6 @@
               <button id="convert-nanogpt" type="button">Convert to Hugging Face folder</button>
             </div>
             <p id="detect-note" class="hint"></p>
-          </div>
-
-          <div class="actions actions-primary">
-            <button id="test-connection" class="primary" type="button">Test connection</button>
-            <button id="save-connection" type="button">Save connection</button>
           </div>
         </div>
 
@@ -176,7 +177,7 @@
                 <input id="dataset-file" type="file" accept=".jsonl,.csv,text/csv,application/json">
               </div>
             </div>
-            <p class="hint">CSV or JSONL with <code>prompt</code> and <code>expected_answer</code>, plus optional <code>category</code> and <code>source</code>.</p>
+            <p class="hint">CSV or JSONL with <code>prompt</code> and <code>expected_answer</code> (<code>expected</code> and <code>answer</code> are accepted), plus optional <code>category</code> and <code>source</code>.</p>
             <p id="dataset-note" class="hint"></p>
             <div class="actions actions-primary">
               <button id="start-run" class="primary" type="button">Start run</button>
@@ -215,7 +216,8 @@
           </div>
           <button id="refresh-results" type="button">Refresh</button>
           <button id="analyze-run" type="button">Write analysis</button>
-          <button id="export-report" type="button">Export HTML report</button>
+          <button id="export-report" type="button">View HTML report</button>
+          <button id="download-report" type="button">Download HTML report</button>
         </div>
       </header>
 
@@ -244,7 +246,7 @@
             <h3>Analysis</h3>
             <p id="summary-source" class="hint"></p>
           </div>
-          <pre id="analysis-text" class="analysis">No analysis yet. The template summary is used when no local judge is available.</pre>
+          <pre id="analysis-text" class="analysis" tabindex="0">No analysis yet. The template summary is used when no local judge is available.</pre>
         </div>
       </div>
 
@@ -301,7 +303,11 @@
               <label for="chairman">Chairman model name</label>
               <input id="chairman" placeholder="qwen2.5:3b-instruct" spellcheck="false">
             </div>
-            <p class="hint">The chairman writes the final summary from the judges' reviews.</p>
+            <div class="field">
+              <label for="judge-timeout">Judge timeout (seconds)</label>
+              <input id="judge-timeout" type="number" min="1" value="90">
+            </div>
+            <p class="hint">The chairman writes the final summary from the judges' reviews. The timeout is how long each judge call may take before the template summary is used.</p>
           </div>
           <div class="panel panel-quiet">
             <p class="hint">Suggested local judges, if you have them in Ollama: <code>qwen2.5:3b-instruct</code> and <code>llama3.2:3b</code>. Cloud judges stay off unless you type a cloud URL.</p>

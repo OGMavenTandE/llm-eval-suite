@@ -13,15 +13,52 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from llm_eval.datasets.loader import load_dataset
-from llm_eval.garak.live import validity_from_items
+from llm_eval.garak.live import is_empty_generation, validity_from_items
 from llm_eval_suite.compare import compare_runs
 from llm_eval_suite.council import run_council
 from llm_eval_suite.presets import estimate_preset, expand_preset
 from llm_eval_suite.report_html import render_report
-from llm_eval_suite.scoring import failing_items, scorecard
-from llm_eval_suite.suites import RUNNERS, SuiteContext
+from llm_eval_suite.scoring import live_failures, scorecard
+from llm_eval_suite.suites import RUNNERS, SuiteContext, planned_suite_total
 from llm_eval_suite.timing import DEFAULT_SECONDS_PER_PROMPT, TimingStore
 from llm_eval_suite.worker import build_worker_command
+
+# Half or more empty fact-check answers is an invalid run. A thinking model
+# that spends max_tokens inside <think> and returns no answer trips this.
+FACTCHECK_EMPTY_INVALID_RATE = 0.5
+ETA_SMOOTHING = 0.3
+
+
+def smooth_item_seconds(previous: float | None, sample: float, *, fallback: float, alpha: float = ETA_SMOOTHING) -> float:
+    """Blend the latest item time into the running per-item rate."""
+    base = fallback if previous is None else previous
+    return (alpha * max(0.0, sample)) + ((1.0 - alpha) * base)
+
+
+def factcheck_empty_validity(items: list[dict]) -> dict:
+    """INVALID when half or more of the live fact-check answers are empty."""
+    rows = [item for item in items if item.get("suite") == "factcheck" and item.get("source") == "live"]
+    empty = sum(1 for item in rows if item.get("empty") or is_empty_generation(item.get("response")))
+    total = len(rows)
+    if total and empty / total >= FACTCHECK_EMPTY_INVALID_RATE:
+        return {
+            "validity": "invalid",
+            "reason": f"{empty} of {total} fact-check answers were empty",
+        }
+    return {"validity": "ok", "reason": ""}
+
+
+def _merge_validity(current: dict, extra: dict) -> dict:
+    if extra.get("validity") != "invalid":
+        return current
+    reason = (extra.get("reason") or "").strip()
+    prior = (current.get("reason") or "").strip()
+    if reason and reason not in prior:
+        prior = "; ".join(part for part in (prior, reason) if part)
+    elif not prior:
+        prior = reason
+    return {"validity": "invalid", "reason": prior}
+
 
 SUITE_FIELDS = (
     "name",
@@ -96,6 +133,7 @@ class RunManager:
         self._cancel: dict[str, threading.Event] = {}
         self._threads: dict[str, threading.Thread] = {}
         self._lock = threading.Lock()
+        self._eta_state: dict[tuple[str, str], dict] = {}
 
     def start(
         self,
@@ -213,7 +251,7 @@ class RunManager:
         record = self._read_run(self.runs_dir / run_id)
         if record is None:
             raise FileNotFoundError(run_id)
-        record["failures"] = failing_items(self._read_items(self.runs_dir / run_id))[:100]
+        record["failures"] = live_failures(self._read_items(self.runs_dir / run_id))[:100]
         return record
 
     def items(self, run_id: str) -> list[dict]:
@@ -223,10 +261,14 @@ class RunManager:
         rows = []
         if not self.runs_dir.is_dir():
             return rows
-        for path in sorted(self.runs_dir.iterdir(), reverse=True):
+        for path in self.runs_dir.iterdir():
             record = self._read_run(path)
             if record is None:
                 continue
+            invalid = record.get("validity") == "invalid" or record.get("status") == "invalid"
+            percent = None
+            if not invalid:
+                percent = (record.get("scorecard") or {}).get("overall_pass_percent")
             rows.append(
                 {
                     "run_id": record.get("run_id"),
@@ -234,9 +276,10 @@ class RunManager:
                     "preset": record.get("preset"),
                     "model": (record.get("connection") or {}).get("model"),
                     "created_at": record.get("created_at"),
-                    "overall_pass_percent": (record.get("scorecard") or {}).get("overall_pass_percent"),
+                    "overall_pass_percent": percent,
                 }
             )
+        rows.sort(key=lambda row: row.get("created_at") or "", reverse=True)
         return rows
 
     def compare(self, left_id: str, right_id: str) -> dict:
@@ -318,6 +361,7 @@ class RunManager:
         suites = []
         started = time.perf_counter()
         new_live = 0
+        model = None
         self._append_log(run_dir, f"Run {run_id} started.")
         if watch_cancel:
             threading.Thread(target=self._watch_cancel, args=(run_dir, cancel), daemon=True).start()
@@ -332,11 +376,16 @@ class RunManager:
                 if cancel.is_set():
                     break
                 runner = RUNNERS[suite["name"]]
+                suite_name = suite["name"]
+                total = planned_suite_total(suite_name, suite, len(rows))
+                now = time.perf_counter()
+                self._eta_state[(run_id, suite_name)] = {"started": now, "last": now, "rate": None}
                 progress = {
-                    "name": suite["name"],
+                    "name": suite_name,
                     "done": 0,
-                    "total": None,
+                    "total": total,
                     "status": "running",
+                    "eta_seconds": None,
                 }
                 self._update_progress(run_dir, progress, suites)
 
@@ -350,7 +399,7 @@ class RunManager:
                     if item.get("source") == "live":
                         new_live += 1
                     progress["done"] = int(progress.get("done") or 0) + 1
-                    self._stamp_eta(run_dir, progress, started)
+                    self._stamp_eta(run_dir, progress, run_id)
                     self._update_progress(run_dir, progress, suites)
 
                 ctx = SuiteContext(
@@ -370,6 +419,7 @@ class RunManager:
                 progress["total"] = result.get("total", progress["done"])
                 progress["source"] = result.get("source")
                 progress["label"] = result.get("label")
+                progress["eta_seconds"] = None
                 summary = {key: result[key] for key in SUITE_FIELDS if key in result}
                 summary["done"] = progress["done"]
                 summary["total"] = progress["total"]
@@ -377,10 +427,21 @@ class RunManager:
                 self._append_log(run_dir, f"{result['name']} finished ({result.get('source')}).")
                 self._update_progress(run_dir, progress, suites)
             status = "cancelled" if cancel.is_set() else "completed"
-            self._finalize(run_dir, items, suites, status, error=None, started=started, new_live=new_live)
+            self._finalize(
+                run_dir, items, suites, status, error=None, started=started, new_live=new_live, model=model
+            )
         except Exception as exc:  # noqa: BLE001 - stored on the run record
             self._append_log(run_dir, f"Run failed: {exc}")
-            self._finalize(run_dir, items, suites, "failed", error=str(exc), started=started, new_live=new_live)
+            self._finalize(
+                run_dir,
+                items,
+                suites,
+                "failed",
+                error=str(exc),
+                started=started,
+                new_live=new_live,
+                model=model,
+            )
 
     def _finalize(
         self,
@@ -391,6 +452,7 @@ class RunManager:
         error: str | None,
         started: float | None = None,
         new_live: int = 0,
+        model=None,
     ):
         record = self._read_run(run_dir) or {}
         record["status"] = status
@@ -400,15 +462,25 @@ class RunManager:
         record["error"] = error
         record["items_completed"] = len(items)
         record["log_path"] = str(run_dir / "run.log")
+        fact_validity = factcheck_empty_validity(items)
+        if fact_validity["validity"] == "invalid":
+            for suite in suites:
+                if suite.get("name") == "factcheck":
+                    suite["validity"] = "invalid"
+                    suite["validity_reason"] = fact_validity["reason"]
+                    note = suite.get("notes") or ""
+                    if fact_validity["reason"] not in note:
+                        suite["notes"] = ("INVALID fact-check. " + fact_validity["reason"] + " " + note).strip()
         validity = validity_from_items(
             [item for item in items if item.get("suite") == "garak" and item.get("source") == "live"]
         )
+        validity = _merge_validity(validity, fact_validity)
         for suite in suites:
             if suite.get("validity") == "invalid":
-                validity = {
-                    "validity": "invalid",
-                    "reason": suite.get("validity_reason") or validity.get("reason") or "",
-                }
+                validity = _merge_validity(
+                    validity,
+                    {"validity": "invalid", "reason": suite.get("validity_reason") or ""},
+                )
             if suite.get("garak_runs_dir"):
                 record["garak_runs_dir"] = suite["garak_runs_dir"]
             if suite.get("pass_rate_label"):
@@ -418,6 +490,9 @@ class RunManager:
                 record["garak_wording"] = suite.get("wording")
         record["validity"] = validity.get("validity") or "ok"
         record["validity_reason"] = validity.get("reason") or ""
+        device_name = getattr(model, "device_name", None)
+        if device_name:
+            record["device"] = device_name
         if record["validity"] == "invalid" and status == "completed":
             record["status"] = "invalid"
         self._write_run(run_dir, record)
@@ -425,20 +500,35 @@ class RunManager:
         if self.timing is not None and status == "completed" and new_live > 0 and started is not None:
             self.timing.record(time.perf_counter() - started, new_live)
 
-    def _stamp_eta(self, run_dir: Path, progress: dict, started: float) -> None:
+    def _stamp_eta(self, run_dir: Path, progress: dict, run_id: str) -> None:
+        if progress.get("status") in {"completed", "cancelled"}:
+            progress["eta_seconds"] = None
+            return
         record = self._read_run(run_dir) or {}
         estimate = record.get("estimate") or {}
         total = progress.get("total")
-        if total is None:
-            total = estimate.get("prompt_count")
         done = int(progress.get("done") or 0)
-        elapsed = time.perf_counter() - started
+        now = time.perf_counter()
+        key = (run_id, str(progress.get("name") or ""))
+        state = self._eta_state.get(key)
+        if state is None:
+            state = {"started": now, "last": now, "rate": None}
+            self._eta_state[key] = state
+        sample = max(0.0, now - float(state["last"]))
+        state["last"] = now
         fallback = float(estimate.get("seconds_per_prompt") or DEFAULT_SECONDS_PER_PROMPT)
-        rate = (elapsed / done) if done else fallback
+        if sample <= 0 and state.get("rate") is None:
+            rate = fallback
+        else:
+            rate = smooth_item_seconds(state.get("rate"), sample, fallback=fallback)
+        state["rate"] = rate
         remaining = None if total is None else max(0, int(total) - done)
         progress["seconds_per_prompt"] = round(rate, 3)
-        progress["elapsed_seconds"] = round(elapsed, 1)
-        progress["eta_seconds"] = None if remaining is None else round(remaining * rate, 1)
+        progress["elapsed_seconds"] = round(now - float(state["started"]), 1)
+        if remaining is None or remaining <= 0:
+            progress["eta_seconds"] = None
+        else:
+            progress["eta_seconds"] = round(remaining * rate, 1)
         progress["eta_source"] = "measured" if done else estimate.get("estimate_source") or "default"
 
     def _watch_cancel(self, run_dir: Path, cancel: threading.Event) -> None:

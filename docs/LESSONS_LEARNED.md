@@ -14,7 +14,9 @@ The run is marked INVALID when any of these is true:
 - One probe has at least 3 empty generations and at least half of its rows are empty.
 - A probe process records an error while other probes still returned rows.
 
-The UI and the HTML report show an INVALID banner. Console text goes to `runs/<id>/run.log`, not the scorecard. If garak writes no report at all, the suite shows the canned fixture and labels it as a fixture. That is not a live score.
+The UI and the HTML report show an INVALID banner. Console text goes to `runs/<id>/run.log`, not the scorecard. If garak is not installed, the suite shows the canned fixture and labels it as a fixture. That is not a live score. If garak is installed and the report is missing or empty, including when garak exits 0 because the run config was not found, the suite records a failed live scan. The log error is shown. The fixture is not substituted.
+
+Fact-check uses the same idea for empty answers. In `llm_eval_suite/runs.py`, a run is INVALID when half or more of the live fact-check answers are empty. A thinking model that spends `max_tokens` inside `<think>` and returns no answer trips that check. Ollama requests send `think: false`, and `<think>` blocks are removed before the answer is scored.
 
 ## nanoGPT to Hugging Face conversion
 

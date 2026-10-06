@@ -161,6 +161,44 @@ def category_for_probe(probe_classname: str) -> str:
     return "security_jailbreak"
 
 
+def normalize_openai_compatible_uri(base_url: str) -> str:
+    """OpenAI-compatible base URL ending in ``/v1/``.
+
+    Ollama is usually given as ``http://127.0.0.1:11434``. Garak's
+    OpenAICompatible generator calls ``{uri}chat/completions``, so the URI
+    has to include ``/v1/`` or it falls through to ``localhost:8000``.
+    """
+    uri = (base_url or "").strip().rstrip("/")
+    if not uri:
+        return ""
+    if not uri.endswith("/v1"):
+        uri = uri + "/v1"
+    return uri + "/"
+
+
+def garak_error_text(stdout: str, stderr: str, return_code: int | None) -> str:
+    """Pull the useful lines out of a garak console log.
+
+    Garak can exit 0 when the run config was not found. The log line is the
+    error the UI should show.
+    """
+    lines: list[str] = []
+    for raw in (stderr or "", stdout or ""):
+        for line in raw.splitlines():
+            text = line.strip()
+            if not text:
+                continue
+            lowered = text.lower()
+            if any(token in lowered for token in ("error", "not found", "traceback", "exception", "failed", "invalid")):
+                lines.append(text)
+    unique = list(dict.fromkeys(lines))
+    if unique:
+        return "; ".join(unique[-4:])
+    if return_code not in (None, 0):
+        return f"garak exited {return_code} and did not write a report"
+    return "garak exited 0 and did not write a report"
+
+
 def build_garak_config(
     *,
     model_name: str,
@@ -172,7 +210,7 @@ def build_garak_config(
     max_new_tokens: int = 64,
     max_context: int | None = None,
 ) -> dict:
-    uri = base_url.rstrip("/") + "/"
+    uri = normalize_openai_compatible_uri(base_url)
     probe_spec = ""
     if isinstance(probes, str):
         probe_spec = "" if probes == "all" else probes
@@ -194,17 +232,17 @@ def build_garak_config(
             "target_name": model_name,
             "model_name": model_name,
             "probe_spec": probe_spec,
+            "generators": {
+                "openai": {
+                    "OpenAICompatible": {
+                        "uri": uri,
+                        "api_key": api_key or "local",
+                        "max_tokens": int(max_tokens),
+                    }
+                }
+            },
         },
         "run": run_block,
-        "generators": {
-            "openai": {
-                "OpenAICompatible": {
-                    "uri": uri,
-                    "api_key": api_key or "local",
-                    "max_tokens": int(max_tokens),
-                }
-            }
-        },
     }
 
 
@@ -439,7 +477,7 @@ def run_garak(
 
     ``runner`` replaces ``subprocess.run`` in tests.
     """
-    work = Path(work_dir)
+    work = Path(work_dir).resolve()
     work.mkdir(parents=True, exist_ok=True)
     if not garak_is_installed():
         return _fixture_result(
@@ -479,9 +517,9 @@ def run_garak(
             max_new_tokens=max_new_tokens,
             max_context=max_context,
         )
-        config_path = work / f"garak-config-{index}.yaml"
+        config_path = (work / f"garak-config-{index}.yaml").resolve()
         config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
-        report_prefix = work / f"garak-live-{index}"
+        report_prefix = (work / f"garak-live-{index}").resolve()
         group_items, error = _run_probe_group(
             invoke=invoke,
             config_path=config_path,
@@ -498,8 +536,8 @@ def run_garak(
         )
         if error:
             label = ",".join(group) if group else "garak"
-            probe_errors.append(f"{label} failed in its own process. See the run log.")
-            _append_log(log_file, f"{label}: {error}")
+            probe_errors.append(f"{label}: {error}")
+            _append_log(log_file, f"Failed live scan ({label}): {error}")
             continue
         items.extend(group_items)
         completed_probes.extend(group)
@@ -514,22 +552,9 @@ def run_garak(
         merged = list(dict.fromkeys([*previous, *completed_probes]))
         done_path.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
 
-    if not items and probe_errors:
-        return _fixture_result(
-            fixture_path,
-            notes=(
-                "Live garak did not produce a report. "
-                "These rows are a fixture. The console output is in the run log."
-            ),
-        )
     if not items:
-        return _fixture_result(
-            fixture_path,
-            notes=(
-                "Live garak did not produce a report. "
-                "These rows are a fixture. The console output is in the run log."
-            ),
-        )
+        message = "; ".join(probe_errors) if probe_errors else "garak exited 0 and did not write a report"
+        return _failed_live_result(log_file, work, message)
     return _live_summary(items, probe_errors, log_file, work, completed_probes=completed_probes)
 
 
@@ -617,24 +642,51 @@ def _run_probe_group(
         if return_code == 0:
             error = None
             break
-        error = "garak exited without a usable report"
-        unrecognized = "unrecognized" in stderr or "target_type" in stderr
+        error = garak_error_text(stdout, stderr, return_code)
+        unrecognized = "unrecognized" in (stderr or "") or "target_type" in (stderr or "")
         if not unrecognized:
             break
     report_path = Path(str(report_prefix) + ".report.jsonl")
     if not report_path.is_file():
         candidates = sorted(work.glob(report_prefix.name + "*.report.jsonl"))
         report_path = candidates[0] if candidates else report_path
-    if not report_path.is_file():
-        return [], error or "garak did not write a report"
+    detail = garak_error_text(stdout, stderr, return_code if error else 0)
+    if not report_path.is_file() or report_path.stat().st_size == 0:
+        return [], detail
     parsed = parse_garak_report(
         report_path,
         mode=mode,
         perspective_api_key=perspective_api_key,
     )
     if not parsed:
-        return [], error or "garak report had no attempts"
+        return [], detail
     return parsed, None
+
+
+def _failed_live_result(log_file: Path, work: Path, message: str) -> dict:
+    """Garak was installed and ran, but there is no usable report.
+
+    This is a failed live scan. It is not the canned fixture.
+    """
+    reason = (message or "garak did not write a report").strip()
+    _append_log(log_file, "Failed live scan: " + reason)
+    return {
+        "source": "failed",
+        "label": "Failed live scan",
+        "notes": "Failed live scan. " + reason,
+        "items": [],
+        "validity": "invalid",
+        "validity_reason": reason,
+        "empty_generations": 0,
+        "attack_success_rate": None,
+        "pass_rate": None,
+        "pass_rate_label": "Pass rate (1 - ASR)",
+        "wording": PASS_RATE_WORDING,
+        "garak_runs_dir": str(garak_user_runs_dir()),
+        "report_dir": str(work),
+        "log_path": str(log_file),
+        "completed_probes": [],
+    }
 
 
 def _fixture_result(fixture_path, *, notes: str) -> dict:

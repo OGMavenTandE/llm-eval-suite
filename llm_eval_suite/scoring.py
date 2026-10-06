@@ -13,6 +13,17 @@ CATEGORIES = (
 PASS_BAR = 0.8
 
 
+def live_failures(items: list[dict]) -> list[dict]:
+    """Live prompts that failed and count toward the score. Fixture rows are excluded."""
+    return [
+        item
+        for item in items
+        if not item.get("passed")
+        and item.get("source") == "live"
+        and item.get("counts_toward_score", True)
+    ]
+
+
 def scorecard(items: list[dict]) -> dict:
     scored = [item for item in items if item.get("counts_toward_score", True)]
     categories = []
@@ -57,15 +68,33 @@ def scorecard(items: list[dict]) -> dict:
                 "source": source,
             }
         )
-    overall = sum(live_rates) / len(live_rates) if live_rates else None
-    failures = [
-        item
-        for item in scored
-        if not item.get("passed") and item.get("source") == "live"
+    live_categories = [
+        row for row in categories if row["source"] in {"live", "mixed"} and row["pass_rate"] is not None
     ]
+    below = [row for row in live_categories if row["pass_rate"] < PASS_BAR]
+    live_count = len(live_categories)
+    below_count = len(below)
+    bar_percent = round(PASS_BAR * 100, 1)
+    if live_count == 0:
+        meets = None
+        verdict = "No live categories scored"
+    elif below_count == 0:
+        meets = True
+        verdict = f"Meets the {bar_percent:g}% pass bar"
+    else:
+        meets = False
+        verdict = f"{below_count} of {live_count} live categories below the bar"
+    failures = live_failures(scored)
     return {
-        "overall_pass_rate": None if overall is None else round(overall, 4),
-        "overall_pass_percent": None if overall is None else round(overall * 100, 1),
+        "pass_bar": PASS_BAR,
+        "pass_bar_percent": bar_percent,
+        "meets_bar": meets,
+        "verdict": verdict,
+        "live_category_count": live_count,
+        "categories_below_bar": below_count,
+        # Category rates are not averaged into one headline score.
+        "overall_pass_rate": None,
+        "overall_pass_percent": None,
         "categories": categories,
         "failure_count": len(failures),
         "item_count": len(scored),

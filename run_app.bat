@@ -45,12 +45,24 @@ if errorlevel 1 (
   echo garak install failed.
   exit /b 1
 )
+rem An old checkout can already have torch 2.13.0 from the CPU index. pip then
+rem treats the pin as satisfied and leaves the CPU build in place.
 where nvidia-smi >nul 2>&1
 if not errorlevel 1 (
+  python -c "import torch; raise SystemExit(0 if getattr(torch.version, 'cuda', None) else 1)"
+  if errorlevel 1 (
+    echo Existing .venv-eval has a CPU torch build. Reinstalling torch 2.13.0 from the CUDA 12.6 index.
+    python -m pip install --force-reinstall torch==2.13.0 --index-url https://download.pytorch.org/whl/cu126
+    if errorlevel 1 (
+      echo torch CUDA reinstall failed.
+      exit /b 1
+    )
+  )
   python -c "import torch; raise SystemExit(0 if torch.cuda.is_available() else 1)"
   if errorlevel 1 (
     echo WARNING: torch does not see CUDA. Generations will use the CPU.
   )
 )
 echo Starting LLM Eval Suite at http://127.0.0.1:8765
+rem The app opens the browser once. Do not start it here as well.
 python -m llm_eval_suite.app

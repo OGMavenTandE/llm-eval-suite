@@ -148,6 +148,8 @@ def judge_payload(run: dict, items: list[dict], *, failure_cap: int = 8) -> dict
             continue
         if item.get("counts_toward_score") is False:
             continue
+        if item.get("source") != "live":
+            continue
         failures.append(
             {
                 "id": item.get("id"),
@@ -251,6 +253,19 @@ def template_narrative(run: dict, items: list[dict]) -> str:
         evaluator_names=["correctness"],
         model_results=[{"summary": summary_rows, "detailed": detailed}],
     )
+    card = run.get("scorecard") or {}
+    if "failure_count" in card:
+        count = int(card.get("failure_count") or 0)
+    else:
+        from llm_eval_suite.scoring import live_failures
+
+        count = len(live_failures(items))
+    noun = "prompt" if count == 1 else "prompts"
+    if count == 0:
+        summary.overall_outcome = "The evaluation finished with no failing live prompts."
+    else:
+        summary.overall_outcome = f"The evaluation finished with {count} failing live {noun}."
+    summary.needs_human_review_count = count
     return narrative_from_summary(summary)
 
 

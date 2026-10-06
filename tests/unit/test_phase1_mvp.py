@@ -656,8 +656,11 @@ def test_garak_live_and_fixture(tmp_path: Path, monkeypatch):
         work_dir=tmp_path / "fail",
         runner=broken,
     )
-    assert fallback["source"] == "fixture"
-    assert "fixture" in fallback["notes"].lower()
+    assert fallback["source"] == "failed"
+    assert fallback["label"] == "Failed live scan"
+    assert fallback["validity"] == "invalid"
+    assert "fixture" not in fallback["notes"].lower()
+    assert "exited without a usable report" not in fallback["notes"]
 
 
 def test_factcheck_uses_correctness_evaluator():

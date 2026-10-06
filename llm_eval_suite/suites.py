@@ -21,7 +21,9 @@ from llm_eval.garak.live import run_garak
 from llm_eval.models.base import BaseModel
 from llm_eval.models.local_openai_server import LocalOpenAIServer
 from llm_eval.rampart.smoke import run_smoke as rampart_smoke
+from llm_eval.models.context import strip_think_blocks
 from llm_eval_suite.matching import match_expected
+from llm_eval_suite.presets import _probe_count
 
 FIXTURE_LABEL = "Fixture / smoke (no live model call)"
 
@@ -51,6 +53,29 @@ def _cancelled(ctx: SuiteContext) -> bool:
 def _emit(ctx: SuiteContext, item: dict) -> None:
     if ctx.on_item is not None:
         ctx.on_item(item)
+
+
+def planned_suite_total(name: str, config: dict, row_count: int) -> int | None:
+    """How many scored items this suite will emit. None when the count is not known yet."""
+    rows = int(row_count)
+    if name in {"factcheck", "robustness", "consistency"}:
+        limit = config.get("max_items")
+        if limit:
+            rows = min(rows, int(limit))
+        if name == "factcheck":
+            return rows * max(1, int(config.get("trials") or 1))
+        return rows
+    if name == "garak":
+        cap = config.get("max_prompts_per_probe")
+        if not cap:
+            return None
+        count = _probe_count({"probes": config.get("probes")})
+        if not count:
+            return None
+        return int(count) * int(cap) * int(config.get("generations") or 1)
+    if name == "dioptra":
+        return 1
+    return None
 
 
 def validate_factcheck_text(filename: str, text: str, destination: Path) -> dict:
@@ -155,13 +180,15 @@ class FactcheckRunner:
                     f"Question: {row['prompt']}"
                 )
                 result = ctx.model.generate(prompt, max_tokens=64)
-                detail = score_fact_detail(row["prompt"], row["expected_answer"], result.text)
+                answer = strip_think_blocks(result.text)
+                detail = score_fact_detail(row["prompt"], row["expected_answer"], answer)
                 item = {
                     "id": item_id,
                     "suite": "factcheck",
                     "category": "hallucination_factuality",
                     "prompt": row["prompt"],
-                    "response": result.text,
+                    "response": answer,
+                    "empty": not bool(answer.strip()),
                     "expected": row["expected_answer"],
                     "score": round(float(detail["score"]), 4),
                     "passed": bool(detail["passed"]),
@@ -327,7 +354,7 @@ class GarakRunner:
         summary = {
             "name": "garak",
             "source": result["source"],
-            "label": result["label"] if result["source"] == "live" else FIXTURE_LABEL,
+            "label": FIXTURE_LABEL if result["source"] == "fixture" else result["label"],
             "notes": result["notes"],
             "items": items,
             "done": len(result["items"]),

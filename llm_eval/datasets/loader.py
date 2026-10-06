@@ -20,8 +20,25 @@ def load_dataset(path: str) -> list[dict]:
     else:
         raise ValueError(f"Unsupported file format '{suffix}'. Expected .jsonl or .csv.")
 
+    rows = [_alias_expected_answer(row) for row in rows]
     _validate(rows, path)
     return rows
+
+
+def _alias_expected_answer(row: dict) -> dict:
+    """Accept ``expected`` and ``answer`` as names for ``expected_answer``."""
+    if not isinstance(row, dict):
+        return row
+    current = row.get("expected_answer")
+    if isinstance(current, str) and current.strip():
+        return row
+    for key in ("expected", "answer"):
+        value = row.get(key)
+        if isinstance(value, str) and value.strip():
+            copied = dict(row)
+            copied["expected_answer"] = value
+            return copied
+    return row
 
 
 def _load_jsonl(p: Path) -> list[dict]:
@@ -56,7 +73,8 @@ def _validate(rows: list[dict], path: str):
         if missing:
             raise ValueError(
                 f"Row {i + 1} in '{path}' is missing required field(s): {sorted(missing)}. "
-                f"Each row must have: {sorted(REQUIRED_FIELDS)}."
+                "Each row must have prompt and expected_answer. "
+                "The fields expected and answer are accepted aliases for expected_answer."
             )
         if not isinstance(row.get("prompt"), str) or not row["prompt"].strip():
             raise ValueError(f"Row {i + 1} in '{path}': 'prompt' must be a non-empty string.")

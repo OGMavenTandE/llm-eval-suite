@@ -26,6 +26,17 @@ def torch_pip_args(*, nvidia_gpu: bool) -> list[str]:
     return ["install", f"torch=={TORCH_VERSION}", "--index-url", index]
 
 
+def cuda_torch_reinstall_args() -> list[str]:
+    """Replace a CPU torch wheel already sitting in ``.venv-eval``."""
+    return [
+        "install",
+        "--force-reinstall",
+        f"torch=={TORCH_VERSION}",
+        "--index-url",
+        CUDA_INDEX,
+    ]
+
+
 def garak_pip_args(*, nvidia_gpu: bool) -> list[str]:
     """Install garak and transformers without replacing the torch build."""
     index = CUDA_INDEX if nvidia_gpu else CPU_INDEX

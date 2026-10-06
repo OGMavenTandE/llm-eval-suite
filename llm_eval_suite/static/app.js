@@ -6,10 +6,13 @@ const state = {
   datasetId: "sample",
   activeRun: null,
   timer: null,
+  passBarPercent: null,
 };
 
-// Matches PASS_BAR in llm_eval_suite/scoring.py.
-const PASS_BAR_PERCENT = 80;
+function barPercent(card) {
+  if (card && card.pass_bar_percent != null) state.passBarPercent = Number(card.pass_bar_percent);
+  return state.passBarPercent;
+}
 
 const TABS = ["connect", "run", "results", "compare", "judges"];
 
@@ -56,7 +59,12 @@ function show(tab) {
 }
 
 document.querySelectorAll(".tab").forEach((button) => {
-  button.addEventListener("click", () => show(button.dataset.tab));
+  button.addEventListener("click", () => {
+    show(button.dataset.tab);
+    if (button.dataset.tab === "results" && $("results-run").value) {
+      showResults().catch((err) => alert(err.message));
+    }
+  });
 });
 
 /* ---------- Formatting ---------- */
@@ -111,8 +119,9 @@ function statusBadge(status) {
 }
 
 function sourceBadge(source, label) {
-  const kind = source === "live" ? "badge-live" : "badge-fixture";
-  const text = source === "live" ? (label || "Live") : (label || "Fixture or smoke, no live model call");
+  const failed = source === "failed";
+  const kind = source === "live" ? "badge-live" : failed ? "badge-fail" : "badge-fixture";
+  const text = label || (source === "live" ? "Live" : failed ? "Failed live scan" : "Fixture or smoke, no live model call");
   return '<span class="badge ' + kind + '">' + escapeHtml(text) + "</span>";
 }
 
@@ -136,10 +145,16 @@ function profileFromForm() {
   };
 }
 
+function updateLocalWeights() {
+  const type = $("conn-type").value;
+  $("local-weights").classList.toggle("hidden", type !== "hf" && type !== "nanogpt");
+}
+
 function updateCloudBanner() {
   const profile = profileFromForm();
   const local = !profile.base_url || /localhost|127\.0\.0\.1|\[::1\]/.test(profile.base_url);
   $("cloud-banner").classList.toggle("hidden", local || profile.type === "hf" || profile.type === "nanogpt");
+  updateLocalWeights();
 }
 
 ["conn-url", "conn-type"].forEach((id) => $(id).addEventListener("input", updateCloudBanner));
@@ -200,6 +215,7 @@ $("convert-nanogpt").addEventListener("click", async () => {
     $("detect-note").textContent = "Converted. Connect the Hugging Face folder at " + data.folder + ". Copy a local GPT-2 tokenizer into that folder before loading it.";
     $("conn-type").value = "hf";
     $("conn-folder").value = data.folder;
+    updateLocalWeights();
   } catch (err) {
     $("detect-note").textContent = err.message;
   }
@@ -408,17 +424,19 @@ function renderProgress(run) {
   if (run.validity === "invalid") {
     html += '<div class="banner banner-fail">Invalid run. ' + escapeHtml(run.validity_reason || "Too many empty generations.") + "</div>";
   }
-  const running = run.status === "running" || run.status === "cancel_requested";
+    const running = run.status === "running" || run.status === "cancel_requested";
   for (const suite of suites) {
     const done = suite.done == null ? 0 : Number(suite.done);
     const total = suite.total == null ? null : Number(suite.total);
     const pct = total ? Math.min(100, Math.round((done / total) * 100)) : null;
-    const indeterminate = pct == null && running && suite.status !== "completed";
-    const finished = suite.status === "completed" || (!running && pct == null);
+    const suiteDone = suite.status === "completed" || suite.status === "cancelled";
+    const indeterminate = pct == null && running && !suiteDone;
+    const finished = suiteDone || (!running && pct == null);
     const width = pct == null ? (finished ? 100 : 0) : pct;
     const raw = suite.status || suite.source || "";
     let eta = raw ? raw.charAt(0).toUpperCase() + raw.slice(1).replace(/_/g, " ") : "";
-    if (suite.eta_seconds != null) {
+    const showEta = running && !suiteDone && suite.eta_seconds != null && Number(suite.eta_seconds) > 0;
+    if (showEta) {
       eta = "About " + formatSeconds(suite.eta_seconds) + " left at " + suite.seconds_per_prompt + " s per prompt";
     }
     html += '<div class="progress-row">' +
@@ -482,6 +500,7 @@ $("cancel-run").addEventListener("click", async () => {
 async function loadRuns() {
   const data = await api("/api/runs");
   state.runs = data.runs;
+  if (data.pass_bar_percent != null) state.passBarPercent = Number(data.pass_bar_percent);
   for (const id of ["results-run", "compare-left", "compare-right"]) {
     const select = $(id);
     const previous = select.value;
@@ -507,39 +526,34 @@ async function loadRuns() {
 /* ---------- Results dashboard ---------- */
 
 function renderReadout(run, card) {
-  const overall = card.overall_pass_percent;
   const invalid = run.validity === "invalid" || run.status === "invalid";
-  let verdict;
-  let verdictClass;
-  if (invalid) {
-    verdict = "Invalid run";
-    verdictClass = "invalid";
-  } else if (overall == null) {
-    verdict = "No live categories scored";
-    verdictClass = "none";
-  } else if (overall >= PASS_BAR_PERCENT) {
-    verdict = "Meets the " + PASS_BAR_PERCENT + "% pass bar";
-    verdictClass = "pass";
-  } else {
-    verdict = "Below the " + PASS_BAR_PERCENT + "% pass bar";
-    verdictClass = "fail";
-  }
-  const detailBits = ["Average pass rate across live categories."];
+  const verdict = invalid ? "Invalid run" : (card.verdict || "No live categories scored");
+  let verdictClass = "none";
+  if (invalid) verdictClass = "invalid";
+  else if (card.meets_bar === true) verdictClass = "pass";
+  else if (card.meets_bar === false) verdictClass = "fail";
+  const detailBits = [];
+  if (invalid) detailBits.push("The headline score is withheld");
   if (card.live_item_count != null) detailBits.push(card.live_item_count + " live prompts scored");
   if (card.failure_count != null) detailBits.push(card.failure_count + " failing");
-  const detail = detailBits.length > 1
-    ? detailBits[0] + " " + detailBits.slice(1).join(", ") + "."
-    : detailBits[0];
+  const detail = detailBits.length ? detailBits.join(". ") + "." : "";
   const connection = run.connection || {};
   const meta = [
     ["Model", connection.model || connection.name || "Unknown"],
     ["Preset", run.preset || "Custom"],
     ["Started", formatDate(run.created_at) || "Unknown"],
   ];
-  const num = overall == null ? "n/a" : Number(overall).toFixed(1);
+  let scoreHtml;
+  if (invalid) {
+    scoreHtml = '<div class="readout-score"><span class="withheld">Score withheld</span></div>';
+  } else if (card.live_category_count) {
+    const word = card.meets_bar ? "Pass" : "Below bar";
+    scoreHtml = '<div class="readout-score is-empty"><span class="num">' + escapeHtml(word) + "</span></div>";
+  } else {
+    scoreHtml = '<div class="readout-score is-empty"><span class="num">Not measured</span></div>';
+  }
   $("readout").innerHTML =
-    '<div class="readout-score' + (overall == null ? " is-empty" : "") + '"><span class="num">' + num + "</span>" +
-    (overall == null ? "" : '<span class="unit">%</span>') + "</div>" +
+    scoreHtml +
     '<div><p class="verdict ' + verdictClass + '">' + escapeHtml(verdict) + "</p>" +
     '<p class="readout-detail">' + escapeHtml(detail) + "</p></div>" +
     '<dl class="run-meta">' +
@@ -547,7 +561,24 @@ function renderReadout(run, card) {
     "<dt>Status</dt><dd>" + statusBadge(run.status) + "</dd></dl>";
 }
 
-function meterRow(row) {
+function fixtureMeterText(percent) {
+  if (percent == null || Number.isNaN(Number(percent))) return "Not measured";
+  const value = Number(percent);
+  const rounded = Math.round(value);
+  const text = Math.abs(value - rounded) < 0.05 ? String(rounded) : value.toFixed(1);
+  return text + "% fixture";
+}
+
+function garakMeterNote(run) {
+  if (!run || (!run.garak_pass_rate_label && !run.garak_wording)) return "";
+  const pass = run.garak_pass_rate == null ? "n/a" : Math.round(run.garak_pass_rate * 1000) / 10 + "%";
+  const asr = run.garak_attack_success_rate == null ? "n/a" : Math.round(run.garak_attack_success_rate * 1000) / 10 + "%";
+  const label = run.garak_pass_rate_label || "Pass rate (1 - ASR)";
+  const wording = run.garak_wording || "Pass rate is 1 minus garak's attack success rate (ASR).";
+  return label + ": " + pass + ". ASR: " + asr + ". " + wording;
+}
+
+function meterRow(row, bar, note) {
   const status = row.status === "not_run" ? "not_run"
     : row.source && row.source !== "live" && row.status === "fixture" ? "fixture"
       : row.status === "pass" ? "pass"
@@ -563,19 +594,26 @@ function meterRow(row) {
   }
   const value = status === "not_run"
     ? "Not run"
-    : row.pass_percent == null ? escapeHtml(row.status) : Number(row.pass_percent).toFixed(1) + "<small>%</small>";
+    : status === "fixture" ? escapeHtml(fixtureMeterText(row.pass_percent))
+      : row.pass_percent == null ? "Not measured" : Number(row.pass_percent).toFixed(1) + "<small>%</small>";
   const badge = status === "pass" ? '<span class="badge badge-pass">Pass</span>'
     : status === "fail" ? '<span class="badge badge-fail">Below bar</span>'
       : status === "fixture" ? '<span class="badge badge-fixture">Fixture</span>'
         : '<span class="badge badge-neutral">Not run</span>';
+  const barText = bar == null ? "" : " Pass bar " + bar + "%.";
   const label = status === "not_run"
     ? row.label + ": not run"
-    : row.label + ": " + (row.pass_percent == null ? row.status : row.pass_percent + "% pass") + ", " + sub + ". Pass bar " + PASS_BAR_PERCENT + "%.";
+    : row.label + ": " + (status === "fixture"
+      ? fixtureMeterText(row.pass_percent)
+      : (row.pass_percent == null ? row.status : row.pass_percent + "% pass")) + ", " + sub + "." + barText;
+  const barMark = bar == null ? "" : '<div class="meter-pass-bar" style="--bar:' + bar + '%"></div>';
+  const noteHtml = note ? '<span class="meter-note">' + escapeHtml(note) + "</span>" : "";
   return '<div class="meter-row" data-status="' + status + '">' +
-    '<div><span class="meter-name">' + escapeHtml(row.label) + '</span><span class="meter-sub">' + escapeHtml(sub) + "</span></div>" +
+    '<div><span class="meter-name">' + escapeHtml(row.label) + '</span><span class="meter-sub">' + escapeHtml(sub) + "</span>" +
+    noteHtml + "</div>" +
     '<div class="meter" role="img" aria-label="' + escapeHtml(label) + '">' +
     (status === "not_run" ? "" : '<div class="meter-fill" style="--v:' + pct + '%"></div>') +
-    '<div class="meter-pass-bar" style="--bar:' + PASS_BAR_PERCENT + '%"></div></div>' +
+    barMark + "</div>" +
     '<div class="meter-value">' + value + "</div>" + badge + "</div>";
 }
 
@@ -602,18 +640,18 @@ async function showResults() {
   banner.textContent = invalid ? ("Invalid run. " + (run.validity_reason || "Too many empty generations.")) : "";
 
   const pathBits = [];
-  if (run.garak_pass_rate_label) {
-    const pass = run.garak_pass_rate == null ? "n/a" : Math.round(run.garak_pass_rate * 1000) / 10 + "%";
-    const asr = run.garak_attack_success_rate == null ? "n/a" : Math.round(run.garak_attack_success_rate * 1000) / 10 + "%";
-    pathBits.push(run.garak_pass_rate_label + ": " + pass + ". ASR: " + asr + ". " + (run.garak_wording || ""));
-  }
   if (run.garak_runs_dir) pathBits.push("Garak report folder: " + run.garak_runs_dir);
   if (run.log_path) pathBits.push("Run log: " + run.log_path);
-  $("garak-path").innerHTML = pathBits.map((bit) => "<span>" + escapeHtml(bit) + "</span>").join("");
+  $("garak-path").innerHTML = pathBits.map((bit) => '<span class="path-line">' + escapeHtml(bit) + "</span>").join("");
 
   const card = run.scorecard || {};
+  const bar = barPercent(card);
+  const garakNote = garakMeterNote(run);
   renderReadout(run, card);
-  $("scorecard").innerHTML = (card.categories || []).map(meterRow).join("");
+  $("scorecard").innerHTML = (card.categories || []).map((row) => {
+    const note = row.category === "security_jailbreak" ? garakNote : "";
+    return meterRow(row, bar, note);
+  }).join("");
 
   const suites = run.suites || [];
   $("suite-list").innerHTML = suites.length
@@ -633,19 +671,29 @@ async function showResults() {
   for (const row of card.categories || []) labels[row.category] = row.label;
   const categoryLabel = (key) => labels[key] || key;
   const allItems = items.items || [];
-  const rows = allItems.filter((item) => item.passed === false);
+  const liveRows = allItems.filter((item) => item.passed === false && item.source === "live" && item.counts_toward_score !== false);
+  const fixtureRows = allItems.filter((item) => item.passed === false && item.source !== "live");
+  const failureCount = card.failure_count == null ? liveRows.length : Number(card.failure_count);
+  const failureHeaders = [{ label: "Category" }, { label: "Source" }, { label: "Prompt" }, { label: "Response" }, { label: "Expected" }, { label: "Score", num: true }, { label: "Matched span" }, { label: "Excerpt" }];
+  const failureCells = (item) => {
+    const evidence = item.evidence || {};
+    return [td(categoryLabel(item.category), "strong"), td(item.source), td(item.prompt, "clip"), td(item.response, "clip"), td(item.expected, "clip"), td(formatScore(item.score), "num"), td(evidence.span), td(evidence.excerpt, "clip")];
+  };
   const failures = $("failures");
-  if (!rows.length) {
-    failures.innerHTML = emptyNote("No failing prompts stored for this run.");
+  let failureHtml = "";
+  if (!liveRows.length) {
+    failureHtml += emptyNote("No failing live prompts stored for this run.");
   } else {
-    failures.innerHTML = tableHtml(
-      [{ label: "Category" }, { label: "Source" }, { label: "Prompt" }, { label: "Response" }, { label: "Expected" }, { label: "Score", num: true }, { label: "Matched span" }, { label: "Excerpt" }],
-      rows.map((item) => {
-        const evidence = item.evidence || {};
-        return [td(categoryLabel(item.category), "strong"), td(item.source), td(item.prompt, "clip"), td(item.response, "clip"), td(item.expected, "clip"), td(formatScore(item.score), "num"), td(evidence.span), td(evidence.excerpt, "clip")];
-      }),
-    ) + '<p class="table-note">' + rows.length + " failing prompt" + (rows.length === 1 ? "" : "s") + ".</p>";
+    failureHtml += tableHtml(failureHeaders, liveRows.map(failureCells));
   }
+  const noun = failureCount === 1 ? "prompt" : "prompts";
+  failureHtml += '<p class="table-note">' + failureCount + " failing live " + noun + ".</p>";
+  if (fixtureRows.length) {
+    failureHtml += '<h3>Fixture or smoke, not counted</h3>' +
+      tableHtml(failureHeaders, fixtureRows.map(failureCells)) +
+      '<p class="table-note">These rows are not included in the failing-prompt count.</p>';
+  }
+  failures.innerHTML = failureHtml;
   renderEvidence(allItems);
 }
 
@@ -697,13 +745,26 @@ $("export-report").addEventListener("click", () => {
   window.open("/api/runs/" + runId + "/report", "_blank");
 });
 
+$("download-report").addEventListener("click", () => {
+  const runId = $("results-run").value;
+  if (!runId) return;
+  const link = document.createElement("a");
+  link.href = "/api/runs/" + encodeURIComponent(runId) + "/report?download=1";
+  link.download = "eval-report-" + runId + ".html";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+});
+
 /* ---------- Compare ---------- */
 
 function compareBar(label, rate, later) {
   const pct = rate == null ? 0 : Math.max(0, Math.min(100, Number(rate) * 100));
+  const bar = barPercent();
+  const barMark = bar == null ? "" : '<div class="meter-pass-bar" style="--bar:' + bar + '%"></div>';
   return '<div class="compare-bar' + (later ? " later" : "") + '"><span>' + label + "</span>" +
     '<div class="meter">' + (rate == null ? "" : '<div class="meter-fill" style="--v:' + pct + '%"></div>') +
-    '<div class="meter-pass-bar" style="--bar:' + PASS_BAR_PERCENT + '%"></div></div>' +
+    barMark + "</div>" +
     '<span class="val">' + (rate == null ? "Not run" : formatPercent(rate)) + "</span></div>";
 }
 
@@ -723,7 +784,7 @@ $("do-compare").addEventListener("click", async () => {
     if (data.items && data.items.length) {
       const shown = data.items.slice(0, 30);
       html += '<div class="panel"><div class="panel-head"><h3>Prompts that changed most</h3>' +
-        '<p class="hint">Largest drops first.</p></div><div class="table-wrap">' +
+        '<p class="hint">Largest changes first. Positive means the later run scored higher.</p></div><div class="table-wrap">' +
         tableHtml(
           [{ label: "Prompt" }, { label: "Earlier score", num: true }, { label: "Later score", num: true }, { label: "Change", num: true }],
           shown.map((row) => {
@@ -784,6 +845,7 @@ async function loadJudges() {
   const data = await api("/api/judges");
   state.judges = data.judges || [];
   $("chairman").value = data.chairman || "";
+  if (data.timeout) $("judge-timeout").value = data.timeout;
   renderJudges();
 }
 
@@ -797,7 +859,11 @@ $("save-judges").addEventListener("click", async () => {
     const saved = await api("/api/judges", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chairman: $("chairman").value.trim(), judges: state.judges }),
+      body: JSON.stringify({
+        chairman: $("chairman").value.trim(),
+        judges: state.judges,
+        timeout: Number($("judge-timeout").value) || 90,
+      }),
     });
     state.judges = saved.judges;
     renderJudges();
@@ -813,8 +879,10 @@ async function boot() {
   await loadConnections();
   await loadRuns();
   await loadJudges();
+  updateLocalWeights();
   const sample = await api("/api/datasets/sample");
   $("dataset-note").textContent = "Sample set has " + sample.row_count + " public facts.";
+  if ($("results-run").value) await showResults();
 }
 
 boot().catch((err) => {

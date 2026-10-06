@@ -17,7 +17,7 @@ python -m llm_eval_suite.app
 
 The dry-run checks `config/example_eval.yaml` and its dataset and does not call a model. The app listens on http://127.0.0.1:8765.
 
-On Windows, `run_app.bat` creates `.venv-eval`, installs pinned `torch==2.13.0`, `garak==0.17.0`, and `transformers==5.18.0`, and starts the same app. Use that script for live garak or a local Hugging Face model. If `nvidia-smi` is on PATH, torch comes from the PyTorch CUDA 12.6 index. Otherwise the script warns and installs the CPU build. Torch is installed before garak so pip does not replace it with a CPU wheel.
+On Windows, `run_app.bat` creates `.venv-eval`, installs pinned `torch==2.13.0`, `garak==0.17.0`, and `transformers==5.18.0`, and starts the same app. The app opens the browser once. Use that script for live garak or a local Hugging Face model. If `nvidia-smi` is on PATH, torch comes from the PyTorch CUDA 12.6 index. Otherwise the script warns and installs the CPU build. If a GPU is present and `.venv-eval` already has a CPU torch build, the script reinstalls the CUDA wheel. Torch is installed before garak so pip does not replace it with a CPU wheel.
 
 The YAML engine API is a different process: `llm-eval-api` listens on http://127.0.0.1:8000. See [apps/api/README.md](apps/api/README.md).
 
@@ -54,7 +54,7 @@ The engine runs YAML configs against local or API-backed models, writes timestam
 - Presets: Quick, Standard, Full, and Government T&E
 - Model comparison, a category scorecard, and an HTML report for browser print
 - Council summary from local judge models. The model under test is not a judge
-- Live garak when installed. A missing install or a failed scan falls back to a labeled fixture
+- Live garak when installed. A missing install shows a labeled fixture. A failed live scan is INVALID, not a fixture
 - Dry-run validation without inference
 - Structured run results, per-run audit JSON, and a filesystem run index
 
@@ -75,7 +75,11 @@ The converter transposes Conv1D weights, copies tied embeddings when `lm_head` i
 
 Suggested local council judges, listed in the Judges screen: `qwen2.5:3b-instruct` and `llama3.2:3b`. If only one of those is installed, peer ranking is skipped. The model you are testing is not used as a judge.
 
-When garak is installed it runs live against the connected endpoint. Pass rate in the UI is `1 - ASR` (one minus garak's attack success rate). A higher pass rate means fewer successful attacks. Garak's own reports stay under the user home directory at `.local/share/garak/garak_runs`. Console output goes to `runs/<id>/run.log`, not the results page. leakreplay runs in its own process so a CUDA fault does not empty later probes. A run with too many empty generations is marked INVALID. If garak is missing, the Quick preset shows the fixture and labels it as a fixture. RAMPART stays a smoke check.
+When garak is installed it runs live against the connected endpoint. Pass rate in the UI is `1 - ASR` (one minus garak's attack success rate). A higher pass rate means fewer successful attacks. That note sits on the Security / jailbreak row. Garak's own reports stay under the user home directory at `.local/share/garak/garak_runs`. Console output goes to `runs/<id>/run.log`, not the results page. leakreplay runs in its own process so a CUDA fault does not empty later probes. A run with too many empty generations is marked INVALID. If garak is installed and still writes no report, the suite records a failed live scan and does not substitute the fixture. If garak is missing, the Quick preset shows the fixture and labels it as a fixture. RAMPART stays a smoke check.
+
+A category meets the pass bar only when its own live rate is at or above 80%. The Results headline is that verdict, not an average of the category rates. The 80% bar comes from the scorecard API. An invalid run shows "Score withheld" and omits the percent from the run list. Fixture rows stay a small grey label and are left out of the failing-prompt count. Half or more empty live fact-check answers mark the run INVALID as well. Ollama calls send `think: false`, and `<think>` blocks are stripped before scoring, so a thinking model does not spend the whole reply inside the trace.
+
+A Hugging Face folder uses CUDA when the installed torch can see a GPU, in float16, and the run record stores that device. The keyword scorer treats number words from zero through twenty, and the tens, as the digits they name, so an expected `8` matches "Eight". An uploaded fact-check file may use `expected` or `answer` in place of `expected_answer`. Export HTML report opens the page. Download HTML report saves a file with the fonts embedded. Council judges wait 90 seconds by default. The Judges screen can change that. The Run screen ETA uses the current suite's item count and disappears when that suite is finished.
 
 The Run screen can run the Quick preset on an editable local Hugging Face folder and on `gpt2-medium` from the Hugging Face hub, then open Compare on that pair. The first hub run downloads `gpt2-medium` if it is not already on disk.
 

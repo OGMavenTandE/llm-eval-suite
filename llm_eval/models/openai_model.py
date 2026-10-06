@@ -5,7 +5,7 @@ from urllib.parse import urlparse
 import requests
 
 from llm_eval.models.base import BaseModel, ModelResponse
-from llm_eval.models.context import clamp_prompt_and_new_tokens
+from llm_eval.models.context import clamp_prompt_and_new_tokens, strip_think_blocks
 
 # Connection settings are not generation parameters.
 def _is_local_base_url(url: str) -> bool:
@@ -22,6 +22,7 @@ _CONNECTION_KEYS = {
     "timeout",
     "cloud",
     "folder",
+    "think",
 }
 
 
@@ -44,6 +45,7 @@ class OpenAIModel(BaseModel):
         self.max_context = params.get("max_context")
         self.max_new_tokens = int(params.get("max_new_tokens") or 64)
         self.timeout = int(params.get("timeout") or 120)
+        self.think = params.get("think") if "think" in params else None
 
     def generate(self, prompt: str, **kwargs) -> ModelResponse:
         headers = {"Content-Type": "application/json"}
@@ -74,34 +76,20 @@ class OpenAIModel(BaseModel):
                 **payload_params,
             }
             url = f"{self.base_url}/chat/completions"
+        if self.think is not None:
+            payload["think"] = self.think
 
         start = time.perf_counter()
-        try:
-            resp = requests.post(url, json=payload, headers=headers, timeout=self.timeout)
-            latency_ms = (time.perf_counter() - start) * 1000
-            resp.raise_for_status()
-        except requests.exceptions.ConnectionError:
-            raise RuntimeError(
-                f"Could not connect to OpenAI-compatible API at {self.base_url}."
-            )
-        except requests.exceptions.Timeout:
-            raise RuntimeError(
-                f"Request timed out after {self.timeout} seconds (model={self.name})."
-            )
-        except requests.exceptions.HTTPError as exc:
-            try:
-                error_detail = resp.json().get("error", {}).get("message", resp.text)
-            except Exception:
-                error_detail = resp.text
-            raise RuntimeError(f"API error {resp.status_code}: {error_detail}") from exc
+        resp = self._post(url, payload, headers)
+        latency_ms = (time.perf_counter() - start) * 1000
 
         data = resp.json()
         choice = data["choices"][0]
         if self.mode == "completions":
-            text = choice.get("text") or ""
+            text = strip_think_blocks(choice.get("text") or "")
         else:
             message = choice.get("message") or {}
-            text = message.get("content") or choice.get("text") or ""
+            text = strip_think_blocks(message.get("content") or choice.get("text") or "")
 
         usage = data.get("usage") or {}
         tokens_used = usage.get("total_tokens")
@@ -118,3 +106,45 @@ class OpenAIModel(BaseModel):
             tokens_used=tokens_used,
             metadata=metadata,
         )
+
+    def _post(self, url: str, payload: dict, headers: dict):
+        """POST once. If the server rejects ``think``, retry without it."""
+        resp = self._post_once(url, payload, headers)
+        if resp is not None:
+            return resp
+        if "think" not in payload:
+            raise RuntimeError(f"Request to {self.base_url} failed.")
+        reduced = {key: value for key, value in payload.items() if key != "think"}
+        retried = self._post_once(url, reduced, headers)
+        if retried is None:
+            raise RuntimeError(f"Request to {self.base_url} failed.")
+        return retried
+
+    def _post_once(self, url: str, payload: dict, headers: dict):
+        try:
+            resp = requests.post(url, json=payload, headers=headers, timeout=self.timeout)
+            resp.raise_for_status()
+            return resp
+        except requests.exceptions.ConnectionError:
+            raise RuntimeError(
+                f"Could not connect to OpenAI-compatible API at {self.base_url}."
+            ) from None
+        except requests.exceptions.Timeout:
+            raise RuntimeError(
+                f"Request timed out after {self.timeout} seconds (model={self.name})."
+            ) from None
+        except requests.exceptions.HTTPError as exc:
+            try:
+                error_detail = resp.json().get("error", {}).get("message", resp.text)
+            except Exception:
+                error_detail = getattr(resp, "text", str(exc))
+            if "think" in payload and _think_rejected(str(error_detail)):
+                return None
+            raise RuntimeError(f"API error {resp.status_code}: {error_detail}") from exc
+
+
+def _think_rejected(message: str) -> bool:
+    lowered = (message or "").lower()
+    if "think" not in lowered:
+        return False
+    return any(token in lowered for token in ("unknown", "unexpected", "extra", "invalid", "unrecognized", "not permitted"))

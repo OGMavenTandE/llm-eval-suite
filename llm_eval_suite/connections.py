@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from pathlib import Path
 from urllib.parse import urlparse
@@ -11,6 +12,8 @@ from llm_eval.models.base import BaseModel
 from llm_eval.models.hf_folder import HuggingFaceFolderModel
 from llm_eval.models.nanogpt_convert import describe_model_path
 from llm_eval.models.openai_model import OpenAIModel
+
+DEFAULT_JUDGE_TIMEOUT = 90
 
 DEFAULT_JUDGES = [
     {
@@ -30,6 +33,22 @@ DEFAULT_JUDGES = [
         "cloud": False,
     },
 ]
+
+
+def judge_timeout(settings: dict | None = None) -> int:
+    """Seconds to wait for one council judge call.
+
+    A saved judge timeout wins, then ``LLM_EVAL_JUDGE_TIMEOUT``, then 90 seconds.
+    """
+    settings = settings or {}
+    chosen = settings.get("timeout")
+    if not chosen:
+        chosen = os.environ.get("LLM_EVAL_JUDGE_TIMEOUT")
+    try:
+        seconds = int(chosen) if chosen else DEFAULT_JUDGE_TIMEOUT
+    except (TypeError, ValueError):
+        seconds = DEFAULT_JUDGE_TIMEOUT
+    return max(1, seconds)
 
 
 def is_local_url(url: str | None) -> bool:
@@ -117,10 +136,16 @@ class ConnectionStore:
 
     def judges(self) -> dict:
         if not self.judges_path.is_file():
-            payload = {"chairman": DEFAULT_JUDGES[0]["model"], "judges": DEFAULT_JUDGES}
+            payload = {
+                "chairman": DEFAULT_JUDGES[0]["model"],
+                "judges": DEFAULT_JUDGES,
+                "timeout": DEFAULT_JUDGE_TIMEOUT,
+            }
             self.judges_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
             return payload
-        return json.loads(self.judges_path.read_text(encoding="utf-8"))
+        stored = json.loads(self.judges_path.read_text(encoding="utf-8"))
+        stored.setdefault("timeout", DEFAULT_JUDGE_TIMEOUT)
+        return stored
 
     def save_judges(self, payload: dict) -> dict:
         judges = []
@@ -138,7 +163,7 @@ class ConnectionStore:
                 }
             )
         chairman = payload.get("chairman") or (judges[0]["model"] if judges else "")
-        stored = {"chairman": chairman, "judges": judges}
+        stored = {"chairman": chairman, "judges": judges, "timeout": judge_timeout(payload)}
         self.judges_path.write_text(json.dumps(stored, indent=2) + "\n", encoding="utf-8")
         return stored
 
@@ -193,6 +218,8 @@ def build_model(profile: dict) -> BaseModel:
         "mode": profile.get("mode") or "chat",
         "timeout": profile.get("timeout") or 120,
     }
+    if kind == "ollama":
+        params["think"] = False if profile.get("think") is None else profile.get("think")
     if profile.get("max_context"):
         params["max_context"] = int(profile["max_context"])
         params["max_new_tokens"] = int(profile.get("max_new_tokens") or 64)
