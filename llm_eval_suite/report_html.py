@@ -54,15 +54,54 @@ def render_report(run: dict, items: list[dict]) -> str:
             f"<td>{escape(str(item.get('response') or ''))}</td>"
             f"<td>{escape(str(item.get('expected') or ''))}</td>"
             f"<td>{escape(str(item.get('score')))}</td>"
+            f"<td>{escape(str((item.get('evidence') or {}).get('span') or ''))}</td>"
+            f"<td>{escape(str((item.get('evidence') or {}).get('excerpt') or ''))}</td>"
             "</tr>"
         )
     if not failure_rows:
-        failure_rows.append("<tr><td colspan='6'>No failing prompts were stored.</td></tr>")
+        failure_rows.append("<tr><td colspan='8'>No failing prompts were stored.</td></tr>")
+
+    evidence_rows = []
+    for item in items:
+        evidence = item.get("evidence") or {}
+        if item.get("suite") not in {"factcheck", "garak"} and not evidence:
+            continue
+        notes = item.get("detector_notes") or []
+        note_text = "; ".join(
+            f"{row.get('name')}: {row.get('reason') or row.get('status')}"
+            for row in notes
+            if row.get("status") in {"skipped", "not_applicable"}
+        )
+        evidence_rows.append(
+            "<tr>"
+            f"<td>{escape(str(item.get('suite') or ''))}</td>"
+            f"<td>{escape(str(item.get('score')))}</td>"
+            f"<td>{escape(str(evidence.get('match') or item.get('detector') or ''))}</td>"
+            f"<td>{escape(str(evidence.get('span') or ''))}</td>"
+            f"<td>{escape(str(evidence.get('excerpt') or item.get('response') or ''))}</td>"
+            f"<td>{escape(note_text)}</td>"
+            "</tr>"
+        )
+    if not evidence_rows:
+        evidence_rows.append("<tr><td colspan='6'>No scored prompts stored.</td></tr>")
 
     overall = card.get("overall_pass_percent")
     overall_text = "not available" if overall is None else f"{overall}%"
     narrative = analysis.get("narrative") or "No analysis has been written yet."
     source_label = analysis.get("source_label") or "not run"
+    validity = run.get("validity") or "ok"
+    validity_reason = run.get("validity_reason") or ""
+    garak_wording = run.get("garak_wording") or ""
+    garak_rate = run.get("garak_pass_rate")
+    garak_asr = run.get("garak_attack_success_rate")
+    garak_rate_text = "not available" if garak_rate is None else f"{round(float(garak_rate) * 100, 1)}%"
+    garak_asr_text = "not available" if garak_asr is None else f"{round(float(garak_asr) * 100, 1)}%"
+    invalid_banner = ""
+    if validity == "invalid":
+        invalid_banner = (
+            "<div class='banner'>INVALID run. "
+            f"{escape(validity_reason or 'Too many empty generations.')}</div>"
+        )
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -81,6 +120,7 @@ def render_report(run: dict, items: list[dict]) -> str:
 <main class="report">
 <h1>Evaluation report</h1>
 <p class="muted">Run {escape(str(run.get('run_id') or ''))}</p>
+{invalid_banner}
 
 <h2>Test plan</h2>
 <table>
@@ -99,6 +139,10 @@ def render_report(run: dict, items: list[dict]) -> str:
 
 <h2>Results</h2>
 <p>Overall pass rate (live categories): {escape(overall_text)}</p>
+<p>Garak pass rate (1 - ASR): {escape(garak_rate_text)}. Attack success rate: {escape(garak_asr_text)}.</p>
+<p>{escape(garak_wording)}</p>
+<p>Garak report folder: {escape(str(run.get('garak_runs_dir') or ''))}</p>
+<p>Run log: {escape(str(run.get('log_path') or ''))}</p>
 <table>
 <tr><th>Category</th><th>Status</th><th>Pass rate</th><th>Items</th></tr>
 {''.join(category_rows)}
@@ -121,8 +165,13 @@ def render_report(run: dict, items: list[dict]) -> str:
 
 <h2>Failure appendix</h2>
 <table>
-<tr><th>Category</th><th>Source</th><th>Prompt</th><th>Response</th><th>Expected</th><th>Score</th></tr>
+<tr><th>Category</th><th>Source</th><th>Prompt</th><th>Response</th><th>Expected</th><th>Score</th><th>Matched span</th><th>Excerpt</th></tr>
 {''.join(failure_rows)}
+</table>
+<h2>Evidence</h2>
+<table>
+<tr><th>Suite</th><th>Score</th><th>Match</th><th>Matched span</th><th>Excerpt</th><th>Detector note</th></tr>
+{''.join(evidence_rows)}
 </table>
 </main>
 </body>

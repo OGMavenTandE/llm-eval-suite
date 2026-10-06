@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -11,12 +13,34 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from llm_eval.datasets.loader import load_dataset
+from llm_eval.garak.live import validity_from_items
 from llm_eval_suite.compare import compare_runs
 from llm_eval_suite.council import run_council
-from llm_eval_suite.presets import expand_preset
+from llm_eval_suite.presets import estimate_preset, expand_preset
 from llm_eval_suite.report_html import render_report
 from llm_eval_suite.scoring import failing_items, scorecard
 from llm_eval_suite.suites import RUNNERS, SuiteContext
+from llm_eval_suite.timing import DEFAULT_SECONDS_PER_PROMPT, TimingStore
+from llm_eval_suite.worker import build_worker_command
+
+SUITE_FIELDS = (
+    "name",
+    "source",
+    "label",
+    "notes",
+    "done",
+    "total",
+    "validity",
+    "validity_reason",
+    "empty_generations",
+    "attack_success_rate",
+    "pass_rate",
+    "pass_rate_label",
+    "wording",
+    "garak_runs_dir",
+    "report_dir",
+    "log_path",
+)
 
 
 def sha256_bytes(data: bytes) -> str:
@@ -64,10 +88,11 @@ def _public_connection(connection: dict) -> dict:
 
 
 class RunManager:
-    def __init__(self, runs_dir: str | Path, *, model_factory=None):
+    def __init__(self, runs_dir: str | Path, *, model_factory=None, timing_path: str | Path | None = None):
         self.runs_dir = Path(runs_dir)
         self.runs_dir.mkdir(parents=True, exist_ok=True)
         self.model_factory = model_factory
+        self.timing = TimingStore(timing_path) if timing_path else None
         self._cancel: dict[str, threading.Event] = {}
         self._threads: dict[str, threading.Thread] = {}
         self._lock = threading.Lock()
@@ -80,6 +105,8 @@ class RunManager:
         dataset_path: str,
         resume_run_id: str | None = None,
         background: bool = True,
+        in_process: bool | None = None,
+        watch_cancel: bool = False,
     ) -> dict:
         if resume_run_id:
             run_id = resume_run_id
@@ -118,7 +145,31 @@ class RunManager:
                 "audit": record.get("audit") or {"events": []},
             }
         )
+        timing = self.timing.snapshot() if self.timing else {
+            "seconds_per_prompt": DEFAULT_SECONDS_PER_PROMPT,
+            "source": "default",
+        }
+        record["estimate"] = estimate_preset(
+            _preset_body(expanded),
+            dataset_rows=len(rows),
+            seconds_per_prompt=timing["seconds_per_prompt"],
+            estimate_source=timing["source"],
+        )
+        record["log_path"] = str(run_dir / "run.log")
+        record["validity"] = "ok"
+        record["validity_reason"] = ""
         self._write_run(run_dir, record)
+        if in_process is None:
+            in_process = self.model_factory is not None
+        if background and not in_process:
+            self._spawn_worker(
+                run_id=run_id,
+                run_dir=run_dir,
+                connection=connection,
+                preset_id=preset_id,
+                dataset_path=str(dataset_path),
+            )
+            return self.get(run_id)
         cancel = threading.Event()
         with self._lock:
             self._cancel[run_id] = cancel
@@ -133,6 +184,7 @@ class RunManager:
                 cancel=cancel,
                 completed=completed,
                 existing_items=existing_items,
+                watch_cancel=watch_cancel,
             )
 
         if background:
@@ -228,6 +280,27 @@ class RunManager:
         self._write_run(self.runs_dir / run_id, record)
         return analysis
 
+    def _spawn_worker(self, *, run_id: str, run_dir: Path, connection: dict, preset_id: str, dataset_path: str) -> None:
+        job = {
+            "runs_dir": str(self.runs_dir),
+            "timing_path": str(self.timing.path) if self.timing else "",
+            "connection": connection,
+            "preset_id": preset_id,
+            "dataset_path": dataset_path,
+            "resume_run_id": run_id,
+        }
+        job_path = run_dir / "job.json"
+        job_path.write_text(json.dumps(job, indent=2) + "\n", encoding="utf-8")
+        command = build_worker_command(job_path)
+        try:
+            subprocess.Popen(command, shell=False)
+        except OSError as exc:
+            record = self._read_run(run_dir) or {}
+            record["status"] = "failed"
+            record["error"] = str(exc)
+            self._write_run(run_dir, record)
+        self._append_log(run_dir, "Started background worker.")
+
     def _execute(
         self,
         *,
@@ -239,9 +312,15 @@ class RunManager:
         cancel: threading.Event,
         completed: set[str],
         existing_items: list[dict],
+        watch_cancel: bool = False,
     ) -> None:
         items = list(existing_items)
         suites = []
+        started = time.perf_counter()
+        new_live = 0
+        self._append_log(run_dir, f"Run {run_id} started.")
+        if watch_cancel:
+            threading.Thread(target=self._watch_cancel, args=(run_dir, cancel), daemon=True).start()
         try:
             if self.model_factory is not None:
                 model = self.model_factory(connection)
@@ -262,12 +341,16 @@ class RunManager:
                 self._update_progress(run_dir, progress, suites)
 
                 def on_item(item, progress=progress):
+                    nonlocal new_live
                     if item["id"] in completed:
                         return
                     completed.add(item["id"])
                     items.append(item)
                     self._append_item(run_dir, item)
+                    if item.get("source") == "live":
+                        new_live += 1
                     progress["done"] = int(progress.get("done") or 0) + 1
+                    self._stamp_eta(run_dir, progress, started)
                     self._update_progress(run_dir, progress, suites)
 
                 ctx = SuiteContext(
@@ -287,23 +370,28 @@ class RunManager:
                 progress["total"] = result.get("total", progress["done"])
                 progress["source"] = result.get("source")
                 progress["label"] = result.get("label")
-                suites.append(
-                    {
-                        "name": result["name"],
-                        "source": result["source"],
-                        "label": result["label"],
-                        "notes": result["notes"],
-                        "done": progress["done"],
-                        "total": progress["total"],
-                    }
-                )
+                summary = {key: result[key] for key in SUITE_FIELDS if key in result}
+                summary["done"] = progress["done"]
+                summary["total"] = progress["total"]
+                suites.append(summary)
+                self._append_log(run_dir, f"{result['name']} finished ({result.get('source')}).")
                 self._update_progress(run_dir, progress, suites)
             status = "cancelled" if cancel.is_set() else "completed"
-            self._finalize(run_dir, items, suites, status, error=None)
+            self._finalize(run_dir, items, suites, status, error=None, started=started, new_live=new_live)
         except Exception as exc:  # noqa: BLE001 - stored on the run record
-            self._finalize(run_dir, items, suites, "failed", error=str(exc))
+            self._append_log(run_dir, f"Run failed: {exc}")
+            self._finalize(run_dir, items, suites, "failed", error=str(exc), started=started, new_live=new_live)
 
-    def _finalize(self, run_dir: Path, items: list[dict], suites: list[dict], status: str, error: str | None):
+    def _finalize(
+        self,
+        run_dir: Path,
+        items: list[dict],
+        suites: list[dict],
+        status: str,
+        error: str | None,
+        started: float | None = None,
+        new_live: int = 0,
+    ):
         record = self._read_run(run_dir) or {}
         record["status"] = status
         record["completed_at"] = _now()
@@ -311,8 +399,64 @@ class RunManager:
         record["scorecard"] = scorecard(items)
         record["error"] = error
         record["items_completed"] = len(items)
+        record["log_path"] = str(run_dir / "run.log")
+        validity = validity_from_items(
+            [item for item in items if item.get("suite") == "garak" and item.get("source") == "live"]
+        )
+        for suite in suites:
+            if suite.get("validity") == "invalid":
+                validity = {
+                    "validity": "invalid",
+                    "reason": suite.get("validity_reason") or validity.get("reason") or "",
+                }
+            if suite.get("garak_runs_dir"):
+                record["garak_runs_dir"] = suite["garak_runs_dir"]
+            if suite.get("pass_rate_label"):
+                record["garak_pass_rate"] = suite.get("pass_rate")
+                record["garak_attack_success_rate"] = suite.get("attack_success_rate")
+                record["garak_pass_rate_label"] = suite.get("pass_rate_label")
+                record["garak_wording"] = suite.get("wording")
+        record["validity"] = validity.get("validity") or "ok"
+        record["validity_reason"] = validity.get("reason") or ""
+        if record["validity"] == "invalid" and status == "completed":
+            record["status"] = "invalid"
         self._write_run(run_dir, record)
         self._write_manifest(run_dir, record)
+        if self.timing is not None and status == "completed" and new_live > 0 and started is not None:
+            self.timing.record(time.perf_counter() - started, new_live)
+
+    def _stamp_eta(self, run_dir: Path, progress: dict, started: float) -> None:
+        record = self._read_run(run_dir) or {}
+        estimate = record.get("estimate") or {}
+        total = progress.get("total")
+        if total is None:
+            total = estimate.get("prompt_count")
+        done = int(progress.get("done") or 0)
+        elapsed = time.perf_counter() - started
+        fallback = float(estimate.get("seconds_per_prompt") or DEFAULT_SECONDS_PER_PROMPT)
+        rate = (elapsed / done) if done else fallback
+        remaining = None if total is None else max(0, int(total) - done)
+        progress["seconds_per_prompt"] = round(rate, 3)
+        progress["elapsed_seconds"] = round(elapsed, 1)
+        progress["eta_seconds"] = None if remaining is None else round(remaining * rate, 1)
+        progress["eta_source"] = "measured" if done else estimate.get("estimate_source") or "default"
+
+    def _watch_cancel(self, run_dir: Path, cancel: threading.Event) -> None:
+        while not cancel.is_set():
+            record = self._read_run(run_dir) or {}
+            if record.get("status") == "cancel_requested":
+                cancel.set()
+                return
+            time.sleep(0.2)
+
+    def _append_log(self, run_dir: Path, text: str) -> None:
+        path = run_dir / "run.log"
+
+        def write() -> None:
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(text.rstrip() + "\n")
+
+        _retry_io(write)
 
     def _update_progress(self, run_dir: Path, current: dict, suites: list[dict]) -> None:
         record = self._read_run(run_dir) or {}
@@ -416,3 +560,13 @@ class RunManager:
             },
         }
         (run_dir / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+
+
+def _preset_body(expanded: dict) -> dict:
+    body = {}
+    for suite in expanded.get("suites") or []:
+        name = suite.get("name")
+        if not name:
+            continue
+        body[name] = {key: value for key, value in suite.items() if key != "name"}
+    return body

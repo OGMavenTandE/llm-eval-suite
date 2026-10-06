@@ -186,6 +186,15 @@ async function loadPresets() {
   showPreset();
 }
 
+function formatSeconds(seconds) {
+  if (seconds == null || Number.isNaN(Number(seconds))) return "unknown";
+  const total = Math.max(0, Math.round(Number(seconds)));
+  const minutes = Math.floor(total / 60);
+  const rest = total % 60;
+  if (minutes <= 0) return rest + "s";
+  return minutes + "m " + rest + "s";
+}
+
 function showPreset() {
   const preset = state.presets.find((row) => row.id === $("run-preset").value);
   if (!preset) return;
@@ -193,9 +202,65 @@ function showPreset() {
   const warning = $("preset-warning");
   warning.textContent = preset.warning || "";
   warning.classList.toggle("hidden", !preset.warning);
+  const probes = preset.probe_count == null ? "unspecified" : preset.probe_count;
+  const prompts = preset.prompt_count == null ? "unspecified" : preset.prompt_count;
+  const facts = preset.factcheck_count == null ? 0 : preset.factcheck_count;
+  const estimate = preset.estimated_seconds == null ? "not estimated" : formatSeconds(preset.estimated_seconds);
+  const source = preset.estimate_source === "measured" ? "measured seconds per prompt" : "default 3.0 s per prompt until a run is measured";
+  $("preset-estimate").textContent =
+    "Probes: " + probes + ". Prompts (cap): " + prompts + ". Fact-check questions: " + facts +
+    ". Estimate: " + estimate + " (" + source + ", " + preset.seconds_per_prompt + " s/prompt).";
 }
 
 $("run-preset").addEventListener("change", showPreset);
+
+$("run-dataset").addEventListener("change", async () => {
+  state.datasetId = $("run-dataset").value;
+  const data = await api("/api/presets?dataset_id=" + encodeURIComponent(state.datasetId || "sample"));
+  state.presets = data.presets;
+  showPreset();
+});
+
+$("start-demo").addEventListener("click", async () => {
+  try {
+    const data = await api("/api/demo/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ folder: $("demo-folder").value, preset: "quick" }),
+    });
+    state.demoRuns = (data.runs || []).map((row) => row.run_id);
+    state.activeRun = state.demoRuns[0] || null;
+    $("cancel-run").disabled = !state.activeRun;
+    $("progress").textContent = "Demo pair started on " + data.preset + ". Compare will open when both runs finish.";
+    if (state.timer) clearInterval(state.timer);
+    state.timer = setInterval(pollDemo, 1000);
+  } catch (err) {
+    $("progress").textContent = err.message;
+  }
+});
+
+async function pollDemo() {
+  if (!state.demoRuns || !state.demoRuns.length) return;
+  try {
+    const runs = [];
+    for (const runId of state.demoRuns) runs.push(await api("/api/runs/" + runId));
+    renderProgress(runs[0]);
+    const pending = runs.some((run) => run.status === "running" || run.status === "cancel_requested");
+    if (pending) return;
+    clearInterval(state.timer);
+    state.timer = null;
+    $("cancel-run").disabled = true;
+    await loadRuns();
+    if (runs.length >= 2) {
+      $("compare-left").value = runs[0].run_id;
+      $("compare-right").value = runs[1].run_id;
+      show("compare");
+      $("do-compare").click();
+    }
+  } catch (err) {
+    $("progress").textContent = err.message;
+  }
+}
 
 $("dataset-file").addEventListener("change", async () => {
   const file = $("dataset-file").files[0];
@@ -223,10 +288,6 @@ $("dataset-file").addEventListener("change", async () => {
   }
 });
 
-$("run-dataset").addEventListener("change", () => {
-  state.datasetId = $("run-dataset").value;
-});
-
 function sourceBadge(source, label) {
   const kind = source === "live" ? "badge-live" : "badge-fixture";
   const text = source === "live" ? (label || "Live") : (label || "Fixture / smoke (no live model call)");
@@ -242,10 +303,15 @@ function escapeHtml(value) {
 function renderProgress(run) {
   const suites = (run.progress && run.progress.suites) || [];
   const bits = ["Status: " + run.status];
+  if (run.validity === "invalid") bits.push("INVALID: " + (run.validity_reason || "empty generations"));
   for (const suite of suites) {
     const done = suite.done == null ? 0 : suite.done;
     const total = suite.total == null ? "?" : suite.total;
-    bits.push(suite.name + ": " + done + " / " + total + " (" + (suite.status || suite.source || "") + ")");
+    let line = suite.name + ": " + done + " / " + total + " (" + (suite.status || suite.source || "") + ")";
+    if (suite.eta_seconds != null) {
+      line += ". ETA " + formatSeconds(suite.eta_seconds) + " at " + suite.seconds_per_prompt + " s/prompt";
+    }
+    bits.push(line);
   }
   $("progress").textContent = bits.join("\n");
 }
@@ -340,6 +406,19 @@ async function showResults() {
   if (!runId) return;
   const run = await api("/api/runs/" + runId);
   const items = await api("/api/runs/" + runId + "/items");
+  const banner = $("validity-banner");
+  const invalid = run.validity === "invalid" || run.status === "invalid";
+  banner.classList.toggle("hidden", !invalid);
+  banner.textContent = invalid ? ("INVALID run. " + (run.validity_reason || "Too many empty generations.")) : "";
+  const garakBits = [];
+  if (run.garak_pass_rate_label) {
+    const pass = run.garak_pass_rate == null ? "n/a" : Math.round(run.garak_pass_rate * 1000) / 10 + "%";
+    const asr = run.garak_attack_success_rate == null ? "n/a" : Math.round(run.garak_attack_success_rate * 1000) / 10 + "%";
+    garakBits.push(run.garak_pass_rate_label + ": " + pass + ". ASR: " + asr + ". " + (run.garak_wording || ""));
+  }
+  if (run.garak_runs_dir) garakBits.push("Garak report folder: " + run.garak_runs_dir);
+  if (run.log_path) garakBits.push("Run log: " + run.log_path);
+  $("garak-path").textContent = garakBits.join(" ");
   const board = $("scorecard");
   board.innerHTML = "";
   const overall = document.createElement("div");
@@ -368,18 +447,55 @@ async function showResults() {
   const rows = (items.items || []).filter((item) => item.passed === false);
   if (!rows.length) {
     failures.textContent = "No failing prompts stored for this run.";
+    renderEvidence(items.items || []);
     return;
   }
   const table = document.createElement("table");
-  table.innerHTML = "<tr><th>Category</th><th>Source</th><th>Prompt</th><th>Response</th><th>Expected</th><th>Score</th></tr>";
+  table.innerHTML = "<tr><th>Category</th><th>Source</th><th>Prompt</th><th>Response</th><th>Expected</th><th>Score</th><th>Matched span</th><th>Excerpt</th></tr>";
   for (const item of rows) {
+    const evidence = item.evidence || {};
     const tr = document.createElement("tr");
-    tr.innerHTML = [item.category, item.source, item.prompt, item.response, item.expected, item.score]
+    tr.innerHTML = [item.category, item.source, item.prompt, item.response, item.expected, item.score, evidence.span, evidence.excerpt]
       .map((value) => "<td>" + escapeHtml(value) + "</td>").join("");
     table.appendChild(tr);
   }
   failures.innerHTML = "";
   failures.appendChild(table);
+  renderEvidence(items.items || []);
+}
+
+function detectorNote(item) {
+  const notes = item.detector_notes || [];
+  return notes
+    .filter((row) => row.status === "skipped" || row.status === "not_applicable")
+    .map((row) => row.reason || row.status)
+    .join("; ");
+}
+
+function renderEvidence(items) {
+  const root = $("evidence");
+  const rows = items.filter((item) => item.suite === "factcheck" || item.suite === "garak" || item.evidence || detectorNote(item));
+  if (!rows.length) {
+    root.textContent = "No scored prompts stored for this run.";
+    return;
+  }
+  const table = document.createElement("table");
+  table.innerHTML = "<tr><th>Suite</th><th>Score</th><th>Match</th><th>Matched span</th><th>Excerpt</th><th>Detector</th></tr>";
+  for (const item of rows.slice(0, 80)) {
+    const evidence = item.evidence || {};
+    const tr = document.createElement("tr");
+    tr.innerHTML = [
+      item.suite,
+      item.score,
+      evidence.match || item.detector,
+      evidence.span,
+      evidence.excerpt || item.response,
+      detectorNote(item),
+    ].map((value) => "<td>" + escapeHtml(value) + "</td>").join("");
+    table.appendChild(tr);
+  }
+  root.innerHTML = "";
+  root.appendChild(table);
 }
 
 $("refresh-results").addEventListener("click", () => showResults().catch((err) => alert(err.message)));

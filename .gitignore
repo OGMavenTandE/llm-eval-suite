@@ -18,4 +18,5 @@ dist/
 build/
 .env
 .venv/
+.venv-eval/
 .DS_Store

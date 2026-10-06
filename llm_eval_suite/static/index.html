@@ -74,7 +74,13 @@
     <label for="run-preset">Preset</label>
     <select id="run-preset"></select>
     <p id="preset-note" class="muted"></p>
+    <p id="preset-estimate" class="muted"></p>
     <div id="preset-warning" class="banner hidden"></div>
+    <h3>Demo: DVIDS fine-tune vs base</h3>
+    <p class="muted">Runs the same preset on a local fine-tune folder and on gpt2-medium, then opens Compare on that pair. The folder is editable. Weights are not downloaded until you start the demo.</p>
+    <label for="demo-folder">Fine-tune folder</label>
+    <input id="demo-folder" value="C:\AI Eval\LLMs\nanoGPT-master\nanoGPT-master\hf-dow-news">
+    <div class="row"><button id="start-demo" type="button">Run demo pair</button></div>
     <label for="run-dataset">Fact-check set</label>
     <select id="run-dataset">
       <option value="sample">Sample public facts (50)</option>
@@ -100,6 +106,8 @@
     </div>
     <p id="summary-source" class="muted"></p>
     <div id="cloud-judge-banner" class="banner hidden">A cloud judge was used. The results JSON was sent to that endpoint.</div>
+    <div id="validity-banner" class="banner hidden"></div>
+    <p id="garak-path" class="muted"></p>
     <div id="scorecard" class="grid"></div>
     <h3>Suites</h3>
     <div id="suite-list"></div>
@@ -107,6 +115,8 @@
     <pre id="analysis-text">No analysis yet. The template summary is used when no local judge is available.</pre>
     <h3>Failing prompts</h3>
     <div id="failures"></div>
+    <h3>Scores and evidence</h3>
+    <div id="evidence"></div>
   </section>
 
   <section id="compare" class="panel hidden">

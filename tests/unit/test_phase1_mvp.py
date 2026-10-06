@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -545,6 +546,11 @@ def test_nanogpt_mapping_and_optional_torch(tmp_path: Path):
     assert tuple(loaded["transformer.h.0.attn.c_attn.weight"].shape) == (n_embd, 3 * n_embd)
     config = json.loads((out / "config.json").read_text(encoding="utf-8"))
     assert config["n_positions"] == 8
+    assert config["n_ctx"] == 8
+    assert config["activation_function"] == "gelu"
+    report = json.loads((out / "conversion_report.json").read_text(encoding="utf-8"))
+    assert report["logits_check"]["passed"] is True
+    assert report["logits_check"]["max_abs_diff"] <= 1e-4
     assert describe_model_path(ckpt)["kind"] == "nanogpt"
 
 
@@ -706,12 +712,14 @@ def test_api_click_through(tmp_path: Path, monkeypatch):
     assert started.status_code == 200
     run_id = started.json()["run_id"]
     status = "running"
-    for _ in range(100):
+    body = {}
+    for _ in range(200):
         body = client.get(f"/api/runs/{run_id}").json()
         status = body["status"]
         if status not in {"running", "cancel_requested"}:
             break
-    assert status == "completed", body.get("error")
+        time.sleep(0.05)
+    assert status == "completed", body.get("error") or body.get("validity_reason") or status
     analysis = client.post(f"/api/runs/{run_id}/analyze")
     assert analysis.status_code == 200
     assert analysis.json()["source_label"] == "Template"

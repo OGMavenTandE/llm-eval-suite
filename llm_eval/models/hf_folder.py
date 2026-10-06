@@ -7,8 +7,11 @@
 
 from __future__ import annotations
 
+import os
 import time
 from pathlib import Path
+
+os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 
 from llm_eval.models.base import BaseModel, ModelResponse
 from llm_eval.models.context import truncate_to_token_budget
@@ -29,6 +32,7 @@ class HuggingFaceFolderModel(BaseModel):
         self.max_context = int(params.get("max_context") or 1024)
         self.max_new_tokens = int(params.get("max_new_tokens") or 64)
         self.mode = params.get("mode") or "auto"
+        self.hub = bool(params.get("hub"))
         self._tokenizer = None
         self._model = None
 
@@ -43,15 +47,23 @@ class HuggingFaceFolderModel(BaseModel):
                 "Loading a Hugging Face folder needs the optional hf extra: "
                 'pip install -e ".[hf]"'
             ) from exc
-        path = Path(self.folder)
-        if not path.is_dir():
+        path = Path(self.folder) if self.folder else None
+        local_only = True
+        source: str | Path
+        if path is not None and path.is_dir():
+            source = path
+            if not (path / "config.json").is_file():
+                raise RuntimeError(
+                    f"{path} has no config.json. If this is a nanoGPT ckpt.pt, convert it first."
+                )
+        elif self.hub and (self.name or self.folder):
+            source = self.name or self.folder
+            local_only = False
+        else:
             raise RuntimeError(f"Hugging Face folder not found: {path}")
-        if not (path / "config.json").is_file():
-            raise RuntimeError(
-                f"{path} has no config.json. If this is a nanoGPT ckpt.pt, convert it first."
-            )
-        self._tokenizer = AutoTokenizer.from_pretrained(path, local_files_only=True)
-        self._model = AutoModelForCausalLM.from_pretrained(path, local_files_only=True)
+        os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+        self._tokenizer = AutoTokenizer.from_pretrained(source, local_files_only=local_only)
+        self._model = AutoModelForCausalLM.from_pretrained(source, local_files_only=local_only)
         self._model.eval()
         self._torch = torch
 
@@ -74,21 +86,24 @@ class HuggingFaceFolderModel(BaseModel):
         token_ids = tokenizer.encode(prompt)
         if len(token_ids) > budget:
             token_ids = token_ids[-budget:]
-            prompt = tokenizer.decode(token_ids)
         elif len(prompt.split()) > budget and not token_ids:
             prompt = truncate_to_token_budget(prompt, budget)
-
-        inputs = tokenizer(prompt, return_tensors="pt")
+            token_ids = tokenizer.encode(prompt)
+        if not token_ids:
+            token_ids = tokenizer.encode(prompt or " ")
+        input_ids = torch.tensor([token_ids], dtype=torch.long)
+        attention = torch.ones_like(input_ids)
         start = time.perf_counter()
         with torch.no_grad():
             output = self._model.generate(
-                **inputs,
+                input_ids=input_ids,
+                attention_mask=attention,
                 max_new_tokens=max_new,
                 do_sample=False,
                 pad_token_id=getattr(tokenizer, "eos_token_id", None),
             )
         latency_ms = (time.perf_counter() - start) * 1000
-        new_tokens = output[0][inputs["input_ids"].shape[-1] :]
+        new_tokens = output[0][input_ids.shape[-1] :]
         text = tokenizer.decode(new_tokens, skip_special_tokens=True)
         completion_tokens = int(new_tokens.shape[-1])
         return ModelResponse(

@@ -5,9 +5,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from llm_eval_suite.timing import DEFAULT_SECONDS_PER_PROMPT
+
 PRESET_PATH = Path(__file__).with_name("presets.json")
 
 SUITE_KEYS = ("garak", "factcheck", "robustness", "consistency", "rampart", "dioptra")
+
+DEMO_MODEL_A_FOLDER = r"C:\AI Eval\LLMs\nanoGPT-master\nanoGPT-master\hf-dow-news"
+DEMO_MODEL_B = "gpt2-medium"
 
 
 def load_presets(path: str | Path | None = None) -> dict:
@@ -15,10 +20,22 @@ def load_presets(path: str | Path | None = None) -> dict:
     return json.loads(preset_path.read_text(encoding="utf-8"))
 
 
-def list_presets(path: str | Path | None = None) -> list[dict]:
+def list_presets(
+    path: str | Path | None = None,
+    *,
+    dataset_rows: int = 50,
+    seconds_per_prompt: float | None = None,
+    estimate_source: str = "default",
+) -> list[dict]:
     presets = load_presets(path)
     rows = []
     for preset_id, body in presets.items():
+        estimate = estimate_preset(
+            body,
+            dataset_rows=dataset_rows,
+            seconds_per_prompt=seconds_per_prompt,
+            estimate_source=estimate_source,
+        )
         rows.append(
             {
                 "id": preset_id,
@@ -26,9 +43,98 @@ def list_presets(path: str | Path | None = None) -> list[dict]:
                 "description": body.get("description", ""),
                 "warning": body.get("warning", ""),
                 "suites": [name for name in SUITE_KEYS if body.get(name)],
+                "demo": body.get("demo"),
+                **estimate,
             }
         )
     return rows
+
+
+def _probe_count(garak: dict) -> int | None:
+    probes = garak.get("probes")
+    if isinstance(probes, list):
+        return len(probes)
+    if isinstance(probes, str) and probes.strip() and probes.strip() != "all":
+        return len([part for part in probes.split(",") if part.strip()])
+    if probes == "all":
+        return None
+    return 0
+
+
+def estimate_preset(
+    body: dict,
+    *,
+    dataset_rows: int = 50,
+    seconds_per_prompt: float | None = None,
+    estimate_source: str = "default",
+) -> dict:
+    """Prompt ceiling and a runtime estimate. Uncapped garak lists stay unestimated."""
+    rate = DEFAULT_SECONDS_PER_PROMPT if seconds_per_prompt is None else float(seconds_per_prompt)
+    source = estimate_source if seconds_per_prompt is not None else "default"
+    garak = body.get("garak") or {}
+    probe_count = _probe_count(garak) if garak else 0
+    cap = garak.get("max_prompts_per_probe") if garak else None
+    generations = int(garak.get("generations") or 1) if garak else 1
+    unbounded = bool(garak) and (probe_count is None or not cap)
+    garak_prompts = None
+    if garak and probe_count is not None and cap:
+        garak_prompts = int(probe_count) * int(cap) * generations
+    fact = body.get("factcheck") or {}
+    fact_prompts = 0
+    if fact:
+        limit = fact.get("max_items")
+        rows = dataset_rows if not limit else min(int(dataset_rows), int(limit))
+        fact_prompts = rows * int(fact.get("trials") or 1)
+    robust = body.get("robustness") or {}
+    robust_prompts = 0
+    if robust:
+        limit = robust.get("max_items")
+        rows = dataset_rows if not limit else min(int(dataset_rows), int(limit))
+        perturbations = len(robust.get("perturbations") or ["case"])
+        robust_prompts = rows * (1 + perturbations)
+    consistency = body.get("consistency") or {}
+    consistency_prompts = 0
+    if consistency:
+        limit = consistency.get("max_items")
+        rows = dataset_rows if not limit else min(int(dataset_rows), int(limit))
+        consistency_prompts = rows * int(consistency.get("num_runs") or 3)
+    known = [count for count in (garak_prompts, fact_prompts, robust_prompts, consistency_prompts) if count is not None]
+    prompt_count = sum(known) if not unbounded else None
+    estimated = None if prompt_count is None else round(prompt_count * rate, 1)
+    return {
+        "probe_count": probe_count,
+        "prompt_count": prompt_count,
+        "factcheck_count": fact_prompts,
+        "garak_prompt_count": garak_prompts,
+        "estimated_seconds": estimated,
+        "seconds_per_prompt": round(rate, 4),
+        "estimate_source": source if estimated is not None else "unbounded",
+    }
+
+
+def demo_pair(path: str | Path | None = None, folder: str | None = None) -> dict:
+    """Built-in DVIDS fine-tune versus gpt2-medium. Paths are strings. Nothing is downloaded."""
+    presets = load_presets(path)
+    body = None
+    preset_id = None
+    for key, value in presets.items():
+        if value.get("demo"):
+            body = value
+            preset_id = key
+            break
+    if body is None or preset_id is None:
+        raise KeyError("No demo preset is defined.")
+    demo = dict(body["demo"])
+    model_a = dict(demo.get("model_a") or {})
+    model_b = dict(demo.get("model_b") or {})
+    model_a["folder"] = folder if folder else model_a.get("folder") or DEMO_MODEL_A_FOLDER
+    model_b.setdefault("model", DEMO_MODEL_B)
+    return {
+        "preset": demo.get("preset") or preset_id,
+        "label": body.get("label") or "Demo",
+        "model_a": model_a,
+        "model_b": model_b,
+    }
 
 
 def expand_preset(preset_id: str, path: str | Path | None = None) -> dict:

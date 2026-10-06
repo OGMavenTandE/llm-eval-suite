@@ -31,21 +31,17 @@ Requires Python 3.10+. Core dependencies: `pydantic`, `pyyaml`, `requests`.
 
 ## Quick start (Windows)
 
-The click-through app does not need Node. From the repo folder, double-click `run_app.bat` or run it in a terminal. The script creates `.venv`, installs the API extra, and opens http://127.0.0.1:8765.
+The click-through app does not need Node. From the repo folder, double-click `run_app.bat`. It creates a dedicated `.venv-eval` (separate from any training venv), installs pinned `torch==2.13.0`, `garak==0.17.0`, and `transformers==5.18.0`, then opens http://127.0.0.1:8765.
+
+If `nvidia-smi` is on PATH, torch comes from the PyTorch CUDA 12.6 index (`https://download.pytorch.org/whl/cu126`). Otherwise the script prints a warning and installs the CPU build from `https://download.pytorch.org/whl/cpu`. Torch is installed before garak so pip does not replace it with a CPU wheel from PyPI. The script also sets `HF_HUB_DISABLE_SYMLINKS_WARNING=1`.
 
 ```bat
 run_app.bat
 ```
 
-The same command by hand, after `pip install -e ".[api]"`:
+Ollama example: start Ollama, choose type Ollama, base URL `http://127.0.0.1:11434`, and a model such as `llama3.2:3b`. Use Test connection, save the profile, pick the Quick preset, and click Run. The API key can stay blank. The Run screen shows probe count, prompt count, and a time estimate before you start. After a measured run, that estimate uses observed seconds per prompt.
 
-```bat
-python -m llm_eval_suite.app
-```
-
-Ollama example: start Ollama, choose type Ollama, base URL `http://127.0.0.1:11434`, and a model such as `llama3.2:3b`. Use Test connection, save the profile, pick the Quick preset, and click Run. The API key can stay blank.
-
-Hugging Face folder example: install the optional extra in the same venv with `pip install -e ".[hf]"`. Point the folder field at a local model directory that already has `config.json` and a tokenizer (a GPT-2 Medium export is the expected shape). Set max context to `1024` for GPT-2. Base models should use completions mode.
+Hugging Face folder example: point the folder field at a local model directory that already has `config.json` and a tokenizer (a GPT-2 Medium export is the expected shape). Set max context to `1024` for GPT-2. Base models should use completions mode. Prompt plus new tokens are clamped to that window (the prompt is shortened from the left).
 
 A nanoGPT `ckpt.pt` (a file that contains `model_args`) can be converted with the button on the Connect screen, or:
 
@@ -54,11 +50,15 @@ from llm_eval.models.nanogpt_convert import convert_nanogpt_to_hf
 convert_nanogpt_to_hf(r"C:\models\ckpt.pt", r"C:\models\gpt2-export")
 ```
 
-Copy a local GPT-2 tokenizer into the export folder before connecting it. The converter does not download tokenizer files.
+The converter transposes Conv1D weights, sets `activation_function` to exact `gelu` (not `gelu_new`), writes `n_ctx` and `n_positions`, and checks logits against the source checkpoint on a fixed prompt. If the max absolute difference is above `1e-4`, conversion raises and still writes `conversion_report.json`. Copy a local GPT-2 tokenizer into the export folder before connecting it. The converter does not download tokenizer files.
 
 Suggested local council judges, listed in the Judges screen: `qwen2.5:3b-instruct` and `llama3.2:3b`. If only one of those is installed, peer ranking is skipped. The model you are testing is not used as a judge.
 
-`garak` runs live against the connected OpenAI-compatible endpoint when it is installed (`pip install garak` is optional and not part of the default install). Otherwise the Quick preset shows the fixture and labels it as a fixture. RAMPART stays a smoke check.
+When garak is installed it runs live against the connected endpoint. Pass rate in the UI is `1 - ASR` (one minus garak's attack success rate). Garak's own reports stay in `%USERPROFILE%\.local\share\garak\garak_runs`. Console output goes to `runs/<id>/run.log`, not the results page. leakreplay runs in its own process so a CUDA fault does not empty later probes. A run with too many empty generations is marked INVALID. If garak is missing, the Quick preset shows the fixture and labels it as a fixture. RAMPART stays a smoke check.
+
+Demo: DVIDS fine-tune vs base runs the Quick preset on an editable local folder (default `C:\AI Eval\LLMs\nanoGPT-master\nanoGPT-master\hf-dow-news`) and on `gpt2-medium` from the Hugging Face hub, then opens Compare on that pair.
+
+Long runs are a background process with a per-run log. Cancel still works. Resume skips completed fact-check cases and completed garak probes. The progress line shows a live ETA.
 
 Runs are written under `runs/` and connection profiles under `data/`. Those directories are gitignored. Do not commit customer data, model weights, or real run outputs.
 
