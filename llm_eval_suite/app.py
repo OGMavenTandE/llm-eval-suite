@@ -18,6 +18,7 @@ from llm_eval_suite.connections import (
     ConnectionStore,
     build_model,
     detect_path,
+    judge_max_tokens,
     judge_timeout,
     test_connection,
 )
@@ -70,6 +71,7 @@ class JudgesIn(BaseModel):
     chairman: str = ""
     judges: list[dict] = Field(default_factory=list)
     timeout: int | None = None
+    max_tokens: int | None = None
 
 
 class RunIn(BaseModel):
@@ -122,14 +124,19 @@ def create_app(
         return {"status": "ok"}
 
     @app.get("/api/presets")
-    def presets(dataset_id: str = "sample"):
+    def presets(dataset_id: str = "sample", connection_id: str | None = None):
         rows = _dataset_rows(app, dataset_id)
-        timing = app.state.runs.timing.snapshot() if app.state.runs.timing else {}
+        profile = app.state.store.get(connection_id) if connection_id else None
+        suite_rates = {}
+        if profile is not None and app.state.runs.timing is not None:
+            for suite_name in ("garak", "factcheck", "robustness", "consistency"):
+                rate = app.state.runs.timing.rate_for(profile, suite_name)
+                if rate is not None:
+                    suite_rates[suite_name] = rate
         return {
             "presets": list_presets(
                 dataset_rows=rows,
-                seconds_per_prompt=timing.get("seconds_per_prompt"),
-                estimate_source=timing.get("source") or "default",
+                suite_rates=suite_rates,
             )
         }
 
@@ -338,6 +345,7 @@ def create_app(
                 run_id,
                 judges,
                 chairman=settings.get("chairman"),
+                max_tokens=judge_max_tokens(settings),
             )
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Run not found") from exc

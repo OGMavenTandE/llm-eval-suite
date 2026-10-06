@@ -18,15 +18,16 @@ from llm_eval_suite.compare import compare_runs
 from llm_eval_suite.council import run_council
 from llm_eval_suite.presets import estimate_preset, expand_preset
 from llm_eval_suite.report_html import render_report
-from llm_eval_suite.scoring import live_failures, scorecard
+from llm_eval_suite.scoring import live_failures, scorecard, withhold_category_scores
 from llm_eval_suite.suites import RUNNERS, SuiteContext, planned_suite_total
-from llm_eval_suite.timing import DEFAULT_SECONDS_PER_PROMPT, TimingStore
+from llm_eval_suite.timing import TimingStore
 from llm_eval_suite.worker import build_worker_command
 
 # Half or more empty fact-check answers is an invalid run. A thinking model
 # that spends max_tokens inside <think> and returns no answer trips this.
 FACTCHECK_EMPTY_INVALID_RATE = 0.5
 ETA_SMOOTHING = 0.3
+ETA_MIN_ITEMS = 3
 
 
 def smooth_item_seconds(previous: float | None, sample: float, *, fallback: float, alpha: float = ETA_SMOOTHING) -> float:
@@ -183,15 +184,16 @@ class RunManager:
                 "audit": record.get("audit") or {"events": []},
             }
         )
-        timing = self.timing.snapshot() if self.timing else {
-            "seconds_per_prompt": DEFAULT_SECONDS_PER_PROMPT,
-            "source": "default",
-        }
+        suite_rates = {}
+        if self.timing is not None:
+            for suite_name in ("garak", "factcheck", "robustness", "consistency"):
+                rate = self.timing.rate_for(connection, suite_name)
+                if rate is not None:
+                    suite_rates[suite_name] = rate
         record["estimate"] = estimate_preset(
             _preset_body(expanded),
             dataset_rows=len(rows),
-            seconds_per_prompt=timing["seconds_per_prompt"],
-            estimate_source=timing["source"],
+            suite_rates=suite_rates,
         )
         record["log_path"] = str(run_dir / "run.log")
         record["validity"] = "ok"
@@ -295,7 +297,7 @@ class RunManager:
             raise FileNotFoundError(run_id)
         return render_report(record, self.items(run_id))
 
-    def analyze(self, run_id: str, judges: list[dict], chairman: str | None = None) -> dict:
+    def analyze(self, run_id: str, judges: list[dict], chairman: str | None = None, max_tokens: int = 1200) -> dict:
         record = self._read_run(self.runs_dir / run_id)
         if record is None:
             raise FileNotFoundError(run_id)
@@ -306,6 +308,7 @@ class RunManager:
             judges,
             under_test=record.get("connection") or {},
             chairman_name=chairman,
+            max_tokens=max_tokens,
         )
         record["analysis"] = analysis
         audit = record.setdefault("audit", {"events": []})
@@ -402,6 +405,12 @@ class RunManager:
                     self._stamp_eta(run_dir, progress, run_id)
                     self._update_progress(run_dir, progress, suites)
 
+                def on_suite_progress(done, progress=progress):
+                    progress["done"] = int(done)
+                    progress["status"] = "running"
+                    self._stamp_eta(run_dir, progress, run_id)
+                    self._update_progress(run_dir, progress, suites)
+
                 ctx = SuiteContext(
                     model=model,
                     connection=connection,
@@ -410,6 +419,7 @@ class RunManager:
                     cancel=cancel,
                     completed_ids=set(completed),
                     on_item=on_item,
+                    on_progress=on_suite_progress,
                 )
                 # completed_ids at start should be the pre-resume set, not grow mid-run
                 ctx.completed_ids = set(self._completed_ids_snapshot(existing_items))
@@ -424,6 +434,20 @@ class RunManager:
                 summary["done"] = progress["done"]
                 summary["total"] = progress["total"]
                 suites.append(summary)
+                if (
+                    self.timing is not None
+                    and progress.get("status") == "completed"
+                    and int(progress.get("done") or 0) > 0
+                ):
+                    state = self._eta_state.get((run_id, suite_name))
+                    if state is not None:
+                        elapsed = time.perf_counter() - float(state["started"])
+                        self.timing.record(
+                            elapsed,
+                            int(progress["done"]),
+                            connection=connection,
+                            suite=suite_name,
+                        )
                 self._append_log(run_dir, f"{result['name']} finished ({result.get('source')}).")
                 self._update_progress(run_dir, progress, suites)
             status = "cancelled" if cancel.is_set() else "completed"
@@ -495,10 +519,10 @@ class RunManager:
             record["device"] = device_name
         if record["validity"] == "invalid" and status == "completed":
             record["status"] = "invalid"
+        if record.get("validity") == "invalid" or record.get("status") == "invalid":
+            record["scorecard"] = withhold_category_scores(record.get("scorecard") or {})
         self._write_run(run_dir, record)
         self._write_manifest(run_dir, record)
-        if self.timing is not None and status == "completed" and new_live > 0 and started is not None:
-            self.timing.record(time.perf_counter() - started, new_live)
 
     def _stamp_eta(self, run_dir: Path, progress: dict, run_id: str) -> None:
         if progress.get("status") in {"completed", "cancelled"}:
@@ -516,20 +540,24 @@ class RunManager:
             self._eta_state[key] = state
         sample = max(0.0, now - float(state["last"]))
         state["last"] = now
-        fallback = float(estimate.get("seconds_per_prompt") or DEFAULT_SECONDS_PER_PROMPT)
-        if sample <= 0 and state.get("rate") is None:
-            rate = fallback
-        else:
-            rate = smooth_item_seconds(state.get("rate"), sample, fallback=fallback)
-        state["rate"] = rate
+        suite_rates = estimate.get("suite_rates") or {}
+        known = suite_rates.get(str(progress.get("name") or ""))
+        if sample > 0:
+            if state.get("rate") is None:
+                state["rate"] = sample
+            else:
+                state["rate"] = smooth_item_seconds(state["rate"], sample, fallback=state["rate"])
+        observed = state.get("rate") if done >= ETA_MIN_ITEMS else None
+        rate = observed if observed is not None else (float(known) if known is not None else None)
         remaining = None if total is None else max(0, int(total) - done)
-        progress["seconds_per_prompt"] = round(rate, 3)
+        progress["seconds_per_prompt"] = None if rate is None else round(rate, 3)
         progress["elapsed_seconds"] = round(now - float(state["started"]), 1)
-        if remaining is None or remaining <= 0:
+        if rate is None or remaining is None or remaining <= 0:
             progress["eta_seconds"] = None
+            progress["eta_source"] = "estimating" if rate is None else "measured"
         else:
             progress["eta_seconds"] = round(remaining * rate, 1)
-        progress["eta_source"] = "measured" if done else estimate.get("estimate_source") or "default"
+            progress["eta_source"] = "measured" if observed is not None else "matched"
 
     def _watch_cancel(self, run_dir: Path, cancel: threading.Event) -> None:
         while not cancel.is_set():

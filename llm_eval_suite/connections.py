@@ -14,6 +14,7 @@ from llm_eval.models.nanogpt_convert import describe_model_path
 from llm_eval.models.openai_model import OpenAIModel
 
 DEFAULT_JUDGE_TIMEOUT = 90
+DEFAULT_JUDGE_MAX_TOKENS = 1200
 
 DEFAULT_JUDGES = [
     {
@@ -49,6 +50,23 @@ def judge_timeout(settings: dict | None = None) -> int:
     except (TypeError, ValueError):
         seconds = DEFAULT_JUDGE_TIMEOUT
     return max(1, seconds)
+
+
+def judge_max_tokens(settings: dict | None = None) -> int:
+    """Tokens for one council judge reply.
+
+    A saved value wins, then ``LLM_EVAL_JUDGE_MAX_TOKENS``, then 1200.
+    Thinking models need the room after ``think`` is turned off.
+    """
+    settings = settings or {}
+    chosen = settings.get("max_tokens")
+    if not chosen:
+        chosen = os.environ.get("LLM_EVAL_JUDGE_MAX_TOKENS")
+    try:
+        tokens = int(chosen) if chosen else DEFAULT_JUDGE_MAX_TOKENS
+    except (TypeError, ValueError):
+        tokens = DEFAULT_JUDGE_MAX_TOKENS
+    return max(1, tokens)
 
 
 def is_local_url(url: str | None) -> bool:
@@ -140,11 +158,13 @@ class ConnectionStore:
                 "chairman": DEFAULT_JUDGES[0]["model"],
                 "judges": DEFAULT_JUDGES,
                 "timeout": DEFAULT_JUDGE_TIMEOUT,
+                "max_tokens": DEFAULT_JUDGE_MAX_TOKENS,
             }
             self.judges_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
             return payload
         stored = json.loads(self.judges_path.read_text(encoding="utf-8"))
         stored.setdefault("timeout", DEFAULT_JUDGE_TIMEOUT)
+        stored.setdefault("max_tokens", DEFAULT_JUDGE_MAX_TOKENS)
         return stored
 
     def save_judges(self, payload: dict) -> dict:
@@ -163,7 +183,12 @@ class ConnectionStore:
                 }
             )
         chairman = payload.get("chairman") or (judges[0]["model"] if judges else "")
-        stored = {"chairman": chairman, "judges": judges, "timeout": judge_timeout(payload)}
+        stored = {
+            "chairman": chairman,
+            "judges": judges,
+            "timeout": judge_timeout(payload),
+            "max_tokens": judge_max_tokens(payload),
+        }
         self.judges_path.write_text(json.dumps(stored, indent=2) + "\n", encoding="utf-8")
         return stored
 
@@ -218,7 +243,7 @@ def build_model(profile: dict) -> BaseModel:
         "mode": profile.get("mode") or "chat",
         "timeout": profile.get("timeout") or 120,
     }
-    if kind == "ollama":
+    if kind == "ollama" or profile.get("think") is not None:
         params["think"] = False if profile.get("think") is None else profile.get("think")
     if profile.get("max_context"):
         params["max_context"] = int(profile["max_context"])

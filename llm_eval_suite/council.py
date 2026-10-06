@@ -269,6 +269,24 @@ def template_narrative(run: dict, items: list[dict]) -> str:
     return narrative_from_summary(summary)
 
 
+def judge_generate(judge: dict, *, max_tokens: int):
+    """One judge callable. ``think`` is off, and any thinking trace is removed."""
+    from llm_eval.models.context import strip_think_blocks
+    from llm_eval_suite.connections import build_model
+
+    prepared = dict(judge)
+    if prepared.get("think") is None:
+        prepared["think"] = False
+    model = build_model(prepared)
+
+    def _generate(prompt: str) -> str:
+        result = model.generate(prompt, max_tokens=max_tokens)
+        text = result if isinstance(result, str) else result.text
+        return strip_think_blocks(text)
+
+    return _generate
+
+
 def _ask(generate: Callable, prompt: str) -> str:
     result = generate(prompt)
     if isinstance(result, str):
@@ -284,13 +302,14 @@ def run_council(
     under_test: dict | None = None,
     chairman_name: str | None = None,
     generate_for: Callable | None = None,
+    max_tokens: int = 1200,
 ) -> dict:
     """Run the council.
 
     ``generate_for(judge)`` returns a callable ``prompt -> text``. Tests pass
     stub callables. When omitted, each judge is built as a connection profile.
     """
-    from llm_eval_suite.connections import build_model, same_model
+    from llm_eval_suite.connections import same_model
 
     under_test = under_test or run.get("connection") or {}
     eligible = []
@@ -313,12 +332,7 @@ def run_council(
 
     if generate_for is None:
         def generate_for(judge):  # noqa: A001 - local factory
-            model = build_model(judge)
-
-            def _generate(prompt: str) -> str:
-                return model.generate(prompt, max_tokens=400).text
-
-            return _generate
+            return judge_generate(judge, max_tokens=max_tokens)
 
     if not eligible:
         return _fallback(

@@ -147,7 +147,7 @@
     <section id="run" class="page hidden">
       <header class="page-head">
         <h2>Run an evaluation</h2>
-        <p class="lede">Pick a saved connection and a preset. The estimate updates once a run on this machine has been measured.</p>
+        <p class="lede">Pick a saved connection and a preset. A time estimate is reused only for this model, endpoint, and suite. Otherwise it stays on Estimating until the first prompts are timed.</p>
       </header>
       <div class="layout-split">
         <div class="stack">
@@ -307,7 +307,11 @@
               <label for="judge-timeout">Judge timeout (seconds)</label>
               <input id="judge-timeout" type="number" min="1" value="90">
             </div>
-            <p class="hint">The chairman writes the final summary from the judges' reviews. The timeout is how long each judge call may take before the template summary is used.</p>
+            <div class="field">
+              <label for="judge-max-tokens">Judge reply length (tokens)</label>
+              <input id="judge-max-tokens" type="number" min="1" value="1200">
+            </div>
+            <p class="hint">The chairman writes the final summary from the judges' reviews. The timeout is how long each judge call may take before the template summary is used. Reply length is the token cap for that call. Judge calls send think off.</p>
           </div>
           <div class="panel panel-quiet">
             <p class="hint">Suggested local judges, if you have them in Ollama: <code>qwen2.5:3b-instruct</code> and <code>llama3.2:3b</code>. Cloud judges stay off unless you type a cloud URL.</p>

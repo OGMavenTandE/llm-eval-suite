@@ -7,6 +7,7 @@ Expected ``Newport`` does not pass on ``Newport News``.
 from __future__ import annotations
 
 import re
+import unicodedata
 
 WORD_RE = re.compile(r"[A-Za-z0-9]+(?:[-'][A-Za-z0-9]+)*")
 
@@ -43,9 +44,103 @@ _NUMBER_WORDS = {
 }
 
 
+_UNITS = {name: int(value) for name, value in _NUMBER_WORDS.items() if int(value) < 20}
+_TENS = {name: int(value) for name, value in _NUMBER_WORDS.items() if int(value) >= 20}
+_NUMBER_PIECES = set(_UNITS) | set(_TENS) | {"hundred", "thousand"}
+
+
 def _canon_word(word: str) -> str:
     folded = word.casefold()
     return _NUMBER_WORDS.get(folded, folded)
+
+
+def _hyphen_parts(token: str) -> list[str]:
+    parts = token.casefold().split("-")
+    if len(parts) > 1 and all(part in _NUMBER_PIECES for part in parts):
+        return parts
+    return [token.casefold()]
+
+
+def _consume_number(words: list[str], start: int) -> tuple[int, int] | None:
+    """Read a compound number up to 9999. ``and`` and hyphens are allowed."""
+    total = 0
+    current = 0
+    seen = False
+    index = start
+    while index < len(words):
+        word = words[index]
+        if word == "and":
+            if not seen:
+                break
+            index += 1
+            continue
+        if word in _UNITS:
+            current += _UNITS[word]
+            seen = True
+            index += 1
+            continue
+        if word in _TENS:
+            current += _TENS[word]
+            seen = True
+            index += 1
+            continue
+        if word == "hundred":
+            if current == 0:
+                current = 1
+            current *= 100
+            seen = True
+            index += 1
+            continue
+        if word == "thousand":
+            if current == 0:
+                current = 1
+            total += current * 1000
+            current = 0
+            seen = True
+            index += 1
+            continue
+        break
+    if not seen:
+        return None
+    value = total + current
+    if value > 9999:
+        return None
+    return value, index
+
+
+def normalize_answer_text(text: str) -> str:
+    """NFKC, then compound number words become digits.
+
+    NFKC maps subscript and superscript digits, so ``H₂O`` and ``H2O`` compare
+    as the same string. ``one hundred and fifty-six`` becomes ``156``.
+    """
+    text = unicodedata.normalize("NFKC", text or "")
+    matches = list(WORD_RE.finditer(text))
+    pieces: list[tuple[str, int, int]] = []
+    for match in matches:
+        parts = _hyphen_parts(match.group(0))
+        for part in parts:
+            pieces.append((part, match.start(), match.end()))
+    if not pieces:
+        return text
+    words = [word for word, _start, _end in pieces]
+    chunks: list[str] = []
+    cursor = 0
+    index = 0
+    while index < len(pieces):
+        parsed = _consume_number(words, index)
+        if parsed is None:
+            index += 1
+            continue
+        value, end_index = parsed
+        start = pieces[index][1]
+        end = pieces[end_index - 1][2]
+        chunks.append(text[cursor:start])
+        chunks.append(str(value))
+        cursor = end
+        index = end_index
+    chunks.append(text[cursor:])
+    return "".join(chunks)
 
 
 def _words(text: str) -> list[tuple[str, int, int]]:
@@ -67,6 +162,8 @@ def _excerpt(text: str, start: int, end: int, radius: int = 48) -> str:
 
 def match_expected(expected: str, response: str) -> dict:
     """Return the best word-sequence match and whether it is a full pass."""
+    expected = normalize_answer_text(expected)
+    response = normalize_answer_text(response)
     expected_words = _words(expected or "")
     response_words = _words(response or "")
     excerpt = _excerpt(response or "", 0, min(len(response or ""), 80))

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 import types
 from pathlib import Path
 
@@ -11,15 +12,16 @@ import pytest
 import yaml
 
 from llm_eval.datasets.loader import load_dataset
-from llm_eval.garak.live import run_garak
+from llm_eval.garak.live import attack_rates, count_report_attempts, parse_garak_report, run_garak, validity_from_items
 from llm_eval.models.context import strip_think_blocks
 from llm_eval.models.ollama_model import OllamaModel
 from llm_eval.models.openai_model import OpenAIModel
 from llm_eval_suite.compare import compare_runs
-from llm_eval_suite.connections import ConnectionStore, build_model, judge_timeout
-from llm_eval_suite.council import template_narrative
+from llm_eval_suite.connections import ConnectionStore, build_model, judge_max_tokens, judge_timeout
+from llm_eval_suite.council import judge_generate, template_narrative
 from llm_eval_suite.runs import RunManager, factcheck_empty_validity, smooth_item_seconds
-from llm_eval_suite.scoring import scorecard
+from llm_eval_suite.scoring import scorecard, withhold_category_scores
+from llm_eval_suite.timing import TimingStore
 from llm_eval_suite.suites import planned_suite_total, score_fact
 
 
@@ -182,6 +184,9 @@ def test_empty_factcheck_run_is_invalid(tmp_path: Path):
     assert "INVALID fact-check." in record["suites"][0]["notes"]
     assert record["device"] == "cuda"
     assert record["scorecard"]["overall_pass_percent"] is None
+    fact_row = next(row for row in record["scorecard"]["categories"] if row["category"] == "hallucination_factuality")
+    assert fact_row["status"] == "withheld"
+    assert fact_row["pass_percent"] is None
     assert factcheck_empty_validity(items)["validity"] == "invalid"
 
     few = [_fact_item(index, empty=index < 2) for index in range(10)]
@@ -197,18 +202,33 @@ def test_eta_uses_the_suite_total_and_clears_when_finished(tmp_path: Path):
     run_dir = manager.runs_dir / "eta"
     manager._write_run(
         run_dir,
-        {"run_id": "eta", "estimate": {"prompt_count": 175, "seconds_per_prompt": 1.0}},
+        {"run_id": "eta", "estimate": {"prompt_count": 175, "seconds_per_prompt": 1.0, "suite_rates": {}}},
     )
     unknown = {"name": "factcheck", "total": None, "done": 1, "status": "running"}
     manager._stamp_eta(run_dir, unknown, "eta")
     assert unknown["eta_seconds"] is None
-    running = {"name": "garak", "total": 10, "done": 1, "status": "running"}
-    manager._stamp_eta(run_dir, running, "eta")
-    assert running["eta_seconds"] is not None
-    assert running["eta_seconds"] < 175 * 60
-    running["status"] = "completed"
-    manager._stamp_eta(run_dir, running, "eta")
-    assert running["eta_seconds"] is None
+    now = time.perf_counter()
+    manager._eta_state[("eta", "garak")] = {"started": now - 1.0, "last": now - 0.4, "rate": None}
+    early = {"name": "garak", "total": 10, "done": 1, "status": "running"}
+    manager._stamp_eta(run_dir, early, "eta")
+    assert early["eta_seconds"] is None
+    assert early["eta_source"] == "estimating"
+    early["done"] = 3
+    manager._stamp_eta(run_dir, early, "eta")
+    assert early["eta_seconds"] is not None
+    assert early["eta_seconds"] < 175 * 60
+    early["status"] = "completed"
+    manager._stamp_eta(run_dir, early, "eta")
+    assert early["eta_seconds"] is None
+
+    matched = {"name": "garak", "total": 10, "done": 1, "status": "running"}
+    manager._write_run(
+        run_dir,
+        {"run_id": "eta", "estimate": {"suite_rates": {"garak": 2.0}}},
+    )
+    manager._stamp_eta(run_dir, matched, "eta-matched")
+    assert matched["eta_seconds"] == pytest.approx(18.0)
+    assert matched["eta_source"] == "matched"
 
 
 def test_judge_timeout_default_and_override(tmp_path: Path, monkeypatch):
@@ -242,6 +262,12 @@ def test_number_words_and_expected_aliases(tmp_path: Path):
     assert mode == "containment"
     _score, twenty, _mode = score_fact("How many?", "20", "Twenty ships sailed.")
     assert twenty is True
+    _score, compound, _mode = score_fact("How many?", "156", "There were one hundred and fifty-six ships.")
+    assert compound is True
+    _score, water, _mode = score_fact("Formula?", "H2O", "The molecule is H₂O.")
+    assert water is True
+    _score, big, _mode = score_fact("How many?", "9999", "nine thousand nine hundred and ninety-nine")
+    assert big is True
     assert strip_think_blocks("<think>hidden</think>Eight") == "Eight"
     assert strip_think_blocks("<think>never closed") == ""
 
@@ -488,3 +514,135 @@ def test_results_page_sources_and_browser_open_once(monkeypatch):
     assert open_app_browser("http://127.0.0.1:8765") is True
     assert open_app_browser("http://127.0.0.1:8765") is False
     assert opened == ["http://127.0.0.1:8765"]
+
+
+def test_duplicate_garak_attempts_score_once_and_agree(tmp_path: Path):
+    path = Path(__file__).resolve().parents[1] / "fixtures" / "garak_duplicate_attempts.report.jsonl"
+    raw_lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert count_report_attempts(path) == 5
+    assert count_report_attempts(path) < len(raw_lines)
+    items = parse_garak_report(path)
+    by_id = {item["id"]: item for item in items}
+    assert len(items) == len(by_id) == 4
+    assert "garak:attempt-early" not in by_id
+    bare = by_id["garak:attempt-nodet"]
+    assert bare["passed"] is False
+    assert bare["score"] is None
+    assert bare["counts_toward_score"] is False
+    dan = by_id["garak:attempt-dan"]
+    assert dan["passed"] is False
+    assert dan["score"] == pytest.approx(0.5)
+    scored = [item for item in items if item.get("counts_toward_score")]
+    assert len(scored) == 3
+    card = scorecard(items)
+    security = next(row for row in card["categories"] if row["category"] == "security_jailbreak")
+    _attack, passed = attack_rates(items)
+    assert passed == pytest.approx(0.5)
+    assert security["pass_rate"] == pytest.approx(passed)
+    assert security["pass_percent"] == pytest.approx(passed * 100, abs=0.05)
+    assert security["pass_rate"] != pytest.approx(1 / 3, abs=0.01)
+
+    empty = tmp_path / "empty.report.jsonl"
+    lines = []
+    for seq in range(3):
+        base = {
+            "entry_type": "attempt",
+            "uuid": f"empty-{seq}",
+            "seq": seq,
+            "probe_classname": "leakreplay.LiteratureCloze",
+            "prompt": f"prompt {seq}",
+            "outputs": [""],
+        }
+        lines.append(dict(base, status=1))
+        lines.append(dict(base, status=2, detector_results={"leakreplay.Detector": [0.0]}))
+    empty.write_text("".join(json.dumps(row) + "\n" for row in lines), encoding="utf-8")
+    assert count_report_attempts(empty) == 3
+    parsed = parse_garak_report(empty)
+    assert len(parsed) == 3
+    validity = validity_from_items(parsed)
+    assert validity["validity"] == "invalid"
+    assert "3 of 3" in validity["reason"]
+    assert "6 of 6" not in validity["reason"]
+
+
+def test_timing_rate_stays_on_the_same_model_and_suite(tmp_path: Path):
+    store = TimingStore(tmp_path / "timing.json")
+    qwen = {"type": "ollama", "base_url": "http://127.0.0.1:11434", "model": "qwen2.5"}
+    other = {"type": "ollama", "base_url": "http://127.0.0.1:11434", "model": "qwen3"}
+    store.record(10, 5, connection=qwen, suite="garak")
+    assert store.rate_for(qwen, "garak") == pytest.approx(2.0)
+    assert store.rate_for(other, "garak") is None
+    assert store.rate_for(qwen, "factcheck") is None
+    legacy = tmp_path / "legacy.json"
+    legacy.write_text(
+        json.dumps({"seconds_per_prompt": 1.0, "source": "measured", "prompts": 10}),
+        encoding="utf-8",
+    )
+    assert TimingStore(legacy).rate_for(qwen, "garak") is None
+
+
+def test_invalid_run_withholds_category_scores_and_compare_deltas():
+    card = scorecard(
+        [
+            {
+                "id": "s1",
+                "suite": "garak",
+                "category": "security_jailbreak",
+                "source": "live",
+                "passed": True,
+                "score": 1.0,
+                "counts_toward_score": True,
+                "response": "No",
+            }
+        ]
+    )
+    withheld = withhold_category_scores(card)
+    security = next(row for row in withheld["categories"] if row["category"] == "security_jailbreak")
+    assert security["status"] == "withheld"
+    assert security["pass_percent"] is None
+    assert security["pass_rate"] is None
+    assert withheld["verdict"] == "Score withheld"
+    not_run = next(row for row in withheld["categories"] if row["category"] == "retrieval")
+    assert not_run["status"] == "not_run"
+
+    compared = compare_runs(
+        {"run_id": "bad", "status": "invalid", "validity": "invalid", "scorecard": card},
+        {"run_id": "ok", "status": "completed", "validity": "ok", "scorecard": card},
+        [{"id": "s1", "score": 0.0, "prompt": "p"}],
+        [{"id": "s1", "score": 1.0, "prompt": "p"}],
+    )
+    assert compared["left_invalid"] is True
+    assert compared["right_invalid"] is False
+    assert compared["items"] == []
+    assert all(row["delta"] is None for row in compared["categories"])
+    assert all(row["left_pass_rate"] is None for row in compared["categories"])
+
+
+def test_judge_generate_disables_think_and_caps_tokens(monkeypatch):
+    monkeypatch.delenv("LLM_EVAL_JUDGE_MAX_TOKENS", raising=False)
+    assert judge_max_tokens({}) == 1200
+    assert judge_max_tokens({"max_tokens": 800}) == 800
+    seen = {}
+
+    class Fake:
+        def generate(self, prompt, max_tokens=None):
+            seen["max_tokens"] = max_tokens
+            seen["prompt"] = prompt
+
+            class Result:
+                text = "<think>hidden</think>The jailbreak probes failed."
+
+            return Result()
+
+    def fake_build(profile):
+        seen["think"] = profile.get("think")
+        return Fake()
+
+    monkeypatch.setattr("llm_eval_suite.connections.build_model", fake_build)
+    generate = judge_generate(
+        {"type": "openai", "model": "qwen3", "base_url": "http://127.0.0.1:11434"},
+        max_tokens=1200,
+    )
+    assert seen["think"] is False
+    assert generate("Summarize the run.") == "The jailbreak probes failed."
+    assert seen["max_tokens"] == 1200

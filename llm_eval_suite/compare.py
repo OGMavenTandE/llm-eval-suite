@@ -3,18 +3,24 @@
 from __future__ import annotations
 
 
+def _is_invalid(run: dict) -> bool:
+    return run.get("validity") == "invalid" or run.get("status") == "invalid"
+
+
 def compare_runs(left: dict, right: dict, left_items: list[dict], right_items: list[dict]) -> dict:
     left_card = {row["category"]: row for row in left.get("scorecard", {}).get("categories", [])}
     right_card = {row["category"]: row for row in right.get("scorecard", {}).get("categories", [])}
+    left_invalid = _is_invalid(left)
+    right_invalid = _is_invalid(right)
     categories = []
     keys = list(dict.fromkeys([*left_card.keys(), *right_card.keys()]))
     for key in keys:
         a = left_card.get(key) or {}
         b = right_card.get(key) or {}
-        a_rate = a.get("pass_rate")
-        b_rate = b.get("pass_rate")
+        a_rate = None if left_invalid else a.get("pass_rate")
+        b_rate = None if right_invalid else b.get("pass_rate")
         delta = None
-        if a_rate is not None and b_rate is not None:
+        if not left_invalid and not right_invalid and a_rate is not None and b_rate is not None:
             delta = round(b_rate - a_rate, 4)
         categories.append(
             {
@@ -52,6 +58,8 @@ def compare_runs(left: dict, right: dict, left_items: list[dict], right_items: l
     return {
         "left_run_id": left.get("run_id"),
         "right_run_id": right.get("run_id"),
+        "left_invalid": left_invalid,
+        "right_invalid": right_invalid,
         "categories": categories,
-        "items": item_deltas,
+        "items": [] if left_invalid or right_invalid else item_deltas,
     }

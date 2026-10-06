@@ -211,8 +211,9 @@ def test_screens_load_and_invalid_score_is_withheld(tmp_path: Path):
         selected = page.locator("#results-run option:checked").inner_text()
         assert "%" not in selected
         assert "Invalid" in selected
-        assert "60% fixture" in page.locator("#scorecard").inner_text()
-        assert "1 - ASR" in page.locator("#scorecard").inner_text()
+        scorecard = page.locator("#scorecard").inner_text()
+        assert "Score withheld" in scorecard
+        assert "%" not in scorecard
         assert "1 failing live prompt" in page.locator("#failures").inner_text()
         assert "not counted" in page.locator("#failures").inner_text()
         assert page.locator("#analysis-text").get_attribute("tabindex") == "0"
