@@ -85,11 +85,15 @@ class ConnectionStore:
             "max_context": payload.get("max_context"),
             "folder": payload.get("folder") or "",
             "cloud": bool(payload.get("cloud")) or not is_local_url(base_url),
+            "hub": bool(payload.get("hub")),
+            "max_new_tokens": payload.get("max_new_tokens") or 64,
         }
         if profile["type"] not in {"openai", "ollama", "hf", "nanogpt"}:
             raise ValueError("type must be openai, ollama, hf, or nanogpt")
         if profile["type"] in {"openai", "ollama"} and not profile["model"]:
             raise ValueError("A model name is required.")
+        if profile["hub"] and not profile["folder"]:
+            profile["folder"] = profile["model"]
         if profile["type"] == "hf" and not profile["folder"]:
             raise ValueError("A Hugging Face folder path is required.")
         replaced = False
@@ -176,6 +180,7 @@ def build_model(profile: dict) -> BaseModel:
                 "max_context": profile.get("max_context") or 1024,
                 "mode": profile.get("mode") or "auto",
                 "max_new_tokens": profile.get("max_new_tokens") or 64,
+                "hub": bool(profile.get("hub")),
             },
         )
     if kind == "nanogpt":

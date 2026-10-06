@@ -545,6 +545,11 @@ def test_nanogpt_mapping_and_optional_torch(tmp_path: Path):
     assert tuple(loaded["transformer.h.0.attn.c_attn.weight"].shape) == (n_embd, 3 * n_embd)
     config = json.loads((out / "config.json").read_text(encoding="utf-8"))
     assert config["n_positions"] == 8
+    assert config["n_ctx"] == 8
+    assert config["activation_function"] == "gelu"
+    report = json.loads((out / "conversion_report.json").read_text(encoding="utf-8"))
+    assert report["logits_check"]["passed"] is True
+    assert report["logits_check"]["max_abs_diff"] <= 1e-4
     assert describe_model_path(ckpt)["kind"] == "nanogpt"
 
 

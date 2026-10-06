@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+
 import requests
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse
@@ -18,7 +20,7 @@ from llm_eval_suite.connections import (
     detect_path,
     test_connection,
 )
-from llm_eval_suite.presets import list_presets
+from llm_eval_suite.presets import demo_pair, list_presets
 from llm_eval_suite.runs import RunManager
 from llm_eval_suite.suites import validate_factcheck_text
 
@@ -38,6 +40,8 @@ class ConnectionIn(BaseModel):
     max_context: int | None = None
     folder: str = ""
     cloud: bool = False
+    hub: bool = False
+    max_new_tokens: int | None = None
 
 
 class TestIn(BaseModel):
@@ -72,6 +76,11 @@ class RunIn(BaseModel):
     resume_run_id: str | None = None
 
 
+class DemoIn(BaseModel):
+    folder: str | None = None
+    preset: str | None = None
+
+
 def create_app(
     data_dir: str | Path | None = None,
     runs_dir: str | Path | None = None,
@@ -81,9 +90,9 @@ def create_app(
     data = Path(data_dir or os.environ.get("LLM_EVAL_DATA_DIR") or "data")
     runs = Path(runs_dir or os.environ.get("LLM_EVAL_RUNS_DIR") or "runs")
     sample = Path(sample_dataset) if sample_dataset else SAMPLE_DATASET
-    app = FastAPI(title="LLM Eval Suite", version="0.2.0")
+    app = FastAPI(title="LLM Eval Suite", version="0.3.0")
     app.state.store = ConnectionStore(data)
-    app.state.runs = RunManager(runs, model_factory=model_factory)
+    app.state.runs = RunManager(runs, model_factory=model_factory, timing_path=data / "timing.json")
     app.state.sample_dataset = sample
     app.state.datasets = data / "datasets"
     app.state.datasets.mkdir(parents=True, exist_ok=True)
@@ -103,8 +112,58 @@ def create_app(
         return {"status": "ok"}
 
     @app.get("/api/presets")
-    def presets():
-        return {"presets": list_presets()}
+    def presets(dataset_id: str = "sample"):
+        rows = _dataset_rows(app, dataset_id)
+        timing = app.state.runs.timing.snapshot() if app.state.runs.timing else {}
+        return {
+            "presets": list_presets(
+                dataset_rows=rows,
+                seconds_per_prompt=timing.get("seconds_per_prompt"),
+                estimate_source=timing.get("source") or "default",
+            )
+        }
+
+    @app.get("/api/demo")
+    def demo():
+        saved = _read_demo(app)
+        pair = demo_pair(folder=saved.get("folder"))
+        return pair
+
+    @app.post("/api/demo/start")
+    def start_demo(body: DemoIn):
+        pair = demo_pair(folder=body.folder)
+        preset_id = body.preset or pair["preset"]
+        _write_demo(app, pair["model_a"].get("folder") or "")
+        dataset_path = _dataset_path(app, "sample")
+        started = []
+        for model in (pair["model_a"], pair["model_b"]):
+            saved = app.state.store.save(
+                {
+                    "name": model.get("name") or model.get("model"),
+                    "type": model.get("type") or "hf",
+                    "model": model.get("model") or "",
+                    "folder": model.get("folder") or "",
+                    "mode": model.get("mode") or "completions",
+                    "max_context": model.get("max_context") or 1024,
+                    "hub": bool(model.get("hub")),
+                    "base_url": "",
+                }
+            )
+            profile = app.state.store.get(saved["id"])
+            run = app.state.runs.start(
+                connection=profile,
+                preset_id=preset_id,
+                dataset_path=str(dataset_path),
+                background=True,
+            )
+            started.append({"connection_id": saved["id"], "run_id": run["run_id"], "model": profile.get("model")})
+        return {
+            "preset": preset_id,
+            "label": pair["label"],
+            "model_a": pair["model_a"],
+            "model_b": pair["model_b"],
+            "runs": started,
+        }
 
     @app.get("/api/connections")
     def connections():
@@ -141,8 +200,18 @@ def create_app(
         try:
             destination = convert_nanogpt_to_hf(body.ckpt_path, body.out_dir)
         except (RuntimeError, ValueError, OSError) as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return {"ok": True, "folder": str(destination)}
+            report_path = Path(body.out_dir) / "conversion_report.json"
+            detail = str(exc)
+            if report_path.is_file():
+                detail = f"{detail} Report: {report_path}"
+            raise HTTPException(status_code=400, detail=detail) from exc
+        report_path = destination / "conversion_report.json"
+        report = None
+        if report_path.is_file():
+            import json
+
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+        return {"ok": True, "folder": str(destination), "report": report}
 
     @app.get("/api/ollama/tags")
     def ollama_tags(base_url: str = "http://127.0.0.1:11434"):
@@ -282,6 +351,37 @@ def _dataset_id(filename: str) -> str:
     stem = Path(filename).stem or "upload"
     safe = "".join(ch for ch in stem if ch.isalnum() or ch in {"-", "_"})[:40] or "upload"
     return f"{safe}-{uuid.uuid4().hex[:8]}"
+
+
+def _dataset_rows(app: FastAPI, dataset_id: str) -> int:
+    try:
+        path = _dataset_path(app, dataset_id)
+    except (FileNotFoundError, HTTPException):
+        return 50
+    return sum(1 for line in path.read_text(encoding="utf-8").splitlines() if line.strip())
+
+
+def _demo_path(app: FastAPI) -> Path:
+    return Path(app.state.store.data_dir) / "demo.json"
+
+
+def _read_demo(app: FastAPI) -> dict:
+    path = _demo_path(app)
+    if not path.is_file():
+        return {}
+    import json
+
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+
+
+def _write_demo(app: FastAPI, folder: str) -> None:
+    import json
+
+    path = _demo_path(app)
+    path.write_text(json.dumps({"folder": folder}, indent=2) + "\n", encoding="utf-8")
 
 
 def _dataset_path(app: FastAPI, dataset_id: str) -> Path:

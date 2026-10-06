@@ -6,6 +6,7 @@ a smoke check. Dioptra stays an offline pilot record.
 
 from __future__ import annotations
 
+import json
 import random
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -20,6 +21,7 @@ from llm_eval.garak.live import run_garak
 from llm_eval.models.base import BaseModel
 from llm_eval.models.local_openai_server import LocalOpenAIServer
 from llm_eval.rampart.smoke import run_smoke as rampart_smoke
+from llm_eval_suite.matching import match_expected
 
 FIXTURE_LABEL = "Fixture / smoke (no live model call)"
 
@@ -87,15 +89,45 @@ def validate_factcheck_text(filename: str, text: str, destination: Path) -> dict
     return {"ok": True, "errors": [], "row_count": len(rows), "path": str(destination)}
 
 
-def score_fact(prompt: str, expected: str, response: str) -> tuple[float, bool, str]:
-    """Containment, then the existing correctness evaluator."""
-    if expected.strip().casefold() in (response or "").casefold():
+def score_fact_detail(prompt: str, expected: str, response: str) -> dict:
+    """Word-boundary containment, then the existing correctness evaluator.
+
+    ``Newport`` inside ``Newport News`` is a partial match and does not pass.
+    """
+    found = match_expected(expected, response)
+    evidence = {
+        "span": found.get("span") or "",
+        "excerpt": found.get("excerpt") or "",
+        "match": found.get("kind") or "none",
+    }
+    if found["kind"] == "full":
         evaluator = CorrectnessEvaluator({"mode": "exact_match", "threshold": 1.0})
         result = evaluator.evaluate(prompt, expected, expected)
-        return result.score, True, "containment"
+        return {
+            "score": result.score,
+            "passed": True,
+            "mode": "containment",
+            "evidence": evidence,
+        }
+    if found["kind"] == "partial":
+        return {"score": 0.0, "passed": False, "mode": "partial", "evidence": evidence}
     evaluator = CorrectnessEvaluator({"mode": "fuzzy_match", "threshold": 0.8})
     result = evaluator.evaluate(prompt, expected, response or "")
-    return result.score, result.passed, result.details.get("mode", "fuzzy_match")
+    if result.passed and not evidence["excerpt"]:
+        evidence["excerpt"] = (response or "")[:160]
+    evidence["match"] = evidence["match"] if evidence["match"] != "none" else result.details.get("mode", "fuzzy_match")
+    return {
+        "score": result.score,
+        "passed": result.passed,
+        "mode": result.details.get("mode", "fuzzy_match"),
+        "evidence": evidence,
+    }
+
+
+def score_fact(prompt: str, expected: str, response: str) -> tuple[float, bool, str]:
+    """Containment, then the existing correctness evaluator."""
+    detail = score_fact_detail(prompt, expected, response)
+    return detail["score"], detail["passed"], detail["mode"]
 
 
 class FactcheckRunner:
@@ -123,7 +155,7 @@ class FactcheckRunner:
                     f"Question: {row['prompt']}"
                 )
                 result = ctx.model.generate(prompt, max_tokens=64)
-                score, passed, mode = score_fact(row["prompt"], row["expected_answer"], result.text)
+                detail = score_fact_detail(row["prompt"], row["expected_answer"], result.text)
                 item = {
                     "id": item_id,
                     "suite": "factcheck",
@@ -131,11 +163,12 @@ class FactcheckRunner:
                     "prompt": row["prompt"],
                     "response": result.text,
                     "expected": row["expected_answer"],
-                    "score": round(float(score), 4),
-                    "passed": bool(passed),
+                    "score": round(float(detail["score"]), 4),
+                    "passed": bool(detail["passed"]),
                     "source": "live",
-                    "detector": mode,
+                    "detector": detail["mode"],
                     "dataset_category": row.get("category"),
+                    "evidence": detail["evidence"],
                 }
                 items.append(item)
                 _emit(ctx, item)
@@ -262,6 +295,10 @@ class GarakRunner:
         if ctx.connection.get("type") == "hf":
             server = LocalOpenAIServer(ctx.model)
             endpoint = server.start()
+        max_context = ctx.connection.get("max_context")
+        if ctx.connection.get("type") == "hf" and not max_context:
+            max_context = 1024
+        skip = _completed_probes(work)
         try:
             result = run_garak(
                 model_name=ctx.connection.get("model") or "model",
@@ -272,6 +309,11 @@ class GarakRunner:
                 soft_cap=config.get("max_prompts_per_probe"),
                 work_dir=work,
                 cancel_event=ctx.cancel,
+                max_context=int(max_context) if max_context else None,
+                max_new_tokens=int(ctx.connection.get("max_new_tokens") or 64),
+                mode=_garak_mode(ctx.connection),
+                log_path=ctx.run_dir / "run.log",
+                skip_probes=skip,
             )
         finally:
             if server is not None:
@@ -282,7 +324,7 @@ class GarakRunner:
                 continue
             items.append(item)
             _emit(ctx, item)
-        return {
+        summary = {
             "name": "garak",
             "source": result["source"],
             "label": result["label"] if result["source"] == "live" else FIXTURE_LABEL,
@@ -291,6 +333,21 @@ class GarakRunner:
             "done": len(result["items"]),
             "total": len(result["items"]),
         }
+        for key in (
+            "validity",
+            "validity_reason",
+            "empty_generations",
+            "attack_success_rate",
+            "pass_rate",
+            "pass_rate_label",
+            "wording",
+            "garak_runs_dir",
+            "report_dir",
+            "log_path",
+        ):
+            if key in result:
+                summary[key] = result[key]
+        return summary
 
 
 class RampartRunner:
@@ -367,6 +424,28 @@ class DioptraRunner:
             "done": 1,
             "total": 1,
         }
+
+
+def _garak_mode(connection: dict) -> str:
+    mode = (connection.get("mode") or "auto").lower()
+    if mode in {"completions", "base", "completion"}:
+        return "completions"
+    if connection.get("type") == "hf" and mode != "chat":
+        return "completions"
+    return "chat"
+
+
+def _completed_probes(work: Path) -> list[str]:
+    path = work / "completed_probes.json"
+    if not path.is_file():
+        return []
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    if isinstance(payload, list):
+        return [str(item) for item in payload]
+    return []
 
 
 def _partial(name: str, items: list[dict], total: int, done: int, *, source: str, label: str) -> dict:

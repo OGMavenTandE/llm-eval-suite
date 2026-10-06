@@ -5,7 +5,7 @@ from urllib.parse import urlparse
 import requests
 
 from llm_eval.models.base import BaseModel, ModelResponse
-from llm_eval.models.context import truncate_to_token_budget
+from llm_eval.models.context import clamp_prompt_and_new_tokens
 
 # Connection settings are not generation parameters.
 def _is_local_base_url(url: str) -> bool:
@@ -61,9 +61,7 @@ class OpenAIModel(BaseModel):
 
         max_new = int(payload_params.pop("max_tokens", self.max_new_tokens) or self.max_new_tokens)
         if self.max_context:
-            budget = max(1, int(self.max_context) - max_new)
-            prompt = truncate_to_token_budget(prompt, budget)
-            max_new = min(max_new, max(1, int(self.max_context) - 1))
+            prompt, max_new = clamp_prompt_and_new_tokens(prompt, max_new, int(self.max_context))
         payload_params["max_tokens"] = max_new
 
         if self.mode == "completions":
