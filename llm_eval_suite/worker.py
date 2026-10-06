@@ -28,6 +28,7 @@ def main(argv: list[str] | None = None) -> None:
         resume_run_id=job.get("resume_run_id"),
         background=False,
         in_process=True,
+        watch_cancel=True,
     )
 
 

@@ -106,6 +106,7 @@ class RunManager:
         resume_run_id: str | None = None,
         background: bool = True,
         in_process: bool | None = None,
+        watch_cancel: bool = False,
     ) -> dict:
         if resume_run_id:
             run_id = resume_run_id
@@ -183,6 +184,7 @@ class RunManager:
                 cancel=cancel,
                 completed=completed,
                 existing_items=existing_items,
+                watch_cancel=watch_cancel,
             )
 
         if background:
@@ -310,14 +312,15 @@ class RunManager:
         cancel: threading.Event,
         completed: set[str],
         existing_items: list[dict],
+        watch_cancel: bool = False,
     ) -> None:
         items = list(existing_items)
         suites = []
         started = time.perf_counter()
         new_live = 0
         self._append_log(run_dir, f"Run {run_id} started.")
-        watcher = threading.Thread(target=self._watch_cancel, args=(run_dir, cancel), daemon=True)
-        watcher.start()
+        if watch_cancel:
+            threading.Thread(target=self._watch_cancel, args=(run_dir, cancel), daemon=True).start()
         try:
             if self.model_factory is not None:
                 model = self.model_factory(connection)

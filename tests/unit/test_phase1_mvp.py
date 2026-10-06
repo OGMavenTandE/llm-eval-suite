@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -711,12 +712,14 @@ def test_api_click_through(tmp_path: Path, monkeypatch):
     assert started.status_code == 200
     run_id = started.json()["run_id"]
     status = "running"
-    for _ in range(100):
+    body = {}
+    for _ in range(200):
         body = client.get(f"/api/runs/{run_id}").json()
         status = body["status"]
         if status not in {"running", "cancel_requested"}:
             break
-    assert status == "completed", body.get("error")
+        time.sleep(0.05)
+    assert status == "completed", body.get("error") or body.get("validity_reason") or status
     analysis = client.post(f"/api/runs/{run_id}/analyze")
     assert analysis.status_code == 200
     assert analysis.json()["source_label"] == "Template"
