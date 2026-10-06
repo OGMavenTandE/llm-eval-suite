@@ -711,7 +711,7 @@ def test_api_click_through(tmp_path: Path, monkeypatch):
         status = body["status"]
         if status not in {"running", "cancel_requested"}:
             break
-    assert status == "completed"
+    assert status == "completed", body.get("error")
     analysis = client.post(f"/api/runs/{run_id}/analyze")
     assert analysis.status_code == 200
     assert analysis.json()["source_label"] == "Template"

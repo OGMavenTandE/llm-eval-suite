@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import threading
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -32,6 +33,20 @@ def sha256_file(path: Path) -> str:
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _retry_io(action, attempts: int = 10):
+    """Retry file operations that Windows denies while another thread has the file open."""
+    last_error: Exception | None = None
+    for _ in range(attempts):
+        try:
+            return action()
+        except (PermissionError, OSError) as exc:
+            last_error = exc
+            time.sleep(0.05)
+    if last_error is not None:
+        raise last_error
+    return None
 
 
 def _public_connection(connection: dict) -> dict:
@@ -319,39 +334,65 @@ class RunManager:
         path = run_dir / "items.jsonl"
         if not path.is_file():
             return 0
-        return sum(1 for line in path.read_text(encoding="utf-8").splitlines() if line.strip())
+
+        def read() -> int:
+            return sum(1 for line in path.read_text(encoding="utf-8").splitlines() if line.strip())
+
+        return int(_retry_io(read) or 0)
 
     def _append_item(self, run_dir: Path, item: dict) -> None:
         path = run_dir / "items.jsonl"
-        with path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(item) + "\n")
+        line = json.dumps(item) + "\n"
+
+        def write() -> None:
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(line)
+
+        _retry_io(write)
 
     def _read_items(self, run_dir: Path) -> list[dict]:
         path = run_dir / "items.jsonl"
         if not path.is_file():
             return []
-        rows = []
-        for line in path.read_text(encoding="utf-8").splitlines():
-            if not line.strip():
-                continue
-            try:
-                rows.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
-        return rows
+
+        def read() -> list[dict]:
+            rows = []
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    rows.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+            return rows
+
+        return _retry_io(read) or []
 
     def _read_run(self, run_dir: Path) -> dict | None:
         path = run_dir / "run.json"
         if not path.is_file():
             return None
-        return json.loads(path.read_text(encoding="utf-8"))
+
+        def read() -> dict:
+            return json.loads(path.read_text(encoding="utf-8"))
+
+        try:
+            return _retry_io(read)
+        except json.JSONDecodeError:
+            time.sleep(0.05)
+            return _retry_io(read)
 
     def _write_run(self, run_dir: Path, record: dict) -> None:
         run_dir.mkdir(parents=True, exist_ok=True)
         target = run_dir / "run.json"
         temporary = run_dir / "run.json.tmp"
-        temporary.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
-        temporary.replace(target)
+        payload = json.dumps(record, indent=2) + "\n"
+
+        def write() -> None:
+            temporary.write_text(payload, encoding="utf-8")
+            temporary.replace(target)
+
+        _retry_io(write)
 
     def _write_manifest(self, run_dir: Path, record: dict) -> None:
         run_path = run_dir / "run.json"
