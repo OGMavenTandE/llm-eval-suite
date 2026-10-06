@@ -1,0 +1,19 @@
+# LLM Eval Suite
+
+> Local point-and-click test and evaluation for language models, for teams who run the model on a machine they control. Built by AI Eval Corp.
+
+The app is a FastAPI process on 127.0.0.1:8765, started with run_app.bat on Windows or `python -m llm_eval_suite.app`. It connects to Ollama, an OpenAI-compatible server, or a local Hugging Face folder, including a nanoGPT checkpoint converted to GPT-2 with a logits check. Presets are Quick, Standard, Full, and Government T&E. A run can compare two models, print an HTML report, summarize with local judges, and run live garak. Pass rate is 1 minus garak's attack success rate. Empty garak generations are marked INVALID instead of scored as real replies. A 6 October 2026 comparison on a Windows test PC found that a Department of War news fine-tune did not improve factuality over base gpt2-medium.
+
+## Docs
+- [README](README.md): overview, quick start, and a measured sample result
+- [AGENTS.md](AGENTS.md): how coding agents build, test, and extend this repo
+- [Lessons learned](docs/LESSONS_LEARNED.md): empty garak generations, nanoGPT conversion, pass rate vs attack success
+- [Tutorial](docs/TUTORIAL.md): YAML engine walkthrough
+- [Dashboard](docs/DASHBOARD.md): single-file viewer for engine JSON
+- [Garak fixture](docs/garak-fixture-eval.md): offline garak smoke
+- [Dioptra pilot](docs/dioptra-light-pilot.md): offline Dioptra-shaped record
+- [RAMPART smoke](docs/rampart-pytest-smoke.md): offline RAMPART-shaped smoke
+
+## Optional
+- [CITATION.cff](CITATION.cff): how to cite
+- [LICENSE](LICENSE): MIT

@@ -1,0 +1,23 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "LLM Eval Suite"
+abstract: "Local point-and-click test and evaluation app for language models, with presets, comparison, and live garak red-teaming."
+type: software
+authors:
+  - name: "AI Eval Corp"
+    website: "https://aieval.org"
+  - family-names: "Mastin"
+    given-names: "Scott"
+    affiliation: "AI Eval Corp"
+repository-code: "https://github.com/OGMavenTandE/llm-eval-suite"
+license: MIT
+keywords:
+  - ai-test-and-evaluation
+  - llm-evaluation
+  - red-teaming
+  - garak
+  - nist-ai-rmf
+  - defense
+  - department-of-war
+date-released: "2026-04-07"
+version: "0.1.0"
