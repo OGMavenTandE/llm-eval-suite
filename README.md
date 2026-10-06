@@ -29,6 +29,39 @@ pip install -e ".[dev]"
 
 Requires Python 3.10+. Core dependencies: `pydantic`, `pyyaml`, `requests`.
 
+## Quick start (Windows)
+
+The click-through app does not need Node. From the repo folder, double-click `run_app.bat` or run it in a terminal. The script creates `.venv`, installs the API extra, and opens http://127.0.0.1:8765.
+
+```bat
+run_app.bat
+```
+
+The same command by hand, after `pip install -e ".[api]"`:
+
+```bat
+python -m llm_eval_suite.app
+```
+
+Ollama example: start Ollama, choose type Ollama, base URL `http://127.0.0.1:11434`, and a model such as `llama3.2:3b`. Use Test connection, save the profile, pick the Quick preset, and click Run. The API key can stay blank.
+
+Hugging Face folder example: install the optional extra in the same venv with `pip install -e ".[hf]"`. Point the folder field at a local model directory that already has `config.json` and a tokenizer (a GPT-2 Medium export is the expected shape). Set max context to `1024` for GPT-2. Base models should use completions mode.
+
+A nanoGPT `ckpt.pt` (a file that contains `model_args`) can be converted with the button on the Connect screen, or:
+
+```python
+from llm_eval.models.nanogpt_convert import convert_nanogpt_to_hf
+convert_nanogpt_to_hf(r"C:\models\ckpt.pt", r"C:\models\gpt2-export")
+```
+
+Copy a local GPT-2 tokenizer into the export folder before connecting it. The converter does not download tokenizer files.
+
+Suggested local council judges, listed in the Judges screen: `qwen2.5:3b-instruct` and `llama3.2:3b`. If only one of those is installed, peer ranking is skipped. The model you are testing is not used as a judge.
+
+`garak` runs live against the connected OpenAI-compatible endpoint when it is installed (`pip install garak` is optional and not part of the default install). Otherwise the Quick preset shows the fixture and labels it as a fixture. RAMPART stays a smoke check.
+
+Runs are written under `runs/` and connection profiles under `data/`. Those directories are gitignored. Do not commit customer data, model weights, or real run outputs.
+
 ## CLI usage
 
 ```bash
