@@ -18,10 +18,12 @@ from llm_eval_suite.connections import (
     ConnectionStore,
     build_model,
     detect_path,
+    judge_timeout,
     test_connection,
 )
 from llm_eval_suite.presets import demo_pair, list_presets
 from llm_eval_suite.runs import RunManager
+from llm_eval_suite.scoring import PASS_BAR
 from llm_eval_suite.suites import validate_factcheck_text
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -67,6 +69,7 @@ class DatasetIn(BaseModel):
 class JudgesIn(BaseModel):
     chairman: str = ""
     judges: list[dict] = Field(default_factory=list)
+    timeout: int | None = None
 
 
 class RunIn(BaseModel):
@@ -106,6 +109,13 @@ def create_app(
         if not page.is_file():
             raise HTTPException(status_code=404, detail="UI is missing")
         return FileResponse(page)
+
+    @app.get("/favicon.ico")
+    def favicon():
+        icon = STATIC_DIR / "favicon.ico"
+        if not icon.is_file():
+            raise HTTPException(status_code=404, detail="Favicon is missing")
+        return FileResponse(icon, media_type="image/x-icon")
 
     @app.get("/api/health")
     def health():
@@ -276,7 +286,11 @@ def create_app(
 
     @app.get("/api/runs")
     def list_runs():
-        return {"runs": app.state.runs.list_runs()}
+        return {
+            "runs": app.state.runs.list_runs(),
+            "pass_bar": PASS_BAR,
+            "pass_bar_percent": round(PASS_BAR * 100, 1),
+        }
 
     @app.get("/api/runs/{run_id}")
     def get_run(run_id: str):
@@ -300,20 +314,24 @@ def create_app(
             raise HTTPException(status_code=404, detail="Run not found") from exc
 
     @app.get("/api/runs/{run_id}/report")
-    def report(run_id: str):
+    def report(run_id: str, download: int = 0):
         try:
             html = app.state.runs.report_html(run_id)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Run not found") from exc
-        return HTMLResponse(html)
+        headers = {}
+        if download:
+            headers["Content-Disposition"] = f'attachment; filename="eval-report-{run_id}.html"'
+        return HTMLResponse(html, headers=headers)
 
     @app.post("/api/runs/{run_id}/analyze")
     def analyze(run_id: str):
         settings = app.state.store.judges()
+        default_timeout = judge_timeout(settings)
         judges = []
         for row in settings.get("judges") or []:
             prepared = dict(row)
-            prepared.setdefault("timeout", 15)
+            prepared["timeout"] = int(row.get("timeout") or default_timeout)
             judges.append(prepared)
         try:
             return app.state.runs.analyze(
@@ -399,10 +417,31 @@ def _dataset_path(app: FastAPI, dataset_id: str) -> Path:
 app = create_app()
 
 
+def open_app_browser(url: str) -> bool:
+    """Open the local app in one tab per launch.
+
+    A second call in this process, or a child that inherited the flag, does nothing.
+    ``run_app.bat`` does not open a browser of its own.
+    """
+    if os.environ.get("LLM_EVAL_BROWSER_OPENED") == "1":
+        return False
+    os.environ["LLM_EVAL_BROWSER_OPENED"] = "1"
+    import sys
+    import webbrowser
+
+    if sys.platform == "win32":
+        try:
+            os.startfile(url)  # noqa: S606 - local app URL only
+            return True
+        except OSError:
+            pass
+    webbrowser.open(url, new=0)
+    return True
+
+
 def main() -> None:
     import threading
     import time
-    import webbrowser
 
     import uvicorn
 
@@ -410,7 +449,7 @@ def main() -> None:
 
     def _open() -> None:
         time.sleep(0.6)
-        webbrowser.open(url)
+        open_app_browser(url)
 
     threading.Thread(target=_open, daemon=True).start()
     print(f"LLM Eval Suite is at {url}")

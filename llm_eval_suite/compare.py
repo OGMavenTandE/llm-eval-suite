@@ -48,7 +48,7 @@ def compare_runs(left: dict, right: dict, left_items: list[dict], right_items: l
                 "right_passed": other.get("passed"),
             }
         )
-    item_deltas.sort(key=lambda row: row["delta"])
+    item_deltas.sort(key=lambda row: (-abs(row["delta"]), -row["delta"], str(row.get("id") or "")))
     return {
         "left_run_id": left.get("run_id"),
         "right_run_id": right.get("run_id"),

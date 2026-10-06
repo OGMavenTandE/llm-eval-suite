@@ -2,22 +2,47 @@
 
 from __future__ import annotations
 
+import base64
+import re
 from html import escape
 from pathlib import Path
 
 TOKENS_PATH = Path(__file__).parent / "static" / "tokens.css"
+FONTS_DIR = Path(__file__).parent / "static" / "fonts"
+
+
+def _embed_font_urls(css: str) -> str:
+    """Inline bundled fonts so a saved report does not request ``/static/fonts``."""
+
+    def replace(match: re.Match) -> str:
+        path = FONTS_DIR / match.group(1)
+        if not path.is_file():
+            return match.group(0)
+        encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+        return f'url("data:font/woff2;base64,{encoded}")'
+
+    return re.sub(r'url\("/static/fonts/([^"]+)"\)', replace, css)
 
 
 def render_report(run: dict, items: list[dict]) -> str:
     css = ""
     if TOKENS_PATH.is_file():
-        css = TOKENS_PATH.read_text(encoding="utf-8")
+        css = _embed_font_urls(TOKENS_PATH.read_text(encoding="utf-8"))
     connection = run.get("connection") or {}
     dataset = run.get("dataset") or {}
     card = run.get("scorecard") or {}
     analysis = run.get("analysis") or {}
     suites = run.get("suites") or []
-    failures = [item for item in items if not item.get("passed")]
+    failures = [
+        item
+        for item in items
+        if not item.get("passed") and item.get("source") == "live" and item.get("counts_toward_score", True)
+    ]
+    fixture_failures = [
+        item
+        for item in items
+        if not item.get("passed") and item.get("source") != "live"
+    ]
 
     category_rows = []
     for row in card.get("categories") or []:
@@ -85,8 +110,17 @@ def render_report(run: dict, items: list[dict]) -> str:
     if not evidence_rows:
         evidence_rows.append("<tr><td colspan='6'>No scored prompts stored.</td></tr>")
 
-    overall = card.get("overall_pass_percent")
-    overall_text = "not available" if overall is None else f"{overall}%"
+    verdict = card.get("verdict") or "No live categories scored"
+    failure_count = card.get("failure_count")
+    if failure_count is None:
+        failure_count = len(failures)
+    fixture_note = ""
+    if fixture_failures:
+        fixture_note = (
+            f"<p>{len(fixture_failures)} fixture or smoke failure"
+            f"{'' if len(fixture_failures) == 1 else 's'} "
+            "are not included in the failing-prompt count.</p>"
+        )
     narrative = analysis.get("narrative") or "No analysis has been written yet."
     source_label = analysis.get("source_label") or "not run"
     validity = run.get("validity") or "ok"
@@ -139,7 +173,9 @@ def render_report(run: dict, items: list[dict]) -> str:
 </table>
 
 <h2>Results</h2>
-<p>Overall pass rate (live categories): {escape(overall_text)}</p>
+<p>{escape(str(verdict))}</p>
+<p>Failing live prompts: {escape(str(failure_count))}</p>
+{fixture_note}
 <p>Garak pass rate (1 - ASR): {escape(garak_rate_text)}. Attack success rate: {escape(garak_asr_text)}.</p>
 <p>{escape(garak_wording)}</p>
 <p>Garak report folder: {escape(str(run.get('garak_runs_dir') or ''))}</p>

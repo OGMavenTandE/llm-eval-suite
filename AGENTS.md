@@ -10,8 +10,8 @@ Read [docs/LESSONS_LEARNED.md](docs/LESSONS_LEARNED.md) before changing garak sc
 
 - `llm_eval_suite/`: click-through app, presets, runs, council, HTML report
 - `llm_eval_suite/static/`: side-rail shell (Connect, Run, Results, Compare, Judges). Public Sans is bundled in `static/fonts/` (OFL) so the app renders offline. `tokens.css` is the shared palette
-- `llm_eval_suite/static/app.js`: results verdict against an 80% pass bar, category meters (hatched when the row is fixture or smoke), per-suite progress with an ETA, compare deltas in points
-- `llm_eval_suite/report_html.py`: standalone HTML report. It inlines `tokens.css`. The page is `class="report-doc"` (`color-scheme: light`) so print stays light
+- `llm_eval_suite/static/app.js`: a live category passes only when it is at or above the pass bar from the scorecard API. The headline is not an average. An invalid run shows "Score withheld". Fixture meters stay small and grey. The ETA uses that suite's item count and hides when the suite is finished. Compare lists the largest score changes first
+- `llm_eval_suite/report_html.py`: standalone HTML report. It inlines `tokens.css` and embeds the font files. The page is `class="report-doc"` (`color-scheme: light`) so print stays light
 - `llm_eval_suite/presets.json`: Quick, Standard, Full, Government T&E, and the demo pair
 - `llm_eval/`: YAML engine, CLI, runner, storage, reporting
 - `llm_eval/models/`: Ollama, OpenAI-compatible, Hugging Face folder, nanoGPT convert
@@ -59,6 +59,8 @@ python -m pip install -e ".[dev,api]"
 python -m pytest
 ```
 
+Ubuntu CI also runs `python -m playwright install --with-deps chromium` before pytest. `tests/ui/test_screens.py` loads each screen and checks an invalid run withholds its score. It skips when Chromium cannot launch, so the Windows job stays green without a browser install.
+
 That install does not include torch or garak. Tests that need torch use `pytest.importorskip` and skip. Do not add a test that needs a GPU, a live model, or a network call.
 
 `cd frontend && npm test` runs Vitest. CI does not run it.
@@ -92,8 +94,9 @@ New garak probe list: edit the preset's `garak.probes`. A probe name containing 
 
 ## Guardrails
 
-- Do not score empty garak text as a pass or as an attack. Empty rows are excluded. Too many empties, or a failed probe process, marks the run INVALID. See `llm_eval/garak/live.py`.
-- Pass rate is `1 - ASR`. Do not relabel attack success as a pass rate. The UI string is `Pass rate (1 - ASR)`.
+- Do not score empty garak text as a pass or as an attack. Empty rows are excluded. Too many empties, or a failed probe process, marks the run INVALID. See `llm_eval/garak/live.py`. Half or more empty live fact-check answers also mark the run INVALID, in `llm_eval_suite/runs.py`.
+- Pass rate is `1 - ASR`. Do not relabel attack success as a pass rate. The UI string is `Pass rate (1 - ASR)`. Do not average category rates into one headline score. A run passes only when every live category is at or above the pass bar.
+- A missing garak install is the labeled fixture. A garak install that writes no report is a failed live scan, not the fixture.
 - Do not drop the nanoGPT logits check or raise `LOGITS_TOLERANCE` (`1e-4`) to hide a mismatch. The converter does not download tokenizer files.
 - RAMPART stays a smoke check. Dioptra stays an offline record. The garak smoke fixture must stay labeled as a fixture.
 - Do not commit weights, `runs/`, or `data/`. Do not put a personal machine path in docs or in a new default.

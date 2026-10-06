@@ -3,6 +3,7 @@ import time
 import requests
 
 from llm_eval.models.base import BaseModel, ModelResponse
+from llm_eval.models.context import strip_think_blocks
 
 
 class OllamaModel(BaseModel):
@@ -18,6 +19,8 @@ class OllamaModel(BaseModel):
             **{k: v for k, v in self.params.items() if k != "base_url"},
             **kwargs,
         }
+        if "think" not in payload:
+            payload["think"] = False
 
         url = f"{self.base_url}/api/generate"
         start = time.perf_counter()
@@ -41,7 +44,7 @@ class OllamaModel(BaseModel):
             ) from e
 
         data = resp.json()
-        text = data.get("response", "")
+        text = strip_think_blocks(data.get("response", ""))
         tokens_used = data.get("eval_count")
 
         metadata = {

@@ -31,6 +31,7 @@ dependencies = [
 dev = [
     "pytest>=7.0",
     "httpx>=0.24",
+    "playwright>=1.40",
 ]
 api = [
     "fastapi>=0.100",
@@ -60,7 +61,7 @@ where = ["."]
 include = ["llm_eval*", "apps*", "llm_eval_suite*"]
 
 [tool.setuptools.package-data]
-llm_eval_suite = ["static/*", "static/fonts/*", "presets.json"]
+llm_eval_suite = ["static/*", "static/fonts/*", "static/favicon.ico", "presets.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

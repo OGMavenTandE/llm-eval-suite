@@ -32,6 +32,7 @@ from llm_eval_suite.eval_env import (
     GARAK_VERSION,
     TORCH_VERSION,
     TRANSFORMERS_VERSION,
+    cuda_torch_reinstall_args,
     garak_pip_args,
     torch_pip_args,
 )
@@ -50,6 +51,9 @@ def test_eval_env_pins_match_the_windows_launcher():
     assert CUDA_INDEX in bat
     assert CPU_INDEX in bat
     assert "nvidia-smi" in bat
+    assert "--force-reinstall" in bat
+    assert "--force-reinstall" in cuda_torch_reinstall_args()
+    assert "start http" not in bat.lower()
     assert "HF_HUB_DISABLE_SYMLINKS_WARNING" in bat
     assert "WARNING:" in bat
     assert "CPU" in CPU_WARNING
@@ -239,7 +243,10 @@ def test_garak_commands_keep_paths_with_spaces_and_isolate_leakreplay(tmp_path: 
         max_new_tokens=4000,
         max_context=1024,
     )
-    assert config["generators"]["openai"]["OpenAICompatible"]["max_tokens"] == 1023
+    generator = config["plugins"]["generators"]["openai"]["OpenAICompatible"]
+    assert generator["max_tokens"] == 1023
+    assert generator["uri"] == "http://127.0.0.1:9/v1/"
+    assert "generators" not in config
     groups = group_probe_specs(
         ["dan.Dan_11_0", "leakreplay.LiteratureCloze", "lmrc.Profanity"]
     )
