@@ -659,11 +659,15 @@ function td(value, cls) {
   return "<td" + (cls ? ' class="' + cls + '"' : "") + ">" + escapeHtml(text) + "</td>";
 }
 
+let resultsGeneration = 0;
+
 async function showResults() {
   const runId = $("results-run").value;
   if (!runId) return;
+  const generation = ++resultsGeneration;
   const run = await api("/api/runs/" + runId);
   const items = await api("/api/runs/" + runId + "/items");
+  if (generation !== resultsGeneration || $("results-run").value !== runId) return;
   const banner = $("validity-banner");
   const invalid = run.validity === "invalid" || run.status === "invalid";
   banner.classList.toggle("hidden", !invalid);
