@@ -963,6 +963,7 @@ def test_complement_and_empty_chairman_retry():
         "sample_scores": [0.5, 0.0, 0.963],
         "aggregate_ranking": [{"points": 3.0}, {"points": 3.0}],
     }
+    assert unmatched_numbers("24 failures", forge) == []
     assert unmatched_numbers("250 items", forge) == ["250"]
     assert unmatched_numbers("42 items", forge) == ["42"]
     assert unmatched_numbers("99.1%", forge) == ["99.1%"]
@@ -1056,6 +1057,68 @@ def test_complement_and_empty_chairman_retry():
     )
     assert fallback["source_label"] == "Template"
     assert fallback["mode"] == "template"
+
+
+def test_category_rate_allows_the_security_failure_count():
+    """76 samples at 68.4% pass is 24 failures, with no failed count stored.
+
+    Integers 10 through 199, and every one-decimal percent from 0.0% through
+    100.0%, are the same checks as the offline smoke. That smoke sampled 500
+    of the percents (55 accepted) and accepted 12 of the 190 integers.
+    """
+    payload = {
+        "failure_count": 27,
+        "failures_shown": 8,
+        "item_count": 130,
+        "live_item_count": 128,
+        "overall_pass_rate": None,
+        "overall_pass_percent": None,
+        "categories": [
+            {
+                "category": "security_jailbreak",
+                "label": "Security / jailbreak",
+                "status": "fail",
+                "sample_count": 76,
+                "pass_percent": 68.4,
+                "pass_rate": 0.6842,
+                "source": "live",
+            },
+            {
+                "category": "toxicity",
+                "label": "Toxicity",
+                "status": "pass",
+                "sample_count": 2,
+                "pass_percent": 100.0,
+                "pass_rate": 1.0,
+                "source": "live",
+            },
+            {
+                "category": "hallucination_factuality",
+                "label": "Hallucination / factuality",
+                "status": "pass",
+                "sample_count": 50,
+                "pass_percent": 94.0,
+                "pass_rate": 0.94,
+                "source": "live",
+            },
+        ],
+        "sample_scores": [0.5, 0.0, 0.963],
+        "aggregate_ranking": [{"label": "Review A", "points": 3.0}, {"label": "Review B", "points": 3.0}],
+    }
+    assert unmatched_numbers("24 failures", payload) == []
+    assert unmatched_numbers("23 failures", payload) == []
+    assert unmatched_numbers("25 failures", payload) == []
+    assert unmatched_numbers("22 failures", payload) == ["22"]
+    assert unmatched_numbers("250 items", payload) == ["250"]
+    assert unmatched_numbers("42 items", payload) == ["42"]
+    assert unmatched_numbers("99.1%", payload) == ["99.1%"]
+    integers = [n for n in range(10, 200) if unmatched_numbers(f"{n} items", payload) == []]
+    percents = [i for i in range(1001) if unmatched_numbers(f"{i / 10:.1f}%", payload) == []]
+    assert len(integers) == 21
+    assert len(percents) == 112
+    assert 24 in integers
+    assert 42 not in integers
+    assert 250 not in integers
 
 
 def test_chairman_trims_a_cut_off_sentence_and_uses_the_other_judge():
@@ -1282,13 +1345,23 @@ def test_compare_pairs_garak_prompts_and_counts_unpaired():
     assert unpaired["items"] == []
     assert unpaired["unchanged_prompts"] == 1
     assert unpaired["unpaired_prompts"] == 2
-    assert unpaired["unpaired_by_category"]["security_jailbreak"] == 2
+    assert unpaired["unpaired_left"] == 1
+    assert unpaired["unpaired_right"] == 1
+    assert unpaired["unpaired_by_category"]["security_jailbreak"] == {"left": 1, "right": 1}
     assert unpaired["categories"][0]["delta"] == pytest.approx(-0.04)
+
+    extra = dict(other_prompt, prompt="Another attack", id="garak:uuid-d")
+    uneven = compare_runs(earlier, later, [left_garak, fact], [other_prompt, extra, fact])
+    assert uneven["unpaired_left"] == 1
+    assert uneven["unpaired_right"] == 2
+    assert uneven["unpaired_by_category"]["security_jailbreak"] == {"left": 1, "right": 2}
 
     other_probe = dict(same_prompt, probe="encoding.InjectBase64")
     missed = compare_runs(earlier, later, [left_garak], [other_probe])
     assert missed["items"] == []
     assert missed["unpaired_prompts"] == 2
+    assert missed["unpaired_left"] == 1
+    assert missed["unpaired_right"] == 1
 
 
 def test_elapsed_freezes_when_garak_hits_its_total(tmp_path: Path):

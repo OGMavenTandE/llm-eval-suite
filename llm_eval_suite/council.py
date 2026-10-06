@@ -72,9 +72,10 @@ def _is_number(value) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
-# A failed count is total minus passed only when both keys sit on the same object.
+# A failed count is derived only from keys on the same object.
 _TOTAL_KEYS = {"sample_count", "item_count", "total", "live_item_count"}
 _PASSED_KEYS = {"passed_count", "passed", "passes", "pass_count"}
+_RATE_KEYS = {"pass_rate", "rate", "overall_pass_rate"}
 
 
 def _percent_complements(value, found: list[float]) -> None:
@@ -91,6 +92,52 @@ def _percent_complements(value, found: list[float]) -> None:
     if isinstance(value, (list, tuple)):
         for item in value:
             _percent_complements(item, found)
+
+
+def _allow_rounded_count(product: float, found: list[float]) -> None:
+    """Allow the rounded count and one count either side.
+
+    ``76 * 0.316`` is 24.016, so 23, 24, and 25 are the same failure count
+    after rounding.
+    """
+    if product < 0:
+        return
+    rounded = int(round(product))
+    for count in (rounded - 1, rounded, rounded + 1):
+        if count >= 0:
+            found.append(float(count))
+
+
+def _rate_counts(value, found: list[float]) -> None:
+    """Passed and failed counts from a total and a rate on the same object.
+
+    ``count = total * rate`` and ``count = total * (100 - percent) / 100``.
+    A rate on one category is not applied to another category's total.
+    """
+    if isinstance(value, dict):
+        totals = []
+        rates = []
+        percents = []
+        for key, item in value.items():
+            if _is_number(item) and key in _TOTAL_KEYS and float(item) > 0:
+                totals.append(float(item))
+            elif _is_number(item) and key in _RATE_KEYS and 0 <= float(item) <= 1:
+                rates.append(float(item))
+            elif _is_number(item) and "percent" in str(key).lower() and 0 <= float(item) <= 100:
+                percents.append(float(item))
+            elif isinstance(item, (dict, list, tuple)):
+                _rate_counts(item, found)
+        for total in totals:
+            for rate in rates:
+                _allow_rounded_count(total * rate, found)
+                _allow_rounded_count(total * (1.0 - rate), found)
+            for percent in percents:
+                _allow_rounded_count(total * (percent / 100.0), found)
+                _allow_rounded_count(total * ((100.0 - percent) / 100.0), found)
+        return
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            _rate_counts(item, found)
 
 
 def _count_complements(value, found: list[float]) -> None:
@@ -114,15 +161,17 @@ def derived_figures(results) -> list[float]:
     """Whitelist of figures a summary may use beyond the raw input numbers.
 
     Allowed: the complement of an input percent (``100 - p``), the complement
-    of a rate stored between 0 and 1, and ``total - passed`` when those two
-    counts are keys on the same object. Sums and differences of unrelated
-    figures are not allowed.
+    of a rate stored between 0 and 1, ``total - passed`` when those two counts
+    are keys on the same object, and ``total * rate`` or ``total * (100 - percent) / 100``
+    when that total and that rate are on the same object. Sums and differences
+    of unrelated figures are not allowed.
     """
     values: list[float] = []
     _walk_numbers(results, values)
     derived: list[float] = []
     _percent_complements(results, derived)
     _count_complements(results, derived)
+    _rate_counts(results, derived)
     for value in values:
         if 0 <= value <= 1:
             derived.append(1.0 - value)
@@ -158,9 +207,10 @@ def number_allowed(token: str, values: list[float]) -> bool:
 def unmatched_numbers(narrative: str, results: dict) -> list[str]:
     """A narrative number must be an input figure or one whitelisted derivation.
 
-    Rounding and percent-versus-fraction are allowed. A percent complement and
-    a total-minus-passed count are allowed. Any other sum or difference is
-    rejected. Numbers glued to words, such as a model name, are ignored.
+    Rounding and percent-versus-fraction are allowed. A percent complement, a
+    total-minus-passed count, and a total times that same object's pass rate
+    or failing share are allowed. Any other sum or difference is rejected.
+    Numbers glued to words, such as a model name, are ignored.
     """
     blob = json.dumps(results, default=str)
     present = set(extract_numbers(blob))
@@ -597,7 +647,7 @@ def run_council(
             "Write a plain-English summary of this evaluation for a non-technical reader. "
             "Use the reviews, the aggregate ranking, and the results JSON. "
             "Use only numbers that appear in those inputs, a failing percent that is 100 minus an input percent, "
-            "or a failed count when the input gives both the total and the number that passed. "
+            "or a failed count from the total and the pass rate on that same category. "
             "Do not add or subtract any other figures. "
             "Finish the last sentence. "
             "Do not add a note about omitted numbers or about these instructions.\n\n"
@@ -634,7 +684,7 @@ def run_council(
             "TASK: chair\n"
             "Your previous summary used numbers that are not in the inputs you were given. "
             "Rewrite it using only numbers from those inputs, a failing percent that is 100 minus an input percent, "
-            "or a failed count when the input gives both the total and the number that passed. "
+            "or a failed count from the total and the pass rate on that same category. "
             "Do not add or subtract any other figures. "
             "Finish the last sentence. "
             "Do not add a note about omitted numbers or about these instructions. "

@@ -812,15 +812,24 @@ function compareSlotLabel(name, createdAt, fallback) {
 function unpairedPromptNote(data) {
   const moved = (data.categories || []).filter((row) => row.delta != null && Math.abs(Number(row.delta)) > 0);
   const byCategory = data.unpaired_by_category || {};
-  let count = Number(data.unpaired_prompts || 0);
+  let left = Number(data.unpaired_left || 0);
+  let right = Number(data.unpaired_right || 0);
   let where = "";
-  if (moved.length === 1 && byCategory[moved[0].category] != null) {
-    count = Number(byCategory[moved[0].category]);
-    where = " in this category";
+  if (moved.length === 1) {
+    const row = byCategory[moved[0].category];
+    if (row && typeof row === "object") {
+      left = Number(row.left || 0);
+      right = Number(row.right || 0);
+      where = " in this category";
+    }
   }
-  const noun = count === 1 ? "prompt" : "prompts";
-  return "No matching prompts changed. " + count + " " + noun + where +
-    " couldn't be paired between runs (garak samples different prompts each run).";
+  const tail = " (garak samples different prompts each run).";
+  if (left === right) {
+    const noun = left === 1 ? "prompt" : "prompts";
+    return "No matching prompts changed. " + left + " " + noun + where + " in each run couldn't be paired" + tail;
+  }
+  return "No matching prompts changed. Earlier: " + left + ", later: " + right +
+    " prompts" + where + " couldn't be paired" + tail;
 }
 
 function compareBar(label, rate, later, invalid) {
