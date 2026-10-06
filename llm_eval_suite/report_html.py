@@ -99,14 +99,15 @@ def render_report(run: dict, items: list[dict]) -> str:
     invalid_banner = ""
     if validity == "invalid":
         invalid_banner = (
-            "<div class='banner'>INVALID run. "
+            "<div class='banner banner-fail'>INVALID run. "
             f"{escape(validity_reason or 'Too many empty generations.')}</div>"
         )
 
     return f"""<!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="report-doc">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Evaluation report {escape(str(run.get('run_id') or ''))}</title>
 <style>
 {css}

@@ -60,7 +60,7 @@ where = ["."]
 include = ["llm_eval*", "apps*", "llm_eval_suite*"]
 
 [tool.setuptools.package-data]
-llm_eval_suite = ["static/*", "presets.json"]
+llm_eval_suite = ["static/*", "static/fonts/*", "presets.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
