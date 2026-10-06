@@ -119,7 +119,7 @@ def compare_runs(left: dict, right: dict, left_items: list[dict], right_items: l
         for key in [*left_by_category.keys(), *right_by_category.keys()]
     }
     item_deltas.sort(key=lambda row: (-abs(row["delta"]), -row["delta"], str(row.get("id") or "")))
-    return {
+    compared = {
         "left_run_id": left.get("run_id"),
         "right_run_id": right.get("run_id"),
         "left_label": _slot_name(left),
@@ -136,3 +136,33 @@ def compare_runs(left: dict, right: dict, left_items: list[dict], right_items: l
         "categories": categories,
         "items": [] if left_invalid or right_invalid else item_deltas,
     }
+    compared["unpaired_note"] = unpaired_prompt_note(compared) if compared["unpaired_prompts"] else ""
+    return compared
+
+
+def unpaired_prompt_note(data: dict) -> str:
+    """Per-run unpaired count. The no-change opener is only for zero changed rows."""
+    moved = [
+        row
+        for row in data.get("categories") or []
+        if row.get("delta") is not None and abs(float(row["delta"])) > 0
+    ]
+    by_category = data.get("unpaired_by_category") or {}
+    left = int(data.get("unpaired_left") or 0)
+    right = int(data.get("unpaired_right") or 0)
+    where = ""
+    if len(moved) == 1:
+        row = by_category.get(moved[0].get("category"))
+        if isinstance(row, dict):
+            left = int(row.get("left") or 0)
+            right = int(row.get("right") or 0)
+            where = " in this category"
+    tail = " (garak samples different prompts each run)."
+    if left == right:
+        noun = "prompt" if left == 1 else "prompts"
+        sentence = f"{left} {noun}{where} in each run couldn't be paired{tail}"
+    else:
+        sentence = f"Earlier: {left}, later: {right} prompts{where} couldn't be paired{tail}"
+    if not data.get("items"):
+        return "No matching prompts changed. " + sentence
+    return sentence
