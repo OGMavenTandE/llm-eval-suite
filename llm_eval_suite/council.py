@@ -68,38 +68,77 @@ def _close(target: float, value: float) -> bool:
     return abs(target - value) <= tolerance
 
 
-def _derived_figures(values: list[float]) -> list[float]:
-    """Complements, sums, and differences of figures that were in the input.
+def _is_number(value) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
 
-    ``100 - 68.4`` is the failing share of a 68.4 pass percent. A number that
-    is not one of these combinations is still rejected.
+
+# A failed count is total minus passed only when both keys sit on the same object.
+_TOTAL_KEYS = {"sample_count", "item_count", "total", "live_item_count"}
+_PASSED_KEYS = {"passed_count", "passed", "passes", "pass_count"}
+
+
+def _percent_complements(value, found: list[float]) -> None:
+    """``100 - p`` for a value stored under a percent key, such as 68.4."""
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if _is_number(item) and "percent" in str(key).lower():
+                number = float(item)
+                if 0 < number <= 100:
+                    found.append(100.0 - number)
+            else:
+                _percent_complements(item, found)
+        return
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            _percent_complements(item, found)
+
+
+def _count_complements(value, found: list[float]) -> None:
+    """Failed count when one object gives both the total and the passed count."""
+    if isinstance(value, dict):
+        totals = [float(item) for key, item in value.items() if key in _TOTAL_KEYS and _is_number(item)]
+        passed = [float(item) for key, item in value.items() if key in _PASSED_KEYS and _is_number(item)]
+        for total in totals:
+            for count in passed:
+                found.append(abs(total - count))
+        for item in value.values():
+            if isinstance(item, (dict, list, tuple)):
+                _count_complements(item, found)
+        return
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            _count_complements(item, found)
+
+
+def derived_figures(results) -> list[float]:
+    """Whitelist of figures a summary may use beyond the raw input numbers.
+
+    Allowed: the complement of an input percent (``100 - p``), the complement
+    of a rate stored between 0 and 1, and ``total - passed`` when those two
+    counts are keys on the same object. Sums and differences of unrelated
+    figures are not allowed.
     """
+    values: list[float] = []
+    _walk_numbers(results, values)
     derived: list[float] = []
+    _percent_complements(results, derived)
+    _count_complements(results, derived)
     for value in values:
-        # A value above 1 is a percent or a count, so its complement is 100 - value.
-        # A value of 1 is a fraction (a perfect pass rate), not 1 percent.
-        if 1 < value <= 100:
-            derived.append(100.0 - value)
         if 0 <= value <= 1:
             derived.append(1.0 - value)
-            derived.append((1.0 - value) * 100.0)
-    for index, left in enumerate(values):
-        for right in values[index + 1 :]:
-            derived.append(left + right)
-            derived.append(abs(left - right))
-            if 0 <= left <= 1 and 0 <= right <= 1:
-                derived.append((left + right) * 100.0)
-                derived.append(abs(left - right) * 100.0)
+        # A non-integer in (1, 100] is a percent even when the key name is not.
+        # Integer counts in that range are not percents, so 100 - 76 is not 24.
+        if isinstance(value, float) and not value.is_integer() and 1 < value <= 100:
+            derived.append(100.0 - value)
     return derived
 
 
 def number_allowed(token: str, values: list[float]) -> bool:
-    """Match a narrative number to an input figure, a complement, or a sum or difference.
+    """Match a narrative number to one of the figures in ``values``.
 
     A bare count below 10 is not treated as a percent, so "2 items" does not
-    match a score of 0.02. "80" and "80%" both match 0.8. "31.6%" matches
-    ``100 - 68.4`` when 68.4 is in the input. A number that is not in the
-    input and is not one of those combinations is rejected.
+    match a score of 0.02. "80" and "80%" both match 0.8. Rounding uses the
+    same tolerance as the rest of the guard.
     """
     percent = token.endswith("%")
     try:
@@ -109,32 +148,73 @@ def number_allowed(token: str, values: list[float]) -> bool:
     targets = [raw]
     if percent or raw >= 10:
         targets.append(raw / 100.0)
-    pool = list(values) + _derived_figures(values)
     for target in targets:
-        for value in pool:
+        for value in values:
             if _close(target, value):
                 return True
     return False
 
 
 def unmatched_numbers(narrative: str, results: dict) -> list[str]:
-    """A narrative number must show up in the results JSON, or match a value there.
+    """A narrative number must be an input figure or one whitelisted derivation.
 
-    Rounding and percent-versus-fraction are allowed. Numbers glued to words,
-    such as a model name, are ignored.
+    Rounding and percent-versus-fraction are allowed. A percent complement and
+    a total-minus-passed count are allowed. Any other sum or difference is
+    rejected. Numbers glued to words, such as a model name, are ignored.
     """
     blob = json.dumps(results, default=str)
     present = set(extract_numbers(blob))
     values: list[float] = []
     _walk_numbers(results, values)
+    allowed = values + derived_figures(results)
     bad = []
     for token in extract_numbers(narrative):
         if token in present or token.rstrip("%") in present:
             continue
-        if number_allowed(token, values):
+        if number_allowed(token, allowed):
             continue
         bad.append(token)
     return bad
+
+
+def _lacks_terminal_punctuation(text: str) -> bool:
+    stripped = (text or "").rstrip()
+    return not stripped or stripped[-1] not in ".!?"
+
+
+def complete_sentences(text: str) -> str:
+    """Keep text through the last complete sentence. Drop a trailing fragment."""
+    raw = (text or "").strip()
+    if not raw:
+        return ""
+    last = -1
+    for index, char in enumerate(raw):
+        if char not in ".!?":
+            continue
+        if char == "." and index > 0 and raw[index - 1].isdigit():
+            nxt = raw[index + 1] if index + 1 < len(raw) else ""
+            if nxt.isdigit():
+                continue
+        last = index
+    if last < 0:
+        return ""
+    return raw[: last + 1].strip()
+
+
+def _present_narrative(text: str) -> str:
+    """Strip meta notes and never leave a sentence that was cut off."""
+    cleaned = strip_meta_notes(text or "")
+    if cleaned and _lacks_terminal_punctuation(cleaned):
+        cleaned = complete_sentences(cleaned)
+    return cleaned.strip()
+
+
+def _needs_more_room(text: str, done_reason: str | None) -> bool:
+    if done_reason in {"length", "max_tokens"}:
+        return True
+    if not (text or "").strip():
+        return False
+    return _lacks_terminal_punctuation(text)
 
 
 def anonymize_reviews(reviews: list[dict]) -> list[dict]:
@@ -322,14 +402,58 @@ def template_narrative(run: dict, items: list[dict]) -> str:
     return narrative_from_summary(summary)
 
 
+_CHAIR_TOKEN_CAP = 2400
+
+
+def _ollama_judge_call(profile: dict, prompt: str, max_tokens: int) -> tuple[str, str | None]:
+    from llm_eval.models.ollama_model import ollama_chat
+
+    base = (profile.get("base_url") or "http://127.0.0.1:11434").rstrip("/")
+    if base.endswith("/v1"):
+        base = base[: -len("/v1")]
+    reply = ollama_chat(
+        base,
+        profile.get("model") or "model",
+        prompt,
+        max_tokens=max_tokens,
+        think=False if profile.get("think") is None else bool(profile.get("think")),
+        timeout=int(profile.get("timeout") or 120),
+    )
+    return reply.get("text") or "", reply.get("done_reason")
+
+
 def judge_generate(judge: dict, *, max_tokens: int):
-    """One judge callable. ``think`` is off, and any thinking trace is removed."""
+    """One judge callable.
+
+    Ollama judges call native ``/api/chat`` with ``think`` off and a context
+    window sized to the prompt. The ``/v1`` chat route often ignores ``think``
+    and leaves the reply in a thinking field, so ``content`` comes back empty.
+    That thinking text is not the summary. A reply stopped for length, or one
+    that does not end a sentence, is asked once more with a higher token cap
+    and then trimmed to the last complete sentence.
+    """
     from llm_eval.models.context import strip_think_blocks
     from llm_eval_suite.connections import build_model
 
     prepared = dict(judge)
     if prepared.get("think") is None:
         prepared["think"] = False
+
+    if (prepared.get("type") or "") == "ollama":
+
+        def _generate(prompt: str) -> str:
+            text, reason = _ollama_judge_call(prepared, prompt, max_tokens)
+            if _needs_more_room(text, reason):
+                larger = min(_CHAIR_TOKEN_CAP, max_tokens * 2)
+                if larger > max_tokens:
+                    text, reason = _ollama_judge_call(prepared, prompt, larger)
+            text = strip_think_blocks(text)
+            if text.strip() and (_needs_more_room(text, reason) or _lacks_terminal_punctuation(text)):
+                text = complete_sentences(text)
+            return text
+
+        return _generate
+
     model = build_model(prepared)
 
     def _generate(prompt: str) -> str:
@@ -458,8 +582,9 @@ def run_council(
     # ranking points. It does not allow a number that was not in that input.
     chair_sources = payload
     if mode == "single_judge":
-        narrative = reviews[0]["text"]
+        narrative = _present_narrative(reviews[0]["text"])
         chair_label = reviews[0]["author"]
+        chair_generate = usable[0][1]
     else:
         chair_judge, chair_generate = chairman
         chair_sources = {
@@ -471,51 +596,57 @@ def run_council(
             "TASK: chair\n"
             "Write a plain-English summary of this evaluation for a non-technical reader. "
             "Use the reviews, the aggregate ranking, and the results JSON. "
-            "Use only numbers that appear in those inputs, or a complement, sum, or difference of those numbers. "
+            "Use only numbers that appear in those inputs, a failing percent that is 100 minus an input percent, "
+            "or a failed count when the input gives both the total and the number that passed. "
+            "Do not add or subtract any other figures. "
+            "Finish the last sentence. "
             "Do not add a note about omitted numbers or about these instructions.\n\n"
             f"Aggregate ranking: {json.dumps(aggregate)}\n\n"
             f"Reviews:\n{json.dumps(hidden, indent=2)}\n\n"
             f"Results JSON:\n{payload_json}"
         )
-        try:
-            narrative = _ask(chair_generate, chair_prompt)
-            chair_label = chair_judge.get("model")
-        except Exception as exc:  # noqa: BLE001
-            errors.append(f"chairman: {exc}")
-            narrative = ""
-            chair_label = None
-        # An empty chairman reply is one retry on the same callable, which
-        # already sends think: false. A second empty reply falls through.
-        if not (narrative or "").strip():
-            errors.append(f"{chair_label or 'chairman'}: empty summary")
+        # An empty chairman reply is not asked again on the same model.
+        # The other council judge writes the summary before the template does.
+        narrative = ""
+        chair_label = None
+        candidates = [chairman] + [pair for pair in usable if pair[0] is not chairman[0]]
+        for index, (judge, generate) in enumerate(candidates):
+            if index >= 2:
+                break
             try:
-                narrative = _ask(
-                    chair_generate,
-                    chair_prompt + "\n\nYour previous reply was empty. Write the summary.",
-                )
+                narrative = _present_narrative(_ask(generate, chair_prompt))
             except Exception as exc:  # noqa: BLE001
-                errors.append(f"chairman retry: {exc}")
+                errors.append(f"chairman: {exc}")
                 narrative = ""
+            chair_judge = judge
+            chair_generate = generate
+            chair_label = judge.get("model")
+            if narrative.strip():
+                break
+            errors.append(f"{chair_label or 'chairman'}: empty summary")
+        chairman = (chair_judge, chair_generate)
 
-    narrative = strip_meta_notes(narrative)
+    narrative = _present_narrative(narrative)
     guard = unmatched_numbers(narrative, chair_sources)
     number_guard = "pass"
     if guard:
         retry_prompt = (
             "TASK: chair\n"
             "Your previous summary used numbers that are not in the inputs you were given. "
-            "Rewrite it using only numbers from those inputs, or a complement, sum, or difference of them. "
+            "Rewrite it using only numbers from those inputs, a failing percent that is 100 minus an input percent, "
+            "or a failed count when the input gives both the total and the number that passed. "
+            "Do not add or subtract any other figures. "
+            "Finish the last sentence. "
             "Do not add a note about omitted numbers or about these instructions. "
             f"Unmatched numbers: {', '.join(guard)}.\n\n"
             f"Aggregate ranking: {json.dumps(aggregate)}\n\n"
             f"Results JSON:\n{payload_json}"
         )
         try:
-            narrative = _ask(chairman[1], retry_prompt)
+            narrative = _present_narrative(_ask(chair_generate, retry_prompt))
         except Exception as exc:  # noqa: BLE001
             errors.append(f"retry: {exc}")
             narrative = ""
-        narrative = strip_meta_notes(narrative)
         guard = unmatched_numbers(narrative, chair_sources)
         number_guard = "retry_pass" if not guard else "fallback"
     if guard or not narrative.strip():

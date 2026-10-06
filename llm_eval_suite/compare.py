@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
+
 
 def _is_invalid(run: dict) -> bool:
     return run.get("validity") == "invalid" or run.get("status") == "invalid"
@@ -15,6 +17,41 @@ def _slot_name(run: dict) -> str:
     connection = run.get("connection") or {}
     name = connection.get("model") or connection.get("name") or run.get("run_id") or "Run"
     return str(name)
+
+
+def _normalize_prompt(text) -> str:
+    return " ".join(str(text or "").split()).casefold()
+
+
+def _pair_key(item: dict) -> tuple:
+    """Garak attempt ids are new every run, so pair those rows by probe and prompt."""
+    suite = str(item.get("suite") or "")
+    item_id = str(item.get("id") or "")
+    if suite == "garak" or item_id.startswith("garak:"):
+        return ("garak", str(item.get("probe") or ""), _normalize_prompt(item.get("prompt")))
+    return ("id", item_id)
+
+
+def _pair_items(left_items: list[dict], right_items: list[dict]):
+    right_groups: dict[tuple, list[dict]] = defaultdict(list)
+    for item in right_items:
+        right_groups[_pair_key(item)].append(item)
+    used: dict[tuple, int] = defaultdict(int)
+    pairs = []
+    left_unpaired = []
+    for item in left_items:
+        key = _pair_key(item)
+        index = used[key]
+        group = right_groups.get(key) or []
+        if index < len(group):
+            pairs.append((item, group[index]))
+            used[key] = index + 1
+        else:
+            left_unpaired.append(item)
+    right_unpaired = []
+    for key, group in right_groups.items():
+        right_unpaired.extend(group[used.get(key, 0) :])
+    return pairs, left_unpaired, right_unpaired
 
 
 def compare_runs(left: dict, right: dict, left_items: list[dict], right_items: list[dict]) -> dict:
@@ -49,13 +86,10 @@ def compare_runs(left: dict, right: dict, left_items: list[dict], right_items: l
             }
         )
 
-    right_by_id = {item["id"]: item for item in right_items}
+    pairs, left_unpaired, right_unpaired = _pair_items(left_items, right_items)
     item_deltas = []
     unchanged_prompts = 0
-    for item in left_items:
-        other = right_by_id.get(item["id"])
-        if other is None:
-            continue
+    for item, other in pairs:
         if item.get("score") is None or other.get("score") is None:
             continue
         delta = round(float(other["score"]) - float(item["score"]), 4)
@@ -74,6 +108,9 @@ def compare_runs(left: dict, right: dict, left_items: list[dict], right_items: l
                 "right_passed": other.get("passed"),
             }
         )
+    unpaired_by_category: dict[str, int] = defaultdict(int)
+    for item in left_unpaired + right_unpaired:
+        unpaired_by_category[str(item.get("category") or "")] += 1
     item_deltas.sort(key=lambda row: (-abs(row["delta"]), -row["delta"], str(row.get("id") or "")))
     return {
         "left_run_id": left.get("run_id"),
@@ -83,6 +120,8 @@ def compare_runs(left: dict, right: dict, left_items: list[dict], right_items: l
         "left_created_at": _run_stamp(left),
         "right_created_at": _run_stamp(right),
         "unchanged_prompts": unchanged_prompts,
+        "unpaired_prompts": len(left_unpaired) + len(right_unpaired),
+        "unpaired_by_category": dict(unpaired_by_category),
         "left_invalid": left_invalid,
         "right_invalid": right_invalid,
         "categories": categories,

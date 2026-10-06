@@ -10,9 +10,16 @@ from llm_eval_suite.timing import DEFAULT_SECONDS_PER_PROMPT
 
 PRESET_PATH = Path(__file__).with_name("presets.json")
 
-# Two measured pre-run totals finished faster than the estimate: 35s vs 30.7s,
-# and 32s vs 27.8s. The scale is the mean of those actual/estimate ratios.
-MEASURED_ESTIMATE_SCALE = ((30.7 / 35.0) + (27.8 / 32.0)) / 2.0
+# Measured actual/raw ratios:
+# 30.7/35 and 27.8/32, plus 31.8/(26/0.873) and 28.4/(27/0.873).
+# The last two raw totals are the shown estimates divided by 0.873.
+# The scale is the mean of those four ratios.
+MEASURED_ESTIMATE_SCALE = (
+    (30.7 / 35.0)
+    + (27.8 / 32.0)
+    + (31.8 / (26.0 / 0.873))
+    + (28.4 / (27.0 / 0.873))
+) / 4.0
 
 SUITE_KEYS = ("garak", "factcheck", "robustness", "consistency", "rampart", "dioptra")
 
