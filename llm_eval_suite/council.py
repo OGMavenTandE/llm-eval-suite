@@ -401,16 +401,24 @@ def run_council(
     aggregate = aggregate_rankings(rankings) if rankings else []
 
     chairman = _pick_chairman(usable, chairman_name, under_test)
+    # The guard allows every number we actually handed the chairman, including
+    # ranking points. It does not allow a number that was not in that input.
+    chair_sources = payload
     if mode == "single_judge":
         narrative = reviews[0]["text"]
         chair_label = reviews[0]["author"]
     else:
         chair_judge, chair_generate = chairman
+        chair_sources = {
+            "results": payload,
+            "aggregate_ranking": aggregate,
+            "reviews": hidden,
+        }
         chair_prompt = (
             "TASK: chair\n"
             "Write a plain-English summary of this evaluation for a non-technical reader. "
             "Use the reviews, the aggregate ranking, and the results JSON. "
-            "Use only numbers that appear in the JSON.\n\n"
+            "Use only numbers that appear in those inputs.\n\n"
             f"Aggregate ranking: {json.dumps(aggregate)}\n\n"
             f"Reviews:\n{json.dumps(hidden, indent=2)}\n\n"
             f"Results JSON:\n{payload_json}"
@@ -423,21 +431,23 @@ def run_council(
             narrative = ""
             chair_label = None
 
-    guard = unmatched_numbers(narrative, payload)
+    guard = unmatched_numbers(narrative, chair_sources)
     number_guard = "pass"
     if guard:
         retry_prompt = (
             "TASK: chair\n"
-            "Your previous summary used numbers that are not in the results. "
-            "Rewrite it using only numbers from this JSON. "
-            f"Unmatched numbers: {', '.join(guard)}.\n\n{payload_json}"
+            "Your previous summary used numbers that are not in the inputs you were given. "
+            "Rewrite it using only numbers from those inputs. "
+            f"Unmatched numbers: {', '.join(guard)}.\n\n"
+            f"Aggregate ranking: {json.dumps(aggregate)}\n\n"
+            f"Results JSON:\n{payload_json}"
         )
         try:
             narrative = _ask(chairman[1], retry_prompt)
         except Exception as exc:  # noqa: BLE001
             errors.append(f"retry: {exc}")
             narrative = ""
-        guard = unmatched_numbers(narrative, payload)
+        guard = unmatched_numbers(narrative, chair_sources)
         number_guard = "retry_pass" if not guard else "fallback"
     if guard or not narrative.strip():
         return _fallback(

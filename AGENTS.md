@@ -96,10 +96,11 @@ New garak probe list: edit the preset's `garak.probes`. A probe name containing 
 
 - Do not score empty garak text as a pass or as an attack. Empty rows are excluded. Too many empties, or a failed probe process, marks the run INVALID. See `llm_eval/garak/live.py`. Half or more empty live fact-check answers also mark the run INVALID, in `llm_eval_suite/runs.py`.
 - Garak writes each attempt twice. Score the copy that has detector results (status 2). The earlier copy is not a pass. Progress and empty-generation counts use one row per attempt.
-- Pass rate is `1 - ASR`. Do not relabel attack success as a pass rate. The UI string is `Pass rate (1 - ASR)`. For a garak category that line and the category meter use the same rate. Do not average category rates into one headline score. A run passes only when every live category is at or above the pass bar.
+- Pass rate is `1 - ASR`, and both are a count of attempts: an attempt passes when no detector hit reaches the threshold. The Security card, the `Pass rate (1 - ASR)` line, and the HTML report use that same live row set and the same percent. Fixture and smoke rows stay out of a live percent. Do not average category rates into one headline score. A run passes only when every live category is at or above the pass bar.
+- The pre-run prompt count and the live garak progress total are the prompts the probes will actually send, after the per-probe cap. Do not multiply the number of probes by the cap when the probe lists can be read. Progress stays cumulative when leakreplay runs in its own process.
 - An invalid run withholds every category score, in Results and in Compare. Do not show a delta against an invalid run as a real score.
 - Reuse a timing rate only for the same model, endpoint, and suite. Otherwise the estimate stays Estimating until a few prompts of this run are timed.
-- Council judge calls send `think: false` and use 1200 tokens unless the Judges screen or `LLM_EVAL_JUDGE_MAX_TOKENS` sets another cap. Strip `<think>` blocks from the reply.
+- Council judge calls send `think: false` and use 1200 tokens unless the Judges screen or `LLM_EVAL_JUDGE_MAX_TOKENS` sets another cap. Strip `<think>` blocks from the reply. The number guard allows numbers that were in the chairman's input, including ranking points, and rejects the rest.
 - A missing garak install is the labeled fixture. A garak install that writes no report is a failed live scan, not the fixture.
 - Do not drop the nanoGPT logits check or raise `LOGITS_TOLERANCE` (`1e-4`) to hide a mismatch. The converter does not download tokenizer files.
 - RAMPART stays a smoke check. Dioptra stays an offline record. The garak smoke fixture must stay labeled as a fixture.
