@@ -1807,3 +1807,201 @@ def test_council_does_not_accept_numbers_from_a_review():
     assert "20.8%" in passed["narrative"]
     assert "24 out of 76" in passed["narrative"]
     assert "31.6%" in passed["narrative"]
+
+
+def _smoke_run():
+    """Run record and items for 878bd6a66542."""
+    results_card = _smoke_results()
+    run = {
+        "run_id": "878bd6a66542",
+        "preset": "quick",
+        "status": "completed",
+        "validity": "ok",
+        "connection": {"model": "model-under-test", "type": "ollama"},
+        "scorecard": {
+            "failure_count": results_card["failure_count"],
+            "item_count": results_card["item_count"],
+            "live_item_count": results_card["item_count"],
+            "categories": results_card["categories"],
+            "overall_pass_rate": None,
+            "overall_pass_percent": None,
+        },
+    }
+    items = [
+        {
+            "id": row["id"],
+            "passed": False,
+            "score": row["score"],
+            "source": "live",
+            "counts_toward_score": True,
+            "prompt": "probe",
+            "response": "bad",
+            "category": "security_jailbreak",
+        }
+        for row in results_card["failures_sample"]
+    ]
+    items.append(
+        {
+            "id": "pass-1",
+            "passed": True,
+            "score": 1.0,
+            "source": "live",
+            "counts_toward_score": True,
+            "prompt": "ok",
+            "response": "ok",
+            "category": "hallucination_factuality",
+        }
+    )
+    return run, items
+
+
+def test_guard_allows_derived_rounding_words_and_checks_labels():
+    """Rounding, word counts, and label checks on the 878bd6a66542 figures.
+
+    27 of 130 failed is 20.8%. Security is 24 of 76, 68.4% pass, 31.6% fail.
+    Toxicity passed 2 of 2. Seven shown failures scored 0.0 and one scored 0.5.
+    """
+    results = _smoke_results()
+    assert unmatched_numbers("32% failing", results) == []
+    assert unmatched_numbers("32% failing", {"pass_percent": 68.4}) == []
+    assert unmatched_numbers("68% pass", {"pass_percent": 68.4}) == []
+    assert unmatched_numbers("21% failing", results) == []
+    assert unmatched_numbers("79% passing", results) == []
+    assert unmatched_numbers("twenty-four failures", results) == []
+    assert unmatched_numbers("twenty four failures", results) == []
+    assert unmatched_numbers("twenty-four of seventy-six failed", results) == []
+    assert unmatched_numbers("thirty-two percent failing", results) == []
+    assert unmatched_numbers("twenty-three failures", results) == ["twenty-three"]
+    assert unmatched_numbers("twenty-seven of seventy-six failed", results) == ["twenty-seven"]
+    assert unmatched_numbers("26.3% failing", results) == ["26.3%"]
+    assert unmatched_numbers("68.4% failure rate", results) == ["68.4%"]
+    assert unmatched_numbers("68.4% pass rate", results) == []
+    assert unmatched_numbers("31.6% failing", results) == []
+    assert unmatched_numbers("all 76 flagged", results) == ["76"]
+    assert unmatched_numbers("all 2 passed", results) == []
+    assert unmatched_numbers("all 50 passed", results) == ["50"]
+    assert unmatched_numbers("not all 76 flagged", results) == []
+    # Whole-percent rounding does not accept a different one-decimal figure.
+    assert unmatched_numbers("32.0%", {"pass_percent": 68.4}) == ["32.0%"]
+    assert unmatched_numbers("21.0%", results) == ["21.0%"]
+
+
+def test_council_retries_with_allowed_figures_then_trims_or_falls_back():
+    run, items = _smoke_run()
+    judges = [
+        {"model": "qwen2.5:3b-instruct", "type": "ollama", "base_url": "http://127.0.0.1:11434"},
+        {"model": "llama3.2:3b", "type": "ollama", "base_url": "http://127.0.0.1:11434"},
+    ]
+    prompts = []
+
+    def mixed_for(_judge):
+        def generate(prompt: str) -> str:
+            prompts.append(prompt)
+            if prompt.startswith("TASK: review"):
+                return "The failure count is 27. Security passed 68.4%."
+            if prompt.startswith("TASK: rank"):
+                return "RANKING: Review A > Review B"
+            return "Security passed 68.4%. About 26.3% failed."
+
+        return generate
+
+    trimmed = run_council(run, items, judges, under_test=run["connection"], generate_for=mixed_for)
+    retry_prompts = [prompt for prompt in prompts if "Unsupported figures:" in prompt]
+    assert retry_prompts
+    retry = retry_prompts[0]
+    assert "26.3%" in retry
+    assert "About 26.3% failed." in retry
+    assert "27 of 130 failed" in retry
+    assert "20.8%" in retry
+    assert "24 failed" in retry
+    assert "31.6%" in retry
+    assert "7 at 0.0" in retry
+    assert trimmed["number_guard"] == "trimmed"
+    assert trimmed["mode"] == "council"
+    assert trimmed["source_label"].startswith("Council:")
+    assert "68.4%" in trimmed["narrative"]
+    assert "26.3" not in trimmed["narrative"]
+    rejected = {(row["token"], row["sentence"]) for row in trimmed["number_rejections"]}
+    assert ("26.3%", "About 26.3% failed.") in rejected
+
+    def only_bad(_judge):
+        def generate(prompt: str) -> str:
+            if prompt.startswith("TASK: review"):
+                return "The failure count is 27. Security passed 68.4%."
+            if prompt.startswith("TASK: rank"):
+                return "RANKING: Review A > Review B"
+            return "The model had a 68.4% failure rate. All 76 flagged."
+
+        return generate
+
+    failed = run_council(run, items, judges, under_test=run["connection"], generate_for=only_bad)
+    assert failed["mode"] == "template"
+    assert failed["number_guard"] == "fallback"
+    assert failed["source_label"] == "Template"
+    assert "68.4% failure rate" not in failed["narrative"]
+    tokens = {row["token"]: row["sentence"] for row in failed["number_rejections"]}
+    assert tokens["68.4%"] == "The model had a 68.4% failure rate."
+    assert "76" in tokens
+    assert "flagged" in tokens["76"].lower()
+    assert "68.4%" in failed["unmatched_numbers"]
+    assert "76" in failed["unmatched_numbers"]
+
+    def mislabeled_review(judge):
+        def generate(prompt: str) -> str:
+            if prompt.startswith("TASK: review"):
+                if judge["model"] == "qwen2.5:3b-instruct":
+                    return "The model had a 68.4% failure rate. All 76 flagged."
+                return "The failure count is 27. Security passed 68.4%."
+            if prompt.startswith("TASK: rank"):
+                return "RANKING: Review A > Review B"
+            return "The failure count is 27. Security passed 68.4%."
+
+        return generate
+
+    reviewed = run_council(run, items, judges, under_test=run["connection"], generate_for=mislabeled_review)
+    assert reviewed["number_guard"] == "pass"
+    assert "failure rate" not in reviewed["narrative"].lower()
+    assert "flagged" not in reviewed["narrative"].lower()
+    review_tokens = {row["token"] for row in reviewed["number_rejections"]}
+    assert "68.4%" in review_tokens
+    assert "76" in review_tokens
+
+
+def test_analyze_logs_rejected_numbers(tmp_path, monkeypatch):
+    manager = RunManager(tmp_path / "runs")
+    run_dir = manager.runs_dir / "878bd6a66542"
+    sentence = "The model had a 68.4% failure rate."
+    manager._write_run(
+        run_dir,
+        {
+            "run_id": "878bd6a66542",
+            "status": "completed",
+            "connection": {},
+            "scorecard": {},
+            "audit": {"events": []},
+        },
+    )
+
+    def fake_council(*_args, **_kwargs):
+        return {
+            "mode": "template",
+            "source_label": "Template",
+            "number_guard": "fallback",
+            "narrative": "The evaluation finished with 27 failing live prompts.",
+            "number_rejections": [{"token": "68.4%", "sentence": sentence}],
+            "unmatched_numbers": ["68.4%"],
+        }
+
+    monkeypatch.setattr("llm_eval_suite.runs.run_council", fake_council)
+    result = manager.analyze("878bd6a66542", [])
+    saved = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+    assert saved["analysis"]["number_guard"] == "fallback"
+    assert saved["analysis"]["number_rejections"] == [{"token": "68.4%", "sentence": sentence}]
+    assert saved["audit"]["number_guard"] == "fallback"
+    assert saved["audit"]["number_rejections"][0]["sentence"] == sentence
+    event = saved["audit"]["events"][-1]
+    assert event["number_guard"] == "fallback"
+    assert event["number_rejections"][0]["token"] == "68.4%"
+    log = (run_dir / "run.log").read_text(encoding="utf-8")
+    assert f"Number check rejected 68.4% in: {sentence}" in log
+    assert result["number_rejections"][0]["token"] == "68.4%"

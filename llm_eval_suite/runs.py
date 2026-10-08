@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import subprocess
 import sys
 import threading
@@ -22,6 +23,8 @@ from llm_eval_suite.scoring import live_failures, scorecard, withhold_category_s
 from llm_eval_suite.suites import RUNNERS, SuiteContext, planned_suite_total
 from llm_eval_suite.timing import TimingStore
 from llm_eval_suite.worker import build_worker_command
+
+logger = logging.getLogger("llm_eval_suite.runs")
 
 # Half or more empty fact-check answers is an invalid run. A thinking model
 # that spends max_tokens inside <think> and returns no answer trips this.
@@ -360,6 +363,7 @@ class RunManager:
             max_tokens=max_tokens,
         )
         record["analysis"] = analysis
+        rejections = analysis.get("number_rejections") or []
         audit = record.setdefault("audit", {"events": []})
         audit["events"].append(
             {
@@ -367,12 +371,20 @@ class RunManager:
                 "kind": "analysis",
                 "mode": analysis.get("mode"),
                 "number_guard": analysis.get("number_guard"),
+                "number_rejections": rejections,
                 "source_label": analysis.get("source_label"),
             }
         )
         audit["number_guard"] = analysis.get("number_guard")
+        audit["number_rejections"] = rejections
         audit["summary_source"] = analysis.get("mode")
-        self._write_run(self.runs_dir / run_id, record)
+        run_dir = self.runs_dir / run_id
+        for row in rejections:
+            line = f"Number check rejected {row.get('token')} in: {row.get('sentence')}"
+            self._append_log(run_dir, line)
+            logger.info(line)
+            logging.getLogger("uvicorn.error").info(line)
+        self._write_run(run_dir, record)
         return analysis
 
     def _spawn_worker(self, *, run_id: str, run_dir: Path, connection: dict, preset_id: str, dataset_path: str) -> None:
