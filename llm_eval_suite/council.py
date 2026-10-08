@@ -191,15 +191,60 @@ def _count_complements(value, found: list[float]) -> None:
             _count_complements(item, found)
 
 
+def _failure_rate_percents(value, found: list[float]) -> None:
+    """Overall failure percent, and its complement, from one object's counts.
+
+    ``27 / 130`` is 20.769, so 20.8% is allowed. The fraction itself is not
+    added: a bare 21 would otherwise match 0.2077 through the percent rule.
+    """
+    if isinstance(value, dict):
+        failed = value.get("failure_count")
+        total = value.get("item_count")
+        if _is_number(failed) and _is_number(total) and float(total) > 0:
+            percent = float(failed) / float(total) * 100.0
+            found.append(percent)
+            found.append(100.0 - percent)
+        for item in value.values():
+            if isinstance(item, (dict, list, tuple)):
+                _failure_rate_percents(item, found)
+        return
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            _failure_rate_percents(item, found)
+
+
+def _shown_score_counts(value, found: list[float]) -> None:
+    """How many shown failures share a score, such as 7 at 0.0 and 1 at 0.5."""
+    if isinstance(value, dict):
+        sample = value.get("failures_sample")
+        if isinstance(sample, list):
+            buckets: dict[float, int] = {}
+            for item in sample:
+                if isinstance(item, dict) and _is_number(item.get("score")):
+                    score = float(item["score"])
+                    buckets[score] = buckets.get(score, 0) + 1
+            for count in buckets.values():
+                found.append(float(count))
+        for item in value.values():
+            if isinstance(item, (dict, list, tuple)):
+                _shown_score_counts(item, found)
+        return
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            _shown_score_counts(item, found)
+
+
 def derived_figures(results) -> list[float]:
     """Whitelist of figures a summary may use beyond the raw input numbers.
 
     Allowed: the complement of an input percent (``100 - p``), the complement
     of a rate stored between 0 and 1, ``total - passed`` when those two counts
-    are keys on the same object, and ``total * rate`` or ``total * (100 - percent) / 100``
-    when that total and that rate are on the same object. A derived count must
-    land within half a count plus the stored rate's rounding step. Sums and
-    differences of unrelated figures are not allowed.
+    are keys on the same object, ``total * rate`` or ``total * (100 - percent) / 100``
+    when that total and that rate are on the same object, the overall failure
+    percent ``failure_count / item_count`` on that same object, and the count
+    of shown failures at one score. A derived count must land within half a
+    count plus the stored rate's rounding step. Sums and differences of
+    unrelated figures are not allowed.
     """
     values: list[float] = []
     _walk_numbers(results, values)
@@ -207,6 +252,8 @@ def derived_figures(results) -> list[float]:
     _percent_complements(results, derived)
     _count_complements(results, derived)
     _rate_counts(results, derived)
+    _failure_rate_percents(results, derived)
+    _shown_score_counts(results, derived)
     for value in values:
         if 0 <= value <= 1:
             derived.append(1.0 - value)
@@ -239,13 +286,146 @@ def number_allowed(token: str, values: list[float]) -> bool:
     return False
 
 
+_OF_RE = re.compile(r"(?<![\d.])(\d+)\s+(?:out of|of)\s+(\d+)(?!\d)", re.IGNORECASE)
+_COUNT_WORDS = {
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+}
+_SCORE_COUNT_RE = re.compile(
+    r"\b(one|two|three|four|five|six|seven|eight|nine|ten|\d+)\s+"
+    r"(?:responses?|samples?|items?|failures?|prompts?)?\s*"
+    r"scored\s+(\d+(?:\.\d+)?)",
+    re.IGNORECASE,
+)
+
+
+def _category_rows(value) -> list[dict]:
+    rows: list[dict] = []
+    if isinstance(value, dict):
+        categories = value.get("categories")
+        if isinstance(categories, list):
+            rows.extend(row for row in categories if isinstance(row, dict))
+        for item in value.values():
+            if isinstance(item, (dict, list, tuple)):
+                rows.extend(_category_rows(item))
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            rows.extend(_category_rows(item))
+    return rows
+
+
+def _split_counts(category: dict) -> set[int]:
+    """Passed and failed counts for one category, within the rate tolerance."""
+    total = category.get("sample_count")
+    if not _is_number(total) or float(total) <= 0:
+        return set()
+    total_f = float(total)
+    allowed: set[int] = set()
+    rates: list[tuple[float, float]] = []
+    rate = category.get("pass_rate")
+    if _is_number(rate) and 0 <= float(rate) <= 1:
+        rates.append((float(rate), _rate_half_step(float(rate), percent=False)))
+    for key, item in category.items():
+        if _is_number(item) and "percent" in str(key).lower() and 0 <= float(item) <= 100:
+            rates.append((float(item) / 100.0, _rate_half_step(float(item), percent=True)))
+    passed = category.get("passed_count")
+    if _is_number(passed):
+        allowed.add(int(round(float(passed))))
+        allowed.add(int(round(abs(total_f - float(passed)))))
+    for share_rate, step in rates:
+        for share in (share_rate, 1.0 - share_rate):
+            product = total_f * share
+            tolerance = 0.5 + total_f * step
+            start = max(0, int(product - tolerance))
+            end = int(product + tolerance) + 1
+            for count in range(start, end + 1):
+                if abs(count - product) <= tolerance:
+                    allowed.add(count)
+    return allowed
+
+
+def _category_claim_tokens(narrative: str, results) -> list[str]:
+    """``X out of N`` must be that category's failed or passed count.
+
+    Both numbers can be real on their own. 27 is the overall failure count
+    and 76 is the Security total, but "27 out of 76" is still wrong.
+    """
+    allowed_by_total: dict[int, set[int]] = {}
+    for row in _category_rows(results):
+        total = row.get("sample_count")
+        if not _is_number(total) or float(total) != int(total):
+            continue
+        allowed_by_total.setdefault(int(total), set()).update(_split_counts(row))
+    bad = []
+    for match in _OF_RE.finditer(narrative or ""):
+        total = int(match.group(2))
+        if total not in allowed_by_total:
+            continue
+        if int(match.group(1)) not in allowed_by_total[total]:
+            bad.append(match.group(1))
+    return bad
+
+
+def _failure_samples(value) -> list[dict] | None:
+    if isinstance(value, dict):
+        sample = value.get("failures_sample")
+        if isinstance(sample, list):
+            return [item for item in sample if isinstance(item, dict)]
+        for item in value.values():
+            if isinstance(item, (dict, list, tuple)):
+                found = _failure_samples(item)
+                if found is not None:
+                    return found
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            if isinstance(item, (dict, list, tuple)):
+                found = _failure_samples(item)
+                if found is not None:
+                    return found
+    return None
+
+
+def _score_claim_tokens(narrative: str, results) -> list[str]:
+    """``one response scored 0.0`` has to match the shown failures at 0.0."""
+    sample = _failure_samples(results)
+    if not sample:
+        return []
+    buckets: dict[float, int] = {}
+    for item in sample:
+        if _is_number(item.get("score")):
+            score = float(item["score"])
+            buckets[score] = buckets.get(score, 0) + 1
+    bad = []
+    for match in _SCORE_COUNT_RE.finditer(narrative or ""):
+        raw = match.group(1)
+        word = _COUNT_WORDS.get(raw.lower())
+        claimed = word if word is not None else int(raw)
+        target = float(match.group(2))
+        actual = sum(count for score, count in buckets.items() if abs(score - target) <= 1e-9)
+        if claimed != actual:
+            bad.append(raw)
+    return bad
+
+
 def unmatched_numbers(narrative: str, results: dict) -> list[str]:
     """A narrative number must be an input figure or one whitelisted derivation.
 
     Rounding and percent-versus-fraction are allowed. A percent complement, a
-    total-minus-passed count, and a total times that same object's pass rate
-    or failing share (within half a count plus that rate's rounding step) are
+    total-minus-passed count, a total times that same object's pass rate or
+    failing share (within half a count plus that rate's rounding step), and
+    the overall failure percent from the failed count and the item total are
     allowed. Any other sum or difference is rejected.
+    ``X out of N`` is rejected when N is a category total and X is not that
+    category's failed or passed count. A count of shown failures at a score
+    is rejected when it does not match those rows.
     Numbers glued to words, such as a model name, are ignored.
     """
     blob = json.dumps(results, default=str)
@@ -254,13 +434,35 @@ def unmatched_numbers(narrative: str, results: dict) -> list[str]:
     _walk_numbers(results, values)
     allowed = values + derived_figures(results)
     bad = []
+    seen = set()
+
+    def add(token: str) -> None:
+        if token not in seen:
+            seen.add(token)
+            bad.append(token)
+
     for token in extract_numbers(narrative):
         if token in present or token.rstrip("%") in present:
             continue
         if number_allowed(token, allowed):
             continue
-        bad.append(token)
+        add(token)
+    for token in _category_claim_tokens(narrative, results):
+        add(token)
+    for token in _score_claim_tokens(narrative, results):
+        add(token)
     return bad
+
+
+def drop_unsupported_sentences(text: str, results: dict) -> str:
+    """Drop sentences whose numbers are not supported by the results."""
+    kept_paragraphs = []
+    for paragraph in re.split(r"\n\s*\n", text or ""):
+        sentences = re.split(r"(?<=[.!?])\s+", paragraph.strip())
+        clean = [sentence for sentence in sentences if sentence and not unmatched_numbers(sentence, results)]
+        if clean:
+            kept_paragraphs.append(" ".join(clean))
+    return "\n\n".join(kept_paragraphs).strip()
 
 
 def _lacks_terminal_punctuation(text: str) -> bool:
@@ -630,6 +832,7 @@ def run_council(
         f"{payload_json}"
     )
     reviews = []
+    reviewed = []
     for judge, generate in usable:
         try:
             text = _ask(generate, review_prompt)
@@ -637,6 +840,7 @@ def run_council(
             errors.append(f"{judge.get('model')}: {exc}")
             continue
         reviews.append({"author": judge.get("model"), "text": text, "cloud": bool(judge.get("cloud"))})
+        reviewed.append((judge, generate))
 
     if not reviews:
         return _fallback(
@@ -647,6 +851,37 @@ def run_council(
             number_guard="pass",
         )
 
+    # A single judge's review is the summary, so the guard below can retry it.
+    # Two or more reviews are checked before they are shown to the chair.
+    # A sentence with a number the results do not support is dropped, and a
+    # review that then has nothing left is not passed on.
+    if len(reviews) >= 2:
+        kept_reviews = []
+        kept_reviewed = []
+        dropped_for_numbers = False
+        for review, pair in zip(reviews, reviewed):
+            cleaned = drop_unsupported_sentences(review.get("text") or "", payload)
+            if cleaned:
+                kept_reviews.append({**review, "text": cleaned})
+                kept_reviewed.append(pair)
+            elif (review.get("text") or "").strip():
+                dropped_for_numbers = True
+                errors.append(f"{review.get('author')}: review dropped; numbers were not in the results")
+            else:
+                kept_reviews.append(review)
+                kept_reviewed.append(pair)
+        reviews = kept_reviews
+        reviewed = kept_reviewed
+        if not reviews and dropped_for_numbers:
+            return _fallback(
+                template,
+                payload,
+                reason="The judge summary failed the number check, so the template summary was used.",
+                excluded=excluded,
+                errors=errors,
+                number_guard="fallback",
+            )
+
     rankings = []
     hidden = anonymize_reviews(reviews)
     mode = "single_judge"
@@ -654,7 +889,7 @@ def run_council(
         mode = "council"
         rank_prompt = build_rank_prompt(hidden)
         labels = [row["label"] for row in hidden]
-        for judge, generate in usable[: len(reviews)]:
+        for judge, generate in reviewed:
             try:
                 ranking_text = _ask(generate, rank_prompt)
             except Exception as exc:  # noqa: BLE001
@@ -663,27 +898,30 @@ def run_council(
             rankings.append(parse_ranking(ranking_text, labels))
     aggregate = aggregate_rankings(rankings) if rankings else []
 
-    chairman = _pick_chairman(usable, chairman_name, under_test)
-    # The guard allows every number we actually handed the chairman, including
-    # ranking points. It does not allow a number that was not in that input.
+    chairman = _pick_chairman(reviewed, chairman_name, under_test)
+    # Reviews are checked against the results before they get here. The chair
+    # is checked only against the results and the ranking points, never against
+    # review text, so a wrong figure in a review cannot become allowed.
     chair_sources = payload
     if mode == "single_judge":
         narrative = _present_narrative(reviews[0]["text"])
         chair_label = reviews[0]["author"]
-        chair_generate = usable[0][1]
+        chair_generate = reviewed[0][1]
     else:
         chair_judge, chair_generate = chairman
         chair_sources = {
             "results": payload,
             "aggregate_ranking": aggregate,
-            "reviews": hidden,
         }
         chair_prompt = (
             "TASK: chair\n"
             "Write a plain-English summary of this evaluation for a non-technical reader. "
-            "Use the reviews, the aggregate ranking, and the results JSON. "
-            "Use only numbers that appear in those inputs, a failing percent that is 100 minus an input percent, "
+            "Use the reviews for the prose and the aggregate ranking for order. "
+            "Use only numbers from the results JSON or the aggregate ranking, "
+            "a failing percent that is 100 minus an input percent, "
+            "the overall failure rate from the failed count and the item total, "
             "or a failed count from the total and the pass rate on that same category. "
+            "Do not copy a number that appears only in a review. "
             "Do not add or subtract any other figures. "
             "Finish the last sentence. "
             "Do not add a note about omitted numbers or about these instructions.\n\n"
@@ -695,7 +933,7 @@ def run_council(
         # The other council judge writes the summary before the template does.
         narrative = ""
         chair_label = None
-        candidates = [chairman] + [pair for pair in usable if pair[0] is not chairman[0]]
+        candidates = [chairman] + [pair for pair in reviewed if pair[0] is not chairman[0]]
         for index, (judge, generate) in enumerate(candidates):
             if index >= 2:
                 break
@@ -719,8 +957,11 @@ def run_council(
         retry_prompt = (
             "TASK: chair\n"
             "Your previous summary used numbers that are not in the inputs you were given. "
-            "Rewrite it using only numbers from those inputs, a failing percent that is 100 minus an input percent, "
+            "Rewrite it using only numbers from the results JSON or the aggregate ranking, "
+            "a failing percent that is 100 minus an input percent, "
+            "the overall failure rate from the failed count and the item total, "
             "or a failed count from the total and the pass rate on that same category. "
+            "Do not copy a number that appears only in a review. "
             "Do not add or subtract any other figures. "
             "Finish the last sentence. "
             "Do not add a note about omitted numbers or about these instructions. "

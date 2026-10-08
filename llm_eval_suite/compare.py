@@ -151,12 +151,21 @@ def unpaired_prompt_note(data: dict) -> str:
     left = int(data.get("unpaired_left") or 0)
     right = int(data.get("unpaired_right") or 0)
     where = ""
-    if len(moved) == 1:
+    # "in this category" only belongs on the note next to changed prompt rows,
+    # and only when every unpaired prompt is in that one category. The
+    # no-change note is run-wide: "N prompts in each run couldn't be paired".
+    if len(moved) == 1 and data.get("items"):
         row = by_category.get(moved[0].get("category"))
         if isinstance(row, dict):
-            left = int(row.get("left") or 0)
-            right = int(row.get("right") or 0)
-            where = " in this category"
+            other = 0
+            for key, counts in by_category.items():
+                if key == moved[0].get("category") or not isinstance(counts, dict):
+                    continue
+                other += int(counts.get("left") or 0) + int(counts.get("right") or 0)
+            if other == 0:
+                left = int(row.get("left") or 0)
+                right = int(row.get("right") or 0)
+                where = " in this category"
     tail = " (garak samples different prompts each run)."
     if left == right:
         noun = "prompt" if left == 1 else "prompts"
