@@ -79,6 +79,23 @@ def _words(text: str) -> int:
     return len([part for part in text.split() if part])
 
 
+def _fold_answer(text: str) -> str:
+    """Compare identifiers with case, spaces, and section signs removed."""
+    return text.lower().replace("§", "").replace(" ", "")
+
+
+def _answer_tokens(row: dict) -> list[str]:
+    tokens: list[str] = []
+    answer = str(row.get("answer_key") or "").strip()
+    if answer:
+        tokens.append(answer)
+    for expected in row.get("expected_ids") or []:
+        text = str(expected or "").strip()
+        if text and text not in tokens:
+            tokens.append(text)
+    return tokens
+
+
 def check_rows(
     rows: list[dict],
     *,
@@ -127,6 +144,13 @@ def check_rows(
                 errors.append(f"{item_id}: unanchored reference {phrase!r}")
         if _BARE_CITE_RE.search(prompt) and not any(anchor in lowered for anchor in ANCHORS):
             errors.append(f"{item_id}: paragraph or section cite does not name the document")
+        folded_prompt = _fold_answer(prompt)
+        for token in _answer_tokens(row):
+            folded = _fold_answer(token)
+            if len(folded) < 3:
+                continue
+            if folded in folded_prompt:
+                errors.append(f"{item_id}: answer {token} appears in the prompt")
         if kind == "multiple_choice":
             letter = str(row.get("answer_key") or "").strip().upper()
             options = {match.group(1): match.group(2).strip() for match in _OPTION_RE.finditer(prompt)}

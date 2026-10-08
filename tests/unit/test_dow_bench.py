@@ -214,6 +214,38 @@ def test_public_sample_canary_and_fallback_note(monkeypatch, tmp_path: Path):
     assert "public sample" in note.lower()
 
 
+def test_item_check_flags_an_answer_inside_the_prompt():
+    from dow_bench.tools.check_items import check_rows
+
+    leaked = {
+        "id": "hb-cit-009",
+        "type": "citation",
+        "prompt": "Department of War question. Cite the statute for false official statements. Use 10 U.S.C.§907.",
+        "answer_key": "10 U.S.C. § 907",
+        "expected_ids": ["10 U.S.C. § 907"],
+        "source": {
+            "issuance_id": "10 U.S.C. § 907",
+            "paragraph": "the section",
+            "url": "https://www.law.cornell.edu/uscode/text/10/907",
+        },
+    }
+    held = {
+        "id": "dk-name-001",
+        "type": "name_the_issuance",
+        "prompt": 'Department of War question. In DoD Directive 2311.01, "DoD Law of War Program" (July 2, 2020), purpose statement, which issuance establishes the program? Name the issuance.',
+        "answer_key": "DoDD 2311.01",
+        "source": {
+            "issuance_id": "DoDD 2311.01",
+            "paragraph": "purpose statement",
+            "url": "https://www.esd.whs.mil/Portals/54/Documents/DD/issuances/dodd/231101p.pdf",
+        },
+    }
+    whitelist = {"10USC907": "10 U.S.C. § 907", "DODD2311.01": "DoDD 2311.01"}
+    errors = check_rows([leaked, held], whitelist=whitelist, fakes={})
+    assert any("hb-cit-009" in error and "appears in the prompt" for error in errors)
+    assert not any("dk-name-001" in error and "appears in the prompt" for error in errors)
+
+
 def test_public_sample_passes_item_check():
     from dow_bench.tools.check_items import check_rows, load_rows
 
