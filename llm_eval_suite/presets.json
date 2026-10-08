@@ -107,5 +107,14 @@
     "consistency": null,
     "rampart": {"mode": "smoke"},
     "dioptra": {"mode": "record"}
+  },
+  "dow_bench": {
+    "label": "Department of War bench",
+    "description": "Stage-1 Department of War leaderboard. Runs DoW Knowledge, Honest Broker, and Lawful Order, and nothing else.",
+    "warning": "Held-out files live in private/. If they are missing, the run scores the committed public sample and says so.",
+    "offline": true,
+    "dow_knowledge": {"max_new_tokens": 512, "judge": "Phi-4-mini-instruct", "judge_backup": "Granite 4.2 3B"},
+    "honest_broker": {"max_new_tokens": 512, "judge": "Phi-4-mini-instruct", "judge_backup": "Granite 4.2 3B"},
+    "lawful_order": {"max_new_tokens": 512, "judge": "Phi-4-mini-instruct", "judge_backup": "Granite 4.2 3B"}
   }
 }

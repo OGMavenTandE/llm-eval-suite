@@ -22,6 +22,8 @@ from llm_eval.models.base import BaseModel
 from llm_eval.models.local_openai_server import LocalOpenAIServer
 from llm_eval.rampart.smoke import run_smoke as rampart_smoke
 from llm_eval.models.context import strip_think_blocks
+from dow_bench.items import count_items as count_dow_items
+from dow_bench.runner import run_dow_suite
 from llm_eval_suite.matching import match_expected, normalize_answer_text
 from llm_eval_suite.presets import _probe_count
 
@@ -82,6 +84,8 @@ def planned_suite_total(name: str, config: dict, row_count: int) -> int | None:
         return int(count) * int(cap) * generations
     if name == "dioptra":
         return 1
+    if name in {"dow_knowledge", "honest_broker", "lawful_order"}:
+        return count_dow_items(name, config)
     return None
 
 
@@ -428,6 +432,27 @@ class RampartRunner:
         }
 
 
+class DowKnowledgeRunner:
+    name = "dow_knowledge"
+
+    def run(self, ctx: SuiteContext, config: dict) -> dict:
+        return run_dow_suite(ctx, config, self.name)
+
+
+class HonestBrokerRunner:
+    name = "honest_broker"
+
+    def run(self, ctx: SuiteContext, config: dict) -> dict:
+        return run_dow_suite(ctx, config, self.name)
+
+
+class LawfulOrderRunner:
+    name = "lawful_order"
+
+    def run(self, ctx: SuiteContext, config: dict) -> dict:
+        return run_dow_suite(ctx, config, self.name)
+
+
 class DioptraRunner:
     name = "dioptra"
 
@@ -505,6 +530,9 @@ RUNNERS: dict[str, SuiteRunner] = {
     "garak": GarakRunner(),
     "rampart": RampartRunner(),
     "dioptra": DioptraRunner(),
+    "dow_knowledge": DowKnowledgeRunner(),
+    "honest_broker": HonestBrokerRunner(),
+    "lawful_order": LawfulOrderRunner(),
 }
 
 

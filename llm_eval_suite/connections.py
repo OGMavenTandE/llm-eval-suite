@@ -125,6 +125,10 @@ class ConnectionStore:
             "cloud": bool(payload.get("cloud")) or not is_local_url(base_url),
             "hub": bool(payload.get("hub")),
             "max_new_tokens": payload.get("max_new_tokens") or 64,
+            "precision": _precision(payload.get("precision")),
+            "thinking_max_tokens": _optional_int(payload.get("thinking_max_tokens")),
+            "trust_remote_code": bool(payload.get("trust_remote_code")),
+            "use_chat_template": _chat_template_flag(payload.get("use_chat_template")),
         }
         if profile["type"] not in {"openai", "ollama", "hf", "nanogpt"}:
             raise ValueError("type must be openai, ollama, hf, or nanogpt")
@@ -222,6 +226,31 @@ def openai_base_url(profile: dict) -> str:
     return base
 
 
+def _precision(value) -> str:
+    text = str(value or "").strip().lower()
+    if not text:
+        return ""
+    if text not in {"bf16", "fp16", "8bit"}:
+        raise ValueError("precision must be bf16, fp16, or 8bit")
+    return text
+
+
+def _optional_int(value) -> int | None:
+    if value in (None, ""):
+        return None
+    return int(value)
+
+
+def _chat_template_flag(value):
+    if value in (None, "", "auto"):
+        return None
+    if value in (True, "true", "on", "yes", 1):
+        return True
+    if value in (False, "false", "off", "no", 0):
+        return False
+    raise ValueError("use_chat_template must be true, false, or auto")
+
+
 def build_model(profile: dict) -> BaseModel:
     """One adapter interface. Ollama is reached through its ``/v1`` server."""
     kind = profile.get("type") or "openai"
@@ -236,6 +265,10 @@ def build_model(profile: dict) -> BaseModel:
                 "mode": profile.get("mode") or "auto",
                 "max_new_tokens": profile.get("max_new_tokens") or 64,
                 "hub": bool(profile.get("hub")),
+                "precision": profile.get("precision") or "",
+                "thinking_max_tokens": profile.get("thinking_max_tokens"),
+                "trust_remote_code": bool(profile.get("trust_remote_code")),
+                "use_chat_template": profile.get("use_chat_template"),
             },
         )
     if kind == "nanogpt":

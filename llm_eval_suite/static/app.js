@@ -142,6 +142,11 @@ function profileFromForm() {
     mode: $("conn-mode").value,
     max_context: context ? Number(context) : null,
     folder: $("conn-folder").value.trim(),
+    precision: $("conn-precision") ? $("conn-precision").value : "",
+    max_new_tokens: $("conn-max-new") && $("conn-max-new").value ? Number($("conn-max-new").value) : null,
+    thinking_max_tokens: $("conn-thinking") && $("conn-thinking").value ? Number($("conn-thinking").value) : null,
+    trust_remote_code: Boolean($("conn-trust") && $("conn-trust").checked),
+    use_chat_template: ($("conn-chat-template") && $("conn-chat-template").value) || "auto",
   };
 }
 

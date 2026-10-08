@@ -1,0 +1,45 @@
+{
+  "note": "Fabricated identifiers for abstention items. Each number was searched and not found as a real issuance. They must not be added to the whitelist.",
+  "ids": [
+    {
+      "id": "DoDI 7362.48",
+      "title": "Installation Energy Resilience Assessment Reporting"
+    },
+    {
+      "id": "DoDD 6844.17",
+      "title": "Foreign Area Officer Language Readiness"
+    },
+    {
+      "id": "DoDM 5921.63",
+      "title": "Defense Working Capital Fund Inventory Accuracy Reviews"
+    },
+    {
+      "id": "CJCSI 4188.07",
+      "title": "Joint Meteorological Observation Coordination"
+    },
+    {
+      "id": "JP 4-15",
+      "title": "Joint Bulk Water Sustainment"
+    },
+    {
+      "id": "DoDI 2634.91",
+      "title": "Visitation Procedures for Defense Industrial Facilities"
+    },
+    {
+      "id": "DoDD 1572.08",
+      "title": "Reserve Component Equipment Readiness Reporting"
+    },
+    {
+      "id": "DoDM 6740.22",
+      "title": "Interagency Defense Support Correspondence Procedures"
+    },
+    {
+      "id": "CJCSI 2944.06",
+      "title": "Joint Military Information Support Oversight"
+    },
+    {
+      "id": "JP 4-16",
+      "title": "Joint Inland Waterway Sustainment"
+    }
+  ]
+}

@@ -174,6 +174,11 @@ def _public_connection(connection: dict) -> dict:
         "max_context": connection.get("max_context"),
         "folder": connection.get("folder"),
         "cloud": bool(connection.get("cloud")),
+        "precision": connection.get("precision") or "",
+        "thinking_max_tokens": connection.get("thinking_max_tokens"),
+        "trust_remote_code": bool(connection.get("trust_remote_code")),
+        "use_chat_template": connection.get("use_chat_template"),
+        "max_new_tokens": connection.get("max_new_tokens"),
     }
 
 
@@ -200,6 +205,12 @@ class RunManager:
         watch_cancel: bool = False,
         offline: bool | None = None,
     ) -> dict:
+        if preset_id == "dow_bench":
+            from dow_bench.meta import exclusion_reason
+
+            reason = exclusion_reason(connection.get("model") or connection.get("name"))
+            if reason:
+                raise ValueError(reason)
         if resume_run_id:
             run_id = resume_run_id
             run_dir = self.runs_dir / run_id
@@ -606,6 +617,14 @@ class RunManager:
         device_name = getattr(model, "device_name", None)
         if device_name:
             record["device"] = device_name
+        precision_used = getattr(model, "precision_used", None)
+        if precision_used and not (record.get("connection") or {}).get("precision"):
+            record["precision"] = precision_used
+        elif (record.get("connection") or {}).get("precision"):
+            record["precision"] = record["connection"]["precision"]
+        mamba_path = getattr(model, "mamba_path", None)
+        if mamba_path:
+            record["mamba_path"] = mamba_path
         security = next(
             (
                 row

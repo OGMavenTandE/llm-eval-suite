@@ -19,4 +19,5 @@ build/
 .env
 .venv/
 .venv-eval/
+private/
 .DS_Store
