@@ -13,6 +13,16 @@ from pathlib import Path
 
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 
+from llm_eval.offline import (
+    apply_startup_offline,
+    hub_allowed,
+    hub_refused_message,
+    is_hub_repo_id,
+    missing_folder_message,
+)
+
+apply_startup_offline()
+
 from llm_eval.models.base import BaseModel, ModelResponse
 from llm_eval.models.context import strip_think_blocks, truncate_to_token_budget
 
@@ -47,9 +57,30 @@ class HuggingFaceFolderModel(BaseModel):
         self.device_name = "cpu"
         self._device = "cpu"
 
+    def _resolve_source(self) -> tuple[str | Path, bool]:
+        """Return the load path and whether it must stay on local files.
+
+        A hub id or a missing folder is refused before ``transformers`` is
+        imported, so offline mode names what would have been downloaded.
+        An existing directory is checked for ``config.json`` after the import,
+        which keeps the optional-extra error for a local folder.
+        """
+        path = Path(self.folder) if self.folder else None
+        if path is not None and path.is_dir():
+            return path, True
+        source_name = str(self.name or self.folder or "")
+        if self.hub and hub_allowed() and source_name:
+            return source_name, False
+        if not hub_allowed() and (self.hub or is_hub_repo_id(source_name)):
+            raise RuntimeError(hub_refused_message(source_name))
+        if not hub_allowed():
+            raise RuntimeError(missing_folder_message(str(self.folder or source_name)))
+        raise RuntimeError(f"Hugging Face folder not found: {path}")
+
     def _load(self):
         if self._model is not None:
             return
+        source, local_only = self._resolve_source()
         try:
             import torch
             from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -58,20 +89,10 @@ class HuggingFaceFolderModel(BaseModel):
                 "Loading a Hugging Face folder needs the optional hf extra: "
                 'pip install -e ".[hf]"'
             ) from exc
-        path = Path(self.folder) if self.folder else None
-        local_only = True
-        source: str | Path
-        if path is not None and path.is_dir():
-            source = path
-            if not (path / "config.json").is_file():
-                raise RuntimeError(
-                    f"{path} has no config.json. If this is a nanoGPT ckpt.pt, convert it first."
-                )
-        elif self.hub and (self.name or self.folder):
-            source = self.name or self.folder
-            local_only = False
-        else:
-            raise RuntimeError(f"Hugging Face folder not found: {path}")
+        if isinstance(source, Path) and not (source / "config.json").is_file():
+            raise RuntimeError(
+                f"{source} has no config.json. If this is a nanoGPT ckpt.pt, convert it first."
+            )
         os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
         self.device_name = torch_device_name(torch)
         self._device = torch.device(self.device_name)

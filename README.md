@@ -81,7 +81,7 @@ A category meets the pass bar only when its own live rate is at or above 80%. Th
 
 A Hugging Face folder uses CUDA when the installed torch can see a GPU, in float16, and the run record stores that device. The keyword scorer treats number words as the digits they name, from a single word such as "Eight" through a compound such as "one hundred and fifty-six", up to 9999. An uploaded fact-check file may use `expected` or `answer` in place of `expected_answer`. Export HTML report opens the page. Download HTML report saves a file with the fonts embedded. Council judges wait 90 seconds by default and may write up to 1200 tokens. The Judges screen can change both. The Run screen ETA uses the current suite's item count. After the suite finishes, that row shows done and the elapsed time.
 
-The Run screen can run the Quick preset on an editable local Hugging Face folder and on `gpt2-medium` from the Hugging Face hub, then open Compare on that pair. The first hub run downloads `gpt2-medium` if it is not already on disk.
+The Run screen can run the Quick preset on an editable local Hugging Face folder and on a local `gpt2-medium` folder (`models/gpt2-medium`, or `LLM_EVAL_DEMO_BASE_FOLDER`), then open Compare on that pair. The demo does not download weights. See [docs/AIRGAP_INSTALL.md](docs/AIRGAP_INSTALL.md) for a closed-network install.
 
 Long runs are a background process with a per-run log. Cancel still works. Resume skips completed fact-check cases and completed garak probes. The progress line shows a live ETA.
 

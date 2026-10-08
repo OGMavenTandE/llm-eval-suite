@@ -12,6 +12,7 @@ from llm_eval.models.base import BaseModel
 from llm_eval.models.hf_folder import HuggingFaceFolderModel
 from llm_eval.models.nanogpt_convert import describe_model_path
 from llm_eval.models.openai_model import OpenAIModel
+from llm_eval.offline import hub_allowed, hub_refused_message, refuse_remote_http
 
 DEFAULT_JUDGE_TIMEOUT = 90
 DEFAULT_JUDGE_MAX_TOKENS = 1200
@@ -133,6 +134,8 @@ class ConnectionStore:
             profile["folder"] = profile["model"]
         if profile["type"] == "hf" and not profile["folder"]:
             raise ValueError("A Hugging Face folder path is required.")
+        if profile["hub"] and not hub_allowed():
+            raise ValueError(hub_refused_message(profile["folder"] or profile["model"] or "unknown model"))
         replaced = False
         for index, row in enumerate(rows):
             if row.get("id") == profile_id:
@@ -223,6 +226,8 @@ def build_model(profile: dict) -> BaseModel:
     """One adapter interface. Ollama is reached through its ``/v1`` server."""
     kind = profile.get("type") or "openai"
     if kind == "hf":
+        if profile.get("hub") and not hub_allowed():
+            raise RuntimeError(hub_refused_message(str(profile.get("folder") or profile.get("model") or "unknown model")))
         return HuggingFaceFolderModel(
             profile.get("model") or Path(profile.get("folder") or "hf").name,
             {
@@ -248,6 +253,8 @@ def build_model(profile: dict) -> BaseModel:
     if profile.get("max_context"):
         params["max_context"] = int(profile["max_context"])
         params["max_new_tokens"] = int(profile.get("max_new_tokens") or 64)
+    what = "OpenAI cloud API" if kind == "openai" else "remote endpoint"
+    refuse_remote_http(params["base_url"], what=what)
     return OpenAIModel(profile.get("model") or "model", params)
 
 

@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 from llm_eval.garak.live import garak_is_installed, planned_garak_attempts
+from llm_eval.offline import demo_base_folder, demo_base_warning, offline_preset_note
 from llm_eval_suite.timing import DEFAULT_SECONDS_PER_PROMPT
 
 PRESET_PATH = Path(__file__).with_name("presets.json")
@@ -50,12 +51,19 @@ def list_presets(
             estimate_source=estimate_source,
             suite_rates=suite_rates,
         )
+        warning = body.get("warning") or ""
+        if body.get("demo"):
+            model_b = (body.get("demo") or {}).get("model_b") or {}
+            warning = demo_base_warning(demo_base_folder(model_b.get("folder")))
+        if body.get("offline") and offline_preset_note() not in warning:
+            warning = (warning + " " + offline_preset_note()).strip()
         rows.append(
             {
                 "id": preset_id,
                 "label": body.get("label", preset_id),
                 "description": body.get("description", ""),
-                "warning": body.get("warning", ""),
+                "warning": warning,
+                "offline": bool(body.get("offline")),
                 "suites": [name for name in SUITE_KEYS if body.get(name)],
                 "demo": body.get("demo"),
                 **estimate,
@@ -178,7 +186,7 @@ def estimate_preset(
 
 
 def demo_pair(path: str | Path | None = None, folder: str | None = None) -> dict:
-    """Built-in DVIDS fine-tune versus gpt2-medium. Paths are strings. Nothing is downloaded."""
+    """Built-in DVIDS fine-tune versus a local gpt2-medium folder. Nothing is downloaded."""
     presets = load_presets(path)
     body = None
     preset_id = None
@@ -193,12 +201,16 @@ def demo_pair(path: str | Path | None = None, folder: str | None = None) -> dict
     model_a = dict(demo.get("model_a") or {})
     model_b = dict(demo.get("model_b") or {})
     model_a["folder"] = folder if folder else model_a.get("folder") or DEMO_MODEL_A_FOLDER
-    model_b.setdefault("model", DEMO_MODEL_B)
+    model_b["model"] = model_b.get("model") or DEMO_MODEL_B
+    model_b["folder"] = demo_base_folder(model_b.get("folder"))
+    model_b["hub"] = False
     return {
         "preset": demo.get("preset") or preset_id,
         "label": body.get("label") or "Demo",
         "model_a": model_a,
         "model_b": model_b,
+        "offline": bool(body.get("offline")),
+        "base_folder_env": "LLM_EVAL_DEMO_BASE_FOLDER",
     }
 
 
@@ -214,10 +226,17 @@ def expand_preset(preset_id: str, path: str | Path | None = None) -> dict:
         if not config:
             continue
         suites.append({"name": name, **config})
+    warning = body.get("warning") or ""
+    if body.get("demo"):
+        model_b = (body.get("demo") or {}).get("model_b") or {}
+        warning = demo_base_warning(demo_base_folder(model_b.get("folder")))
+    if body.get("offline") and offline_preset_note() not in warning:
+        warning = (warning + " " + offline_preset_note()).strip()
     return {
         "id": preset_id,
         "label": body.get("label", preset_id),
         "description": body.get("description", ""),
-        "warning": body.get("warning", ""),
+        "warning": warning,
+        "offline": bool(body.get("offline")),
         "suites": suites,
     }

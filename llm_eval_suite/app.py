@@ -7,6 +7,10 @@ from pathlib import Path
 
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 
+from llm_eval.offline import apply_startup_offline
+
+apply_startup_offline()
+
 import requests
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse
@@ -14,6 +18,12 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from llm_eval.models.nanogpt_convert import convert_nanogpt_to_hf
+from llm_eval.offline import (
+    load_settings,
+    offline_status,
+    refuse_remote_http,
+    write_settings_offline,
+)
 from llm_eval_suite.connections import (
     ConnectionStore,
     build_model,
@@ -74,6 +84,10 @@ class JudgesIn(BaseModel):
     max_tokens: int | None = None
 
 
+class OfflineIn(BaseModel):
+    offline: bool = False
+
+
 class RunIn(BaseModel):
     connection_id: str
     preset: str
@@ -96,6 +110,7 @@ def create_app(
     runs = Path(runs_dir or os.environ.get("LLM_EVAL_RUNS_DIR") or "runs")
     sample = Path(sample_dataset) if sample_dataset else SAMPLE_DATASET
     app = FastAPI(title="LLM Eval Suite", version="0.3.0")
+    load_settings(data)
     app.state.store = ConnectionStore(data)
     app.state.runs = RunManager(runs, model_factory=model_factory, timing_path=data / "timing.json")
     app.state.sample_dataset = sample
@@ -121,7 +136,18 @@ def create_app(
 
     @app.get("/api/health")
     def health():
-        return {"status": "ok"}
+        return {"status": "ok", **offline_status(app.state.store.data_dir)}
+
+    @app.get("/api/offline")
+    def get_offline():
+        return offline_status(app.state.store.data_dir)
+
+    @app.put("/api/offline")
+    def put_offline(body: OfflineIn):
+        try:
+            return write_settings_offline(app.state.store.data_dir, body.offline)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.get("/api/presets")
     def presets(dataset_id: str = "sample", connection_id: str | None = None):
@@ -172,6 +198,7 @@ def create_app(
                 preset_id=preset_id,
                 dataset_path=str(dataset_path),
                 background=True,
+                offline=bool(pair.get("offline")),
             )
             started.append({"connection_id": saved["id"], "run_id": run["run_id"], "model": profile.get("model")})
         return {
@@ -236,9 +263,12 @@ def create_app(
         if root.endswith("/v1"):
             root = root[:-3]
         try:
+            refuse_remote_http(root, what="remote Ollama")
             response = requests.get(f"{root}/api/tags", timeout=5)
             response.raise_for_status()
             payload = response.json()
+        except RuntimeError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         except requests.RequestException as exc:
             raise HTTPException(status_code=502, detail=f"Could not list Ollama models: {exc}") from exc
         names = []

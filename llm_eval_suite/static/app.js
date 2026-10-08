@@ -153,12 +153,57 @@ function updateLocalWeights() {
 function updateCloudBanner() {
   const profile = profileFromForm();
   const local = !profile.base_url || /localhost|127\.0\.0\.1|\[::1\]/.test(profile.base_url);
-  $("cloud-banner").classList.toggle("hidden", local || profile.type === "hf" || profile.type === "nanogpt");
+  const banner = $("cloud-banner");
+  const hide = local || profile.type === "hf" || profile.type === "nanogpt";
+  const blocked = state.offline && state.offline.openai_cloud_blocked;
+  banner.textContent = !hide && blocked
+    ? "Offline mode blocks the OpenAI cloud API. This endpoint will be refused."
+    : "This endpoint is not on this computer. Prompts will leave the machine.";
+  banner.classList.toggle("hidden", hide);
   updateLocalWeights();
+}
+
+function applyOfflineStatus() {
+  const status = state.offline || {};
+  const banner = $("offline-banner");
+  const toggle = $("offline-toggle");
+  const note = $("rail-offline-note");
+  if (toggle) {
+    toggle.checked = !!status.offline;
+    toggle.disabled = !!status.forced;
+  }
+  if (status.offline) {
+    banner.textContent = status.message || "Offline mode is on. The OpenAI cloud API is blocked.";
+    banner.classList.remove("hidden");
+    if (note) note.textContent = "Offline mode is on. The OpenAI cloud API is blocked.";
+  } else if (banner) {
+    banner.textContent = "";
+    banner.classList.add("hidden");
+    if (note) note.textContent = "Runs on this computer. Nothing leaves it unless you choose a cloud endpoint.";
+  }
+  updateCloudBanner();
+}
+
+async function loadOffline() {
+  state.offline = await api("/api/offline");
+  applyOfflineStatus();
 }
 
 ["conn-url", "conn-type"].forEach((id) => $(id).addEventListener("input", updateCloudBanner));
 $("conn-type").addEventListener("change", updateCloudBanner);
+$("offline-toggle").addEventListener("change", async () => {
+  try {
+    state.offline = await api("/api/offline", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ offline: $("offline-toggle").checked }),
+    });
+    applyOfflineStatus();
+  } catch (err) {
+    alert(err.message);
+    await loadOffline();
+  }
+});
 
 $("list-models").addEventListener("click", async () => {
   const button = $("list-models");
@@ -946,6 +991,7 @@ $("save-judges").addEventListener("click", async () => {
 /* ---------- Boot ---------- */
 
 async function boot() {
+  await loadOffline();
   await loadConnections();
   await loadPresets();
   await loadRuns();

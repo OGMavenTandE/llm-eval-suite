@@ -198,6 +198,7 @@ class RunManager:
         background: bool = True,
         in_process: bool | None = None,
         watch_cancel: bool = False,
+        offline: bool | None = None,
     ) -> dict:
         if resume_run_id:
             run_id = resume_run_id
@@ -209,6 +210,8 @@ class RunManager:
             run_dir = self.runs_dir / run_id
             run_dir.mkdir(parents=True, exist_ok=True)
         expanded = expand_preset(preset_id)
+        if offline:
+            expanded = {**expanded, "offline": True}
         rows = load_dataset(dataset_path)
         dataset_hash = sha256_file(Path(dataset_path))
         completed = self._completed_ids(run_dir)
@@ -260,8 +263,13 @@ class RunManager:
                 connection=connection,
                 preset_id=preset_id,
                 dataset_path=str(dataset_path),
+                offline=bool(expanded.get("offline")),
             )
             return self.get(run_id)
+        from llm_eval.offline import activate_run_offline
+
+        data_dir = self.timing.path.parent if self.timing is not None else None
+        activate_run_offline(preset=expanded, data_dir=data_dir)
         cancel = threading.Event()
         with self._lock:
             self._cancel[run_id] = cancel
@@ -387,12 +395,23 @@ class RunManager:
         self._write_run(run_dir, record)
         return analysis
 
-    def _spawn_worker(self, *, run_id: str, run_dir: Path, connection: dict, preset_id: str, dataset_path: str) -> None:
+    def _spawn_worker(
+        self,
+        *,
+        run_id: str,
+        run_dir: Path,
+        connection: dict,
+        preset_id: str,
+        dataset_path: str,
+        offline: bool = False,
+    ) -> None:
         job = {
             "runs_dir": str(self.runs_dir),
             "timing_path": str(self.timing.path) if self.timing else "",
+            "data_dir": str(self.timing.path.parent) if self.timing else "",
             "connection": connection,
             "preset_id": preset_id,
+            "offline": bool(offline),
             "dataset_path": dataset_path,
             "resume_run_id": run_id,
         }
