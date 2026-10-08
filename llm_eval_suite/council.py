@@ -834,6 +834,117 @@ def _failure_score_tokens(narrative: str, results) -> list[str]:
     return bad
 
 
+def _singularize(word: str) -> str:
+    """One trailing plural, so hallucinations matches hallucination."""
+    if len(word) <= 3:
+        return word
+    if word.endswith("ies") and len(word) > 4:
+        return word[:-3] + "y"
+    if word.endswith("s") and not word.endswith("ss"):
+        return word[:-1]
+    return word
+
+
+def _compact(text: str) -> str:
+    """Case, camelCase, hyphen, and spacing folded into one token string."""
+    spaced = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", text or "")
+    spaced = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1 \2", spaced)
+    parts = [part for part in re.split(r"[^A-Za-z0-9]+", spaced.lower()) if part]
+    return "".join(_singularize(part) for part in parts)
+
+
+def _name_forms(text: str) -> set[str]:
+    """Full name and each separator piece, compacted.
+
+    A dot keeps the probe class together, so ``Dan_11_0`` matches that class.
+    ``jail-break`` matches the ``jailbreak`` piece. ``inject base64`` matches
+    ``InjectBase64``. A leftover fragment such as ``base64`` or ``cloze`` does not.
+    """
+    forms: set[str] = set()
+    raw = str(text or "").strip()
+    if not raw:
+        return forms
+    full = _compact(raw)
+    if len(full) >= 4:
+        forms.add(full)
+    pieces = [part for part in re.split(r"[.]+", raw) if part]
+    for piece in pieces:
+        compact = _compact(piece)
+        if len(compact) >= 4:
+            forms.add(compact)
+        for part in re.split(r"[^A-Za-z0-9]+", piece):
+            part_compact = _compact(part)
+            if len(part_compact) >= 4:
+                forms.add(part_compact)
+    return forms
+
+
+def _row_name_forms(row: dict) -> set[str]:
+    forms: set[str] = set()
+    for key in ("category", "label"):
+        value = row.get(key)
+        if isinstance(value, str) and value.strip():
+            forms.update(_name_forms(value))
+    return forms
+
+
+def _token_windows(text: str) -> list[tuple[str, int, int]]:
+    """Alphanumeric tokens with spans. Hyphens and underscores split them."""
+    return [(match.group(0), match.start(), match.end()) for match in re.finditer(r"[A-Za-z0-9]+", text or "")]
+
+
+def _window_matches(text: str, forms: set[str]) -> bool:
+    tokens = _token_windows(text)
+    if not tokens or not forms:
+        return False
+    upper = min(6, len(tokens))
+    for size in range(1, upper + 1):
+        for index in range(0, len(tokens) - size + 1):
+            phrase = " ".join(token for token, _start, _end in tokens[index : index + size])
+            compact = _compact(phrase)
+            if len(compact) >= 4 and compact in forms:
+                return True
+    return False
+
+
+def _ordered_category_mentions(sentence: str, rows: list[dict]) -> list[dict]:
+    """Categories named in ``sentence``, in the order the names appear."""
+    tokens = _token_windows(sentence)
+    if not tokens:
+        return []
+    forms_list = [_row_name_forms(row) for row in rows]
+    hits: list[tuple[int, int, int]] = []
+    upper = min(6, len(tokens))
+    for size in range(1, upper + 1):
+        for index in range(0, len(tokens) - size + 1):
+            window = tokens[index : index + size]
+            compact = _compact(" ".join(token for token, _start, _end in window))
+            if len(compact) < 4:
+                continue
+            start = window[0][1]
+            end = window[-1][2]
+            for row_index, forms in enumerate(forms_list):
+                if compact in forms:
+                    hits.append((start, end, row_index))
+                    break
+    if not hits:
+        return []
+    hits.sort(key=lambda item: (item[0], -(item[1] - item[0])))
+    occupied: list[tuple[int, int]] = []
+    first_at: dict[int, int] = {}
+    for start, end, row_index in hits:
+        if any(start < prev_end and end > prev_start for prev_start, prev_end in occupied):
+            continue
+        occupied.append((start, end))
+        first_at.setdefault(row_index, start)
+    order = sorted(first_at, key=lambda index: first_at[index])
+    return [rows[index] for index in order]
+
+
+def _number_spans(text: str) -> list[tuple[str, int, int]]:
+    return [(match.group(1), match.start(1), match.end(1)) for match in NUMBER_RE.finditer(text or "")]
+
+
 def _category_name_parts(row: dict) -> set[str]:
     parts: set[str] = set()
 
@@ -885,25 +996,69 @@ def _token_fits_category(token: str, figures: list[float], percents: list[float]
     return False
 
 
+def _respectively_spans(sentence: str, rows: list[dict]) -> dict[tuple[int, int], bool]:
+    """Pair figures with categories in order when the sentence says respectively.
+
+    Each side of the word is its own list. A list is paired only when its
+    length is a multiple of the name count, so a stray total is left alone.
+    The value is True when that figure belongs to the category in that slot.
+    """
+    marker = re.search(r"\brespectively\b", sentence or "", re.IGNORECASE)
+    if marker is None:
+        return {}
+    names = _ordered_category_mentions(sentence, rows)
+    if len(names) < 2:
+        return {}
+    spans = _number_spans(sentence)
+    before = [span for span in spans if span[2] <= marker.start()]
+    after = [span for span in spans if span[1] >= marker.end()]
+    paired: dict[tuple[int, int], bool] = {}
+    width = len(names)
+    for group in (before, after):
+        if not group or len(group) % width != 0:
+            continue
+        for offset in range(0, len(group), width):
+            for span, row in zip(group[offset : offset + width], names):
+                token, start, end = span
+                figures, percents = _category_figure_values(row)
+                paired[(start, end)] = _token_fits_category(token, figures, percents)
+    return paired
+
+
 def _category_figure_tokens(narrative: str, results) -> list[str]:
     """A figure in the same clause as a category must belong to that category.
 
     "Factuality passed 68.4% of 50" is rejected because 68.4 is Security's
     pass rate. The clause split is the same one the label scan uses.
+    A respectively sentence is paired in order first, so "Toxicity and
+    Hallucination passed with 100% and 94%, respectively" keeps both rates.
+    The swapped pair is rejected even though each rate exists on its own.
     """
-    rows = [row for row in _category_rows(results) if _category_name_parts(row)]
+    rows = [row for row in _category_rows(results) if _category_name_parts(row) or _row_name_forms(row)]
     if not rows:
         return []
     bad = []
     for sentence in _sentences(narrative):
+        paired = _respectively_spans(sentence, rows)
+        for token, start, end in _number_spans(sentence):
+            if paired.get((start, end)) is False:
+                bad.append(token)
+        search_from = 0
         for clause in _CLAUSE_SPLIT_RE.split(sentence):
             if not clause.strip():
                 continue
+            idx = sentence.find(clause, search_from)
+            if idx < 0:
+                idx = search_from
+            search_from = idx + len(clause)
             named = [row for row in rows if _clause_names_category(clause, row)]
             if not named:
                 continue
             packed = [_category_figure_values(row) for row in named]
-            for token in extract_numbers(clause):
+            for token, start, end in _number_spans(clause):
+                span = (idx + start, idx + end)
+                if span in paired:
+                    continue
                 if any(_token_fits_category(token, figures, percents) for figures, percents in packed):
                     continue
                 # A score on a failed row in this category is one of its figures.
@@ -914,6 +1069,9 @@ def _category_figure_tokens(narrative: str, results) -> list[str]:
 
 
 def _clause_names_category(clause: str, row: dict) -> bool:
+    forms = _row_name_forms(row)
+    if forms and _window_matches(clause, forms):
+        return True
     lowered = clause.lower()
     for name in _category_name_parts(row):
         if re.search(rf"\b{re.escape(name)}\b", lowered):
@@ -940,17 +1098,13 @@ def _category_failure_scores(rows: list[dict], results) -> set[float]:
     return scores
 
 
-def _known_topic_names(results) -> set[str]:
-    names: set[str] = set()
+def _iter_topic_strings(results) -> list[str]:
+    found: list[str] = []
 
     def add(text: str) -> None:
-        raw = str(text).strip().lower()
-        if len(raw) < 4:
-            return
-        names.add(raw)
-        for piece in re.split(r"[^a-z0-9]+", raw):
-            if len(piece) >= 4:
-                names.add(piece)
+        raw = str(text).strip()
+        if len(raw) >= 4:
+            found.append(raw)
 
     def walk(value) -> None:
         if isinstance(value, dict):
@@ -967,25 +1121,43 @@ def _known_topic_names(results) -> set[str]:
             for item in value:
                 if isinstance(item, (dict, list, tuple)):
                     walk(item)
-                elif isinstance(item, str):
-                    continue
 
     walk(results)
     for row in _category_rows(results):
         add(str(row.get("category") or ""))
         add(str(row.get("label") or ""))
+    return found
+
+
+def _known_topic_names(results) -> set[str]:
+    names: set[str] = set()
+    for raw in _iter_topic_strings(results):
+        lowered = raw.lower()
+        names.add(lowered)
+        for piece in re.split(r"[^a-z0-9]+", lowered):
+            if len(piece) >= 4:
+                names.add(piece)
     return names
+
+
+def _known_topic_forms(results) -> set[str]:
+    forms: set[str] = set()
+    for raw in _iter_topic_strings(results):
+        forms.update(_name_forms(raw))
+    return forms
 
 
 def _unsupported_topic_tokens(narrative: str, results) -> list[str]:
     """Flag a category, probe, or content name that is not in the results.
 
     "offensive content" is rejected. "security_jailbreak category" is kept
-    when that category is in the results. Vague words such as "this category"
-    are not treated as names.
+    when that category is in the results. Case, plural, hyphen, and spacing
+    variants of a real name are kept, including ``jail-break`` and
+    ``literature cloze``. Vague words such as "this category" are not names.
     """
     known = _known_topic_names(results)
-    if not known:
+    forms = _known_topic_forms(results)
+    if not known and not forms:
         return []
     bad = []
     for match in _TOPIC_RE.finditer(narrative or ""):
@@ -995,9 +1167,69 @@ def _unsupported_topic_tokens(narrative: str, results) -> list[str]:
         kept = [word for word in words if word not in _TOPIC_STOP]
         if not kept or all(len(word) < 4 for word in kept):
             continue
+        phrase = " ".join(kept)
         if any(word in known for word in kept) or core.lower() in known:
             continue
-        bad.append(f"{' '.join(kept)} {match.group(2)}".strip())
+        if _compact(phrase) in forms or _compact(core) in forms:
+            continue
+        bad.append(f"{phrase} {match.group(2)}".strip())
+    return bad
+
+
+_ABSOLUTE_RE = re.compile(
+    r"\b("
+    r"passed\s+completely|completely\s+passed|"
+    r"all\s+passed|passed\s+all|"
+    r"perfect|flawless|"
+    r"no\s+failures?"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def _negated_before(text: str, start: int) -> bool:
+    prefix = text[max(0, start - 32) : start]
+    return re.search(r"(?:\bnot\b|\bnever\b|n't)(?:\s+\w+){0,2}\s*$", prefix, re.IGNORECASE) is not None
+
+
+def _absolute_claim_tokens(narrative: str, results) -> list[str]:
+    """Absolute wording has to name a category that passed every item.
+
+    "Hallucination passed completely" is rejected when that category is below
+    a full pass. "Toxicity passed completely" is kept when Toxicity passed
+    every item. "was not perfect" is not this claim. A clause that names no
+    category inherits the names from the sentence, so "In Hallucination, all
+    passed" is still checked.
+    """
+    rows = [row for row in _category_rows(results) if _row_name_forms(row)]
+    if not rows:
+        return []
+    bad = []
+    for sentence in _sentences(narrative):
+        sentence_names = _ordered_category_mentions(sentence, rows)
+        search_from = 0
+        clauses = [part for part in _CLAUSE_SPLIT_RE.split(sentence) if part.strip()]
+        if not clauses:
+            clauses = [sentence]
+        for clause in clauses:
+            idx = sentence.find(clause, search_from)
+            if idx < 0:
+                idx = search_from
+            search_from = idx + len(clause)
+            named = _ordered_category_mentions(clause, rows) or sentence_names
+            weak = False
+            for row in named:
+                rate = _category_pass_rate(row)
+                if rate is not None and rate < 0.999:
+                    weak = True
+                    break
+            if not weak:
+                continue
+            for match in _ABSOLUTE_RE.finditer(clause):
+                abs_start = idx + match.start()
+                if _negated_before(sentence, abs_start):
+                    continue
+                bad.append(" ".join(match.group(1).lower().split()))
     return bad
 
 
@@ -1019,8 +1251,14 @@ def unmatched_numbers(narrative: str, results: dict) -> list[str]:
     ``all N`` must be a category where every item has that outcome.
     A score attributed to failures must be a score from the failed rows.
     A figure in the same clause as a category name must belong to that
-    category. A category, probe, or content name that is not in the results
-    is rejected. Numbers glued to words, such as a model name, are ignored.
+    category. A respectively construction pairs the figures in order with
+    the categories named in that sentence, and each pair has to match.
+    A category, probe, or content name matches a name in the results after
+    case, plural, hyphen, and spacing differences. A name that is still not
+    in the results is rejected. Absolute wording (passed completely, all
+    passed, passed all, perfect, flawless, no failures) is rejected when it
+    names a category that did not pass every item. Numbers glued to words,
+    such as a model name, are ignored.
     """
     blob = json.dumps(results, default=str)
     present = set(extract_numbers(blob))
@@ -1056,6 +1294,8 @@ def unmatched_numbers(narrative: str, results: dict) -> list[str]:
     for token in _category_figure_tokens(narrative, results):
         add(token)
     for token in _unsupported_topic_tokens(narrative, results):
+        add(token)
+    for token in _absolute_claim_tokens(narrative, results):
         add(token)
     return bad
 

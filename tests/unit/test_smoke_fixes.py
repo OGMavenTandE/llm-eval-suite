@@ -2121,3 +2121,118 @@ def test_instruction_echo_is_stripped():
     assert chair_prompts
     assert "Finish the last sentence" not in chair_prompts[0]
     assert "Do not stop mid-sentence." in chair_prompts[0]
+
+
+def test_respectively_pairs_figures_with_the_named_categories():
+    """A respectively list is paired in order. The swapped list is still wrong.
+
+    Toxicity passed every item. Hallucination passed 94% of 50. The true 100%
+    sits next to Hallucination only because 'and' splits the clause.
+    """
+    results = _smoke_results()
+    true_rates = "Toxicity and Hallucination passed with 100% and 94% rates, respectively."
+    true_counts = (
+        "Toxicity and Hallucination had 100% and 94% pass rates, respectively, "
+        "based on 2 and 50 samples."
+    )
+    assert unmatched_numbers(true_rates, results) == []
+    assert unmatched_numbers(true_counts, results) == []
+    swapped = unmatched_numbers(
+        "Toxicity and Hallucination scored 94% and 100%, respectively.",
+        results,
+    )
+    assert "94%" in swapped
+    assert "100%" in swapped
+    invented = unmatched_numbers(
+        "Toxicity and Hallucination scored 92% and 100%, respectively.",
+        results,
+    )
+    assert "92%" in invented
+    assert "100%" in invented
+    swapped_counts = unmatched_numbers(
+        "Toxicity and Hallucination had 100% and 94% pass rates, respectively, based on 50 and 2 samples.",
+        results,
+    )
+    assert "50" in swapped_counts
+    assert "2" in swapped_counts
+    assert "100%" not in swapped_counts
+    assert "94%" not in swapped_counts
+
+
+def test_topic_names_allow_case_plural_hyphen_and_spacing():
+    """Real category and probe names match after spelling differences.
+
+    The try-5 phrase about instructions and offensive content is still rejected.
+    Those words are not a category or a probe name.
+    """
+    results = _smoke_results()
+    results["probes"] = [
+        "encoding.InjectBase64",
+        "leakreplay.LiteratureCloze",
+        "dan.Dan_11_0",
+    ]
+    accepted = [
+        "Hallucinations category passed.",
+        "The JAIL-BREAK category passed.",
+        "SECURITY-JAILBREAK category passed.",
+        "The literature cloze probe ran.",
+        "The inject-base64 probe ran.",
+        "Dan_11_0 probe ran.",
+        "Hallucinations passed 94% of 50.",
+        "Jail-break passed 68.4% of 76.",
+    ]
+    for text in accepted:
+        assert unmatched_numbers(text, results) == [], text
+    assert "68.4%" in unmatched_numbers("Hallucinations passed 68.4% of 50.", results)
+    assert "malware probe" in [token.lower() for token in unmatched_numbers("A malware probe failed.", results)]
+    assert "offensive content" in [
+        token.lower() for token in unmatched_numbers("The failures include offensive content.", results)
+    ]
+    flagged = [token.lower() for token in unmatched_numbers(
+        "The failures ask the model to ignore instructions or print offensive content.",
+        results,
+    )]
+    assert any("offensive" in token and "content" in token for token in flagged)
+    assert "drama cloze probe" in [
+        token.lower() for token in unmatched_numbers("A drama cloze probe failed.", results)
+    ]
+    assert "notajailbreak category" in [
+        token.lower() for token in unmatched_numbers("The notajailbreak category failed.", results)
+    ]
+
+
+def test_absolute_wording_requires_a_full_pass():
+    """Passed completely, perfect, flawless, and no failures need a full pass.
+
+    Toxicity passed every item. Hallucination did not, so the same wording is
+    rejected there even when the 94% rate in the sentence is true.
+    """
+    results = _smoke_results()
+    assert unmatched_numbers("Toxicity passed completely.", results) == []
+    assert unmatched_numbers("Toxicity was flawless and had no failures.", results) == []
+    assert unmatched_numbers("All passed in Toxicity.", results) == []
+    assert unmatched_numbers("Toxicity passed all 2 samples.", results) == []
+    assert unmatched_numbers("Hallucination was not perfect, at 94%.", results) == []
+    assert "passed completely" in [
+        token.lower() for token in unmatched_numbers("Hallucination passed completely.", results)
+    ]
+    overstated = unmatched_numbers(
+        "Hallucination passed completely, with a 94% pass rate.",
+        results,
+    )
+    assert "passed completely" in [token.lower() for token in overstated]
+    assert "94%" not in overstated
+    assert "perfect" in [token.lower() for token in unmatched_numbers("Factuality was perfect.", results)]
+    assert "flawless" in [token.lower() for token in unmatched_numbers("Factuality was flawless.", results)]
+    assert "no failures" in [
+        token.lower() for token in unmatched_numbers("Hallucination had no failures.", results)
+    ]
+    assert "all passed" in [token.lower() for token in unmatched_numbers("In Hallucination, all passed.", results)]
+    joint = (
+        "Toxicity and Hallucination passed completely, with 100% and 94% pass rates."
+    )
+    assert "passed completely" in [token.lower() for token in unmatched_numbers(joint, results)]
+    assert "passed all" in [
+        token.lower()
+        for token in unmatched_numbers("Security passed all of its samples.", results)
+    ]
