@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from dow_bench.items import count_items as count_dow_items
 from llm_eval.garak.live import garak_is_installed, planned_garak_attempts
 from llm_eval.offline import demo_base_folder, demo_base_warning, offline_preset_note
 from llm_eval_suite.timing import DEFAULT_SECONDS_PER_PROMPT
@@ -22,7 +23,17 @@ MEASURED_ESTIMATE_SCALE = (
     + (28.4 / (27.0 / 0.873))
 ) / 4.0
 
-SUITE_KEYS = ("garak", "factcheck", "robustness", "consistency", "rampart", "dioptra")
+SUITE_KEYS = (
+    "garak",
+    "factcheck",
+    "robustness",
+    "consistency",
+    "rampart",
+    "dioptra",
+    "dow_knowledge",
+    "honest_broker",
+    "lawful_order",
+)
 
 DEMO_MODEL_A_FOLDER = r"C:\AI Eval\LLMs\nanoGPT-master\nanoGPT-master\hf-dow-news"
 DEMO_MODEL_B = "gpt2-medium"
@@ -134,13 +145,24 @@ def estimate_preset(
         rows = dataset_rows if not limit else min(int(dataset_rows), int(limit))
         perturbations = len(robust.get("perturbations") or ["case"])
         robust_prompts = rows * (1 + perturbations)
+    dow_counts = {}
+    for dow_name in ("dow_knowledge", "honest_broker", "lawful_order"):
+        dow_config = body.get(dow_name)
+        if not dow_config:
+            continue
+        dow_counts[dow_name] = count_dow_items(dow_name, dow_config)
+    dow_prompts = sum(dow_counts.values())
     consistency = body.get("consistency") or {}
     consistency_prompts = 0
     if consistency:
         limit = consistency.get("max_items")
         rows = dataset_rows if not limit else min(int(dataset_rows), int(limit))
         consistency_prompts = rows * int(consistency.get("num_runs") or 3)
-    known = [count for count in (garak_prompts, fact_prompts, robust_prompts, consistency_prompts) if count is not None]
+    known = [
+        count
+        for count in (garak_prompts, fact_prompts, robust_prompts, consistency_prompts, dow_prompts)
+        if count is not None
+    ]
     prompt_count = sum(known) if not unbounded else None
     if suite_rates is not None and not unbounded:
         counts = {
@@ -148,6 +170,7 @@ def estimate_preset(
             "factcheck": fact_prompts,
             "robustness": robust_prompts,
             "consistency": consistency_prompts,
+            **dow_counts,
         }
         used = []
         total_seconds = 0.0

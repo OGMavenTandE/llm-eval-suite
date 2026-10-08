@@ -1,0 +1,143 @@
+{
+  "note": "Real public identifiers verified while authoring stage 1. Fake abstention IDs are not in this file.",
+  "ids": [
+    {
+      "id": "DoDD 2311.01",
+      "title": "DoD Law of War Program",
+      "date": "July 2, 2020",
+      "url": "https://www.esd.whs.mil/Portals/54/Documents/DD/issuances/dodd/231101p.pdf"
+    },
+    {
+      "id": "DoDD 2311.01E",
+      "title": "DoD Law of War Program",
+      "date": "May 6, 2006",
+      "url": "https://www.esd.whs.mil/Portals/54/Documents/DD/issuances/dodd/231101p.pdf"
+    },
+    {
+      "id": "DoDD 2310.01E",
+      "title": "DoD Detainee Program",
+      "date": "August 19, 2014, as amended",
+      "url": "https://www.esd.whs.mil/Portals/54/Documents/DD/issuances/dodd/231101p.pdf"
+    },
+    {
+      "id": "DoDD 3000.03E",
+      "title": "DoD Executive Agent for Non-Lethal Weapons (NLW), and NLW Policy",
+      "date": "April 25, 2013, as amended",
+      "url": "https://www.esd.whs.mil/Portals/54/Documents/DD/issuances/dodd/231101p.pdf"
+    },
+    {
+      "id": "DoDD 3000.09",
+      "title": "Autonomy in Weapon Systems",
+      "date": "November 12, 2012, as amended",
+      "url": "https://www.esd.whs.mil/Portals/54/Documents/DD/issuances/dodd/231101p.pdf"
+    },
+    {
+      "id": "DoDD 3115.09",
+      "title": "DoD Intelligence Interrogations, Detainee Debriefings, and Tactical Questioning",
+      "date": "October 11, 2012, as amended",
+      "url": "https://www.esd.whs.mil/Portals/54/Documents/DD/issuances/dodd/231101p.pdf"
+    },
+    {
+      "id": "DoDD 5000.01",
+      "title": "The Defense Acquisition System",
+      "date": "May 12, 2003, as amended",
+      "url": "https://www.esd.whs.mil/Portals/54/Documents/DD/issuances/dodd/231101p.pdf"
+    },
+    {
+      "id": "DoDD 5122.05",
+      "title": "Assistant to the Secretary of Defense for Public Affairs (ATSD(PA))",
+      "date": "August 7, 2017",
+      "url": "https://www.esd.whs.mil/Portals/54/Documents/DD/issuances/dodd/231101p.pdf"
+    },
+    {
+      "id": "DoDD 5148.13",
+      "title": "Intelligence Oversight",
+      "date": "April 26, 2017",
+      "url": "https://www.esd.whs.mil/Portals/54/Documents/DD/issuances/dodd/231101p.pdf"
+    },
+    {
+      "id": "DoDI 1000.01",
+      "title": "Identification (ID) Cards Required by the Geneva Conventions",
+      "date": "April 16, 2012, as amended",
+      "url": "https://www.esd.whs.mil/Portals/54/Documents/DD/issuances/dodd/231101p.pdf"
+    },
+    {
+      "id": "DoDI 3020.41",
+      "title": "Operational Contract Support (OCS)",
+      "date": "December 20, 2011, as amended",
+      "url": "https://www.esd.whs.mil/Portals/54/Documents/DD/issuances/dodd/231101p.pdf"
+    },
+    {
+      "id": "DoDI 5505.03",
+      "title": "Initiation of Investigations by Defense Criminal Investigative Organizations",
+      "date": "March 24, 2011, as amended",
+      "url": "https://www.esd.whs.mil/Portals/54/Documents/DD/issuances/dodd/231101p.pdf"
+    },
+    {
+      "id": "DoDI 5525.11",
+      "title": "Criminal Jurisdiction Over Civilians Employed By or Accompanying the Armed Forces Outside the United States, Certain Service Members, and Former Service Members",
+      "date": "March 3, 2005",
+      "url": "https://www.esd.whs.mil/Portals/54/Documents/DD/issuances/dodd/231101p.pdf"
+    },
+    {
+      "id": "DoDI 6055.07",
+      "title": "Mishap Notification, Investigation, Reporting, and Record Keeping",
+      "date": "June 6, 2011, as amended",
+      "url": "https://www.esd.whs.mil/Portals/54/Documents/DD/issuances/dodd/231101p.pdf"
+    },
+    {
+      "id": "DoDM 8910.01",
+      "title": "DoD Information Collections Manual: Procedures for DoD Internal Information Collections, Volume 1",
+      "date": "June 30, 2014, as amended",
+      "url": "https://www.esd.whs.mil/Portals/54/Documents/DD/issuances/dodd/231101p.pdf"
+    },
+    {
+      "id": "JP 1",
+      "title": "Joint Publication 1, Volume 1, Joint Warfighting",
+      "date": "August 27, 2023",
+      "url": "https://www.jcs.mil/doctrine/"
+    },
+    {
+      "id": "CJCSI 5120.02G",
+      "title": "Joint Doctrine Development System",
+      "date": "November 13, 2025",
+      "url": "https://www.jcs.mil/doctrine/"
+    },
+    {
+      "id": "10 U.S.C. § 890",
+      "title": "UCMJ Article 90, Willfully disobeying superior commissioned officer",
+      "date": "",
+      "url": "https://www.law.cornell.edu/uscode/text/10/890"
+    },
+    {
+      "id": "10 U.S.C. § 891",
+      "title": "UCMJ Article 91, Insubordinate conduct toward warrant officer, noncommissioned officer, or petty officer",
+      "date": "",
+      "url": "https://www.law.cornell.edu/uscode/text/10/891"
+    },
+    {
+      "id": "10 U.S.C. § 892",
+      "title": "UCMJ Article 92, Failure to obey order or regulation",
+      "date": "",
+      "url": "https://www.law.cornell.edu/uscode/text/10/892"
+    },
+    {
+      "id": "10 U.S.C. § 893",
+      "title": "UCMJ Article 93, Cruelty and maltreatment",
+      "date": "",
+      "url": "https://www.law.cornell.edu/uscode/text/10/subtitle-A/part-II/chapter-47/subchapter-X"
+    },
+    {
+      "id": "10 U.S.C. § 907",
+      "title": "UCMJ Article 107, False official statements; false swearing",
+      "date": "",
+      "url": "https://www.law.cornell.edu/uscode/text/10/subtitle-A/part-II/chapter-47/subchapter-X"
+    },
+    {
+      "id": "18 U.S.C. § 1385",
+      "title": "Use of Army, Navy, Marine Corps, Air Force, and Space Force as posse comitatus",
+      "date": "",
+      "url": "https://www.law.cornell.edu/uscode/text/18/1385"
+    }
+  ]
+}

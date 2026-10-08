@@ -1,0 +1,15 @@
+{
+  "note": "Fabricated identifiers for abstention items. They are not real issuances and must never be added to the whitelist.",
+  "ids": [
+    {"id": "DoDD 7481.66", "title": "Wartime Cookie Ration Directive"},
+    {"id": "DoDI 8800.44", "title": "Mandatory Haiku Reporting"},
+    {"id": "DoDD 4242.42", "title": "Purple Smoke Courtesy Directive"},
+    {"id": "CJCSI 7777.01", "title": "Unicorn Readiness Instruction"},
+    {"id": "JP 99-9", "title": "Joint Pastry Operations"},
+    {"id": "DoDM 6161.61", "title": "Invisible Ink Correspondence Manual"},
+    {"id": "DoDD 1357.91", "title": "Tuesday Parade Sock Alignment"},
+    {"id": "DoDI 2468.10", "title": "Mandatory Balloon Inventory"},
+    {"id": "CJCSI 9090.90", "title": "Imaginary Peninsula Standing Order"},
+    {"id": "JP 77-7", "title": "Joint Kettle Drill"}
+  ]
+}

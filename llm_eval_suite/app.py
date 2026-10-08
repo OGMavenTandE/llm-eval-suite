@@ -55,6 +55,10 @@ class ConnectionIn(BaseModel):
     cloud: bool = False
     hub: bool = False
     max_new_tokens: int | None = None
+    precision: str = ""
+    thinking_max_tokens: int | None = None
+    trust_remote_code: bool = False
+    use_chat_template: bool | str | None = None
 
 
 class TestIn(BaseModel):
@@ -133,6 +137,14 @@ def create_app(
         if not icon.is_file():
             raise HTTPException(status_code=404, detail="Favicon is missing")
         return FileResponse(icon, media_type="image/x-icon")
+
+    @app.get("/api/dow/export")
+    def dow_export():
+        from dow_bench.export import write_export
+
+        destination = runs / "dow_leaderboard.csv"
+        paths = write_export(runs, destination)
+        return FileResponse(paths["csv"], media_type="text/csv", filename="dow_leaderboard.csv")
 
     @app.get("/api/health")
     def health():

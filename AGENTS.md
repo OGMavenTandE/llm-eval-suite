@@ -88,7 +88,7 @@ New YAML evaluator: subclass `BaseEvaluator` in `llm_eval/evaluators/`, add it t
 
 New YAML model provider: add the class to `MODEL_REGISTRY` in `llm_eval/models/__init__.py` and the name to `SUPPORTED_PROVIDERS` in `config_service.py`. Today those names are `ollama` and `openai`. The Hugging Face folder path is a click-through connection type in `llm_eval_suite/connections.py` (`openai`, `ollama`, `hf`, `nanogpt`), not a YAML provider.
 
-New preset: add an object to `llm_eval_suite/presets.json`. Keys the runner understands are `garak`, `factcheck`, `robustness`, `consistency`, `rampart`, and `dioptra`.
+New preset: add an object to `llm_eval_suite/presets.json`. Keys the runner understands are `garak`, `factcheck`, `robustness`, `consistency`, `rampart`, `dioptra`, `dow_knowledge`, `honest_broker`, and `lawful_order`.
 
 New garak probe list: edit the preset's `garak.probes`. A probe name containing `leakreplay` is run in its own process.
 

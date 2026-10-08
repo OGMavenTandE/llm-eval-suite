@@ -122,6 +122,35 @@
                 <label for="conn-folder">Folder or checkpoint path</label>
                 <input id="conn-folder" placeholder="C:\models\gpt2-medium" spellcheck="false">
               </div>
+              <div class="field">
+                <label for="conn-precision">Precision <span class="optional">optional</span></label>
+                <select id="conn-precision">
+                  <option value="">Loader default</option>
+                  <option value="bf16">bf16</option>
+                  <option value="fp16">fp16</option>
+                  <option value="8bit">8bit</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="conn-max-new">Max new tokens <span class="optional">optional</span></label>
+                <input id="conn-max-new" type="number" min="1" placeholder="512">
+              </div>
+              <div class="field">
+                <label for="conn-thinking">Thinking token cap <span class="optional">optional</span></label>
+                <input id="conn-thinking" type="number" min="1" placeholder="For reasoning models">
+              </div>
+              <div class="field">
+                <label for="conn-chat-template">Chat template</label>
+                <select id="conn-chat-template">
+                  <option value="auto">Auto</option>
+                  <option value="on">On</option>
+                  <option value="off">Off</option>
+                </select>
+              </div>
+              <div class="field span-2">
+                <label for="conn-trust">Trust remote code <span class="optional">off by default. No stage-1 model needs it</span></label>
+                <input id="conn-trust" type="checkbox">
+              </div>
               <div class="field span-2">
                 <label for="convert-out">Converter output folder</label>
                 <input id="convert-out" placeholder="C:\models\gpt2-export" spellcheck="false">
