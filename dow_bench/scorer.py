@@ -16,7 +16,7 @@ from pathlib import Path
 PACKAGE_DIR = Path(__file__).resolve().parent
 
 _ISSUANCE_RE = re.compile(
-    r"\b(DoDD|DoDI|DoDM|CJCSI|JP)\s*([0-9]+(?:[.\-][0-9]+)?[A-Z]?)(?:\s*,?\s*Volume\s*([0-9]+))?",
+    r"\b(DoDD|DoDI|DoDM|DoWI|CJCSI|CJCSM|JP)\s*([0-9]+(?:[.\-][0-9]+)?[A-Z]?)(?:\s*,?\s*Volume\s*([0-9]+))?",
     re.IGNORECASE,
 )
 _USC_RE = re.compile(
@@ -31,6 +31,7 @@ _UCMJ_TO_USC = {
     "92": "10USC892",
     "93": "10USC893",
     "107": "10USC907",
+    "118": "10USC918",
 }
 
 _MC_MARKED = re.compile(

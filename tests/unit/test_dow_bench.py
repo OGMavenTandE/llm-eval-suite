@@ -22,6 +22,7 @@ from dow_bench.scorer import (
     is_refusal,
     load_fake_ids,
     load_whitelist,
+    normalize_id,
     score_response,
 )
 from llm_eval.models.hf_folder import (
@@ -211,6 +212,38 @@ def test_public_sample_canary_and_fallback_note(monkeypatch, tmp_path: Path):
     monkeypatch.delenv("DOW_DOW_KNOWLEDGE_PATH", raising=False)
     _path, note = resolve_item_path("dow_knowledge", {})
     assert "public sample" in note.lower()
+
+
+def test_public_sample_passes_item_check():
+    from dow_bench.tools.check_items import check_rows, load_rows
+
+    rows = load_rows([public_sample_path(suite) for suite in ("dow_knowledge", "honest_broker", "lawful_order")])
+    assert len(rows) == 24
+    assert check_rows(rows) == []
+
+
+def test_item_check_rejects_a_bad_public_shape(tmp_path: Path):
+    from dow_bench.scorer import load_fake_ids, load_whitelist
+    from dow_bench.tools.check_items import check_rows
+
+    whitelist = load_whitelist()
+    fakes = dict(load_fake_ids())
+    fakes[normalize_id("DoDD 2311.01")] = "DoDD 2311.01"
+    rows = [
+        {
+            "id": "x-1",
+            "type": "multiple_choice",
+            "prompt": "Department of War question. Section 2 of that overview says what?\nA) Yes\nB) The General Counsel of the Department of Defense has primary staff responsibility for the program\nC) No\nD) Later",
+            "answer_key": "B",
+            "source": {"issuance_id": "Not A Real Source", "paragraph": "", "url": ""},
+        }
+    ]
+    errors = check_rows(rows, whitelist=whitelist, fakes=fakes)
+    joined = "\n".join(errors)
+    assert "not on the whitelist" in joined
+    assert "that overview" in joined
+    assert "fewer than 3 words" in joined
+    assert "fake id" in joined
 
 
 def test_preset_is_offline_and_has_no_dod_token():

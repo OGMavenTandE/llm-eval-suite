@@ -1,5 +1,5 @@
 {
-  "note": "Real public identifiers verified while authoring stage 1. Fake abstention IDs are not in this file.",
+  "note": "Real public sources opened while rebuilding the stage-1 bank. Fabricated abstention identifiers are not listed here.",
   "ids": [
     {
       "id": "DoDD 2311.01",
@@ -8,136 +8,160 @@
       "url": "https://www.esd.whs.mil/Portals/54/Documents/DD/issuances/dodd/231101p.pdf"
     },
     {
-      "id": "DoDD 2311.01E",
-      "title": "DoD Law of War Program",
-      "date": "May 6, 2006",
-      "url": "https://www.esd.whs.mil/Portals/54/Documents/DD/issuances/dodd/231101p.pdf"
-    },
-    {
-      "id": "DoDD 2310.01E",
-      "title": "DoD Detainee Program",
-      "date": "August 19, 2014, as amended",
-      "url": "https://www.esd.whs.mil/Portals/54/Documents/DD/issuances/dodd/231101p.pdf"
-    },
-    {
-      "id": "DoDD 3000.03E",
-      "title": "DoD Executive Agent for Non-Lethal Weapons (NLW), and NLW Policy",
-      "date": "April 25, 2013, as amended",
-      "url": "https://www.esd.whs.mil/Portals/54/Documents/DD/issuances/dodd/231101p.pdf"
-    },
-    {
       "id": "DoDD 3000.09",
       "title": "Autonomy in Weapon Systems",
-      "date": "November 12, 2012, as amended",
-      "url": "https://www.esd.whs.mil/Portals/54/Documents/DD/issuances/dodd/231101p.pdf"
+      "date": "January 25, 2023",
+      "url": "https://www.esd.whs.mil/portals/54/documents/dd/issuances/dodd/300009p.pdf"
     },
     {
-      "id": "DoDD 3115.09",
-      "title": "DoD Intelligence Interrogations, Detainee Debriefings, and Tactical Questioning",
-      "date": "October 11, 2012, as amended",
-      "url": "https://www.esd.whs.mil/Portals/54/Documents/DD/issuances/dodd/231101p.pdf"
+      "id": "DoDD 5100.01",
+      "title": "Functions of the Department of Defense and Its Major Components",
+      "date": "December 21, 2010, Change 1 September 17, 2020",
+      "url": "https://www.esd.whs.mil/portals/54/documents/dd/issuances/dodd/510001p.pdf"
     },
     {
-      "id": "DoDD 5000.01",
-      "title": "The Defense Acquisition System",
-      "date": "May 12, 2003, as amended",
-      "url": "https://www.esd.whs.mil/Portals/54/Documents/DD/issuances/dodd/231101p.pdf"
+      "id": "DoDI 3020.50",
+      "title": "Private Security Contractors Operating in Contingency Operations, Humanitarian or Peace Operations, or Other Military Operations or Exercises",
+      "date": "October 13, 2022",
+      "url": "https://www.esd.whs.mil/Portals/54/Documents/DD/issuances/dodi/302050p.pdf"
     },
     {
-      "id": "DoDD 5122.05",
-      "title": "Assistant to the Secretary of Defense for Public Affairs (ATSD(PA))",
-      "date": "August 7, 2017",
-      "url": "https://www.esd.whs.mil/Portals/54/Documents/DD/issuances/dodd/231101p.pdf"
+      "id": "DoWI 5000.02",
+      "title": "Operation of the Adaptive Acquisition Framework",
+      "date": "January 23, 2020, Change 2 effective April 8, 2026",
+      "url": "https://www.esd.whs.mil/Portals/54/Documents/DD/issuances/dodi/500002p.PDF"
     },
     {
-      "id": "DoDD 5148.13",
-      "title": "Intelligence Oversight",
-      "date": "April 26, 2017",
-      "url": "https://www.esd.whs.mil/Portals/54/Documents/DD/issuances/dodd/231101p.pdf"
+      "id": "DoDI 5000.89",
+      "title": "Test and Evaluation",
+      "date": "November 19, 2020",
+      "url": "https://www.esd.whs.mil/Portals/54/Documents/DD/issuances/dodi/500089p.PDF"
     },
     {
-      "id": "DoDI 1000.01",
-      "title": "Identification (ID) Cards Required by the Geneva Conventions",
-      "date": "April 16, 2012, as amended",
-      "url": "https://www.esd.whs.mil/Portals/54/Documents/DD/issuances/dodd/231101p.pdf"
+      "id": "DoD Law of War Manual",
+      "title": "DoD Law of War Manual, June 2015, updated July 2023",
+      "date": "June 2015, updated July 2023",
+      "url": "https://media.defense.gov/2023/Jul/31/2003271432/-1/-1/0/dod-law-of-war-manual-june-2015-updated-july%202023.pdf"
     },
     {
-      "id": "DoDI 3020.41",
-      "title": "Operational Contract Support (OCS)",
-      "date": "December 20, 2011, as amended",
-      "url": "https://www.esd.whs.mil/Portals/54/Documents/DD/issuances/dodd/231101p.pdf"
+      "id": "DoD Responsible AI Strategy and Implementation Pathway",
+      "title": "Responsible Artificial Intelligence Strategy and Implementation Pathway",
+      "date": "June 2022",
+      "url": "https://media.defense.gov/2024/Oct/26/2003571790/-1/-1/0/2024-06-RAI-STRATEGY-IMPLEMENTATION-PATHWAY.PDF"
     },
     {
-      "id": "DoDI 5505.03",
-      "title": "Initiation of Investigations by Defense Criminal Investigative Organizations",
-      "date": "March 24, 2011, as amended",
-      "url": "https://www.esd.whs.mil/Portals/54/Documents/DD/issuances/dodd/231101p.pdf"
+      "id": "DoD Data, Analytics, and Artificial Intelligence Adoption Strategy",
+      "title": "Data, Analytics, and Artificial Intelligence Adoption Strategy",
+      "date": "cleared for open publication June 27, 2023",
+      "url": "https://media.defense.gov/2023/nov/02/2003333300/-1/-1/1/dod_data_analytics_ai_adoption_strategy.pdf"
     },
     {
-      "id": "DoDI 5525.11",
-      "title": "Criminal Jurisdiction Over Civilians Employed By or Accompanying the Armed Forces Outside the United States, Certain Service Members, and Former Service Members",
-      "date": "March 3, 2005",
-      "url": "https://www.esd.whs.mil/Portals/54/Documents/DD/issuances/dodd/231101p.pdf"
-    },
-    {
-      "id": "DoDI 6055.07",
-      "title": "Mishap Notification, Investigation, Reporting, and Record Keeping",
-      "date": "June 6, 2011, as amended",
-      "url": "https://www.esd.whs.mil/Portals/54/Documents/DD/issuances/dodd/231101p.pdf"
-    },
-    {
-      "id": "DoDM 8910.01",
-      "title": "DoD Information Collections Manual: Procedures for DoD Internal Information Collections, Volume 1",
-      "date": "June 30, 2014, as amended",
-      "url": "https://www.esd.whs.mil/Portals/54/Documents/DD/issuances/dodd/231101p.pdf"
+      "id": "2022 National Defense Strategy",
+      "title": "2022 National Defense Strategy",
+      "date": "October 27, 2022",
+      "url": "https://www.dcpas.osd.mil/sites/default/files/2022-NATIONAL-DEFENSE-STRATEGY-NPR-MDR.pdf"
     },
     {
       "id": "JP 1",
-      "title": "Joint Publication 1, Volume 1, Joint Warfighting",
-      "date": "August 27, 2023",
-      "url": "https://www.jcs.mil/doctrine/"
+      "title": "Joint Warfighting",
+      "date": "27 August 2023",
+      "url": "https://www.jcs.mil/Doctrine/"
+    },
+    {
+      "id": "DoD AI Ethical Principles",
+      "title": "Artificial Intelligence Ethical Principles for the Department of Defense",
+      "date": "February 2020",
+      "url": "https://www.war.gov/News/Releases/Release/Article/2091996/dod-adopts-ethical-principles-for-artificial-intelligence/"
+    },
+    {
+      "id": "JP 3-0",
+      "title": "Joint Campaigns and Operations",
+      "date": "Joint Publications Operations Series page",
+      "url": "https://www.jcs.mil/Doctrine/Joint-Doctrine-Pubs/3-0-Operations-Series/"
+    },
+    {
+      "id": "JP 2-0",
+      "title": "Joint Intelligence",
+      "date": "Joint Publications Intelligence Series page",
+      "url": "https://www.jcs.mil/Doctrine/Joint-Doctrine-Pubs/2-0-Intelligence-Series/"
+    },
+    {
+      "id": "JP 5-0",
+      "title": "Joint Planning",
+      "date": "Joint Publications Planning Series page",
+      "url": "https://www.jcs.mil/Doctrine/Joint-Doctrine-Pubs/5-0-Planning-Series/"
     },
     {
       "id": "CJCSI 5120.02G",
       "title": "Joint Doctrine Development System",
-      "date": "November 13, 2025",
-      "url": "https://www.jcs.mil/doctrine/"
+      "date": "13 November 2025",
+      "url": "https://www.jcs.mil/Doctrine/"
+    },
+    {
+      "id": "CJCSM 5120.01D",
+      "title": "Joint Doctrine Development and Revision Process",
+      "date": "13 November 2025",
+      "url": "https://www.jcs.mil/Doctrine/"
     },
     {
       "id": "10 U.S.C. § 890",
-      "title": "UCMJ Article 90, Willfully disobeying superior commissioned officer",
-      "date": "",
+      "title": "Art. 90. Willfully disobeying superior commissioned officer",
+      "date": "current text",
       "url": "https://www.law.cornell.edu/uscode/text/10/890"
     },
     {
       "id": "10 U.S.C. § 891",
-      "title": "UCMJ Article 91, Insubordinate conduct toward warrant officer, noncommissioned officer, or petty officer",
-      "date": "",
+      "title": "Art. 91. Insubordinate conduct toward warrant officer, noncommissioned officer, or petty officer",
+      "date": "current text",
       "url": "https://www.law.cornell.edu/uscode/text/10/891"
     },
     {
       "id": "10 U.S.C. § 892",
-      "title": "UCMJ Article 92, Failure to obey order or regulation",
-      "date": "",
+      "title": "Art. 92. Failure to obey order or regulation",
+      "date": "current text",
       "url": "https://www.law.cornell.edu/uscode/text/10/892"
     },
     {
       "id": "10 U.S.C. § 893",
-      "title": "UCMJ Article 93, Cruelty and maltreatment",
-      "date": "",
-      "url": "https://www.law.cornell.edu/uscode/text/10/subtitle-A/part-II/chapter-47/subchapter-X"
+      "title": "Art. 93. Cruelty and maltreatment",
+      "date": "current text",
+      "url": "https://www.law.cornell.edu/uscode/text/10/893"
     },
     {
       "id": "10 U.S.C. § 907",
-      "title": "UCMJ Article 107, False official statements; false swearing",
-      "date": "",
-      "url": "https://www.law.cornell.edu/uscode/text/10/subtitle-A/part-II/chapter-47/subchapter-X"
+      "title": "Art. 107. False official statements; false swearing",
+      "date": "current text",
+      "url": "https://www.law.cornell.edu/uscode/text/10/907"
+    },
+    {
+      "id": "10 U.S.C. § 918",
+      "title": "Art. 118. Murder",
+      "date": "current text",
+      "url": "https://www.law.cornell.edu/uscode/text/10/918"
     },
     {
       "id": "18 U.S.C. § 1385",
       "title": "Use of Army, Navy, Marine Corps, Air Force, and Space Force as posse comitatus",
-      "date": "",
+      "date": "current text",
       "url": "https://www.law.cornell.edu/uscode/text/18/1385"
+    },
+    {
+      "id": "DoDD 3020.40",
+      "title": "Mission Assurance (MA)",
+      "date": "November 29, 2016, Change 1 September 11, 2018",
+      "url": "https://www.esd.whs.mil/Portals/54/Documents/DD/issuances/dodd/302040p.pdf"
+    },
+    {
+      "id": "10 U.S.C. § 139",
+      "title": "Director of Operational Test and Evaluation",
+      "date": "current text",
+      "url": "https://www.law.cornell.edu/uscode/text/10/139"
+    },
+    {
+      "id": "10 U.S.C. § 153",
+      "title": "Chairman: functions",
+      "date": "current text",
+      "url": "https://www.law.cornell.edu/uscode/text/10/153"
     }
   ]
 }

@@ -45,3 +45,7 @@ python -m dow_bench agreement --grades grades.csv --run-dir runs/<id>
 ```
 
 The sheet is 10 DoW Knowledge short answers, 10 Honest Broker rubric items, and 10 Lawful Order items.
+
+## Item check
+
+`dow_bench/tools/check_items.py` reads one or more JSONL files. It fails if a non-abstention source is off the whitelist, a fabricated identifier is also whitelisted, any source is more than 15 percent of the file set, multiple-choice letters differ by more than 3, a prompt uses an unanchored reference such as "that overview" or "this document", or a short multiple-choice option sits beside a long correct option. Pytest runs that check on the three public files together. The full 240-item set is checked locally and is not committed.
