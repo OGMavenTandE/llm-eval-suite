@@ -27,7 +27,12 @@ _META_NOTE_RE = re.compile(
     r"\bomitted numbers\b|"
     r"\bnumbers (?:that )?(?:were|was) not\b|"
     r"\bi (?:only )?used numbers (?:that|which) appear\b|"
-    r"\bno numbers were (?:invented|added)\b"
+    r"\bno numbers were (?:invented|added)\b|"
+    r"\blast sentence is (?:finished|complete)\b|"
+    r"\bfinished the last sentence\b|"
+    r"\bstop mid-sentence\b|"
+    r"\bas instructed\b|"
+    r"\bthese instructions\b"
     r")"
 )
 LABELS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -38,7 +43,7 @@ def extract_numbers(text: str) -> list[str]:
 
 
 def strip_meta_notes(text: str) -> str:
-    """Drop sentences that talk about the number check instead of the results."""
+    """Drop sentences that talk about the number check or repeat the prompt."""
     kept_paragraphs = []
     for paragraph in re.split(r"\n\s*\n", text or ""):
         sentences = re.split(r"(?<=[.!?])\s+", paragraph.strip())
@@ -584,20 +589,44 @@ def _label_kind(word: str) -> str | None:
     return None
 
 
+def _clause_words(fragment: str, *, reverse: bool) -> list[str]:
+    """Words on one side of a percent, stopping at a clause boundary.
+
+    'and', a comma, or a semicolon ends the clause. A sentence break does too.
+    At most three words are returned, nearest first.
+    """
+    tokens = re.findall(r"[A-Za-z]+|[,;:.!?]", fragment or "")
+    if reverse:
+        tokens = list(reversed(tokens))
+    words = []
+    for token in tokens:
+        if token in ",;:.!?" or token.lower() == "and":
+            break
+        words.append(token)
+        if len(words) >= 3:
+            break
+    return words
+
+
 def _nearby_label(text: str, start: int, end: int) -> str | None:
-    """The closest fail or pass word within three words of a percent."""
-    before = re.findall(r"[A-Za-z]+", text[:start])[-3:]
-    after = re.findall(r"[A-Za-z]+", text[end:])[:3]
+    """The closest fail or pass word within three words of a percent.
+
+    The scan stops at 'and', a comma, or a semicolon. When both sides are the
+    same distance, the word before the percent wins, so "a failure rate of
+    20.8% and a pass rate" stays a failure rate.
+    """
+    before = _clause_words(text[:start], reverse=True)
+    after = _clause_words(text[end:], reverse=False)
     best = None
     best_dist = 99
-    for dist, word in enumerate(reversed(before), start=1):
+    for dist, word in enumerate(before, start=1):
         kind = _label_kind(word)
         if kind and dist < best_dist:
             best = kind
             best_dist = dist
     for dist, word in enumerate(after, start=1):
         kind = _label_kind(word)
-        if kind and dist <= best_dist:
+        if kind and dist < best_dist:
             best = kind
             best_dist = dist
     return best
@@ -712,6 +741,266 @@ def _word_count_tokens(narrative: str, allowed: list[float], results) -> list[st
     return bad
 
 
+_FAILURE_CONTEXT_RE = re.compile(
+    r"\b(?:failures|failed(?:\s+(?:items?|prompts?|samples?|responses?|scores?))?|"
+    r"failing\s+(?:items?|prompts?|samples?|responses?)|"
+    r"failure\s+scores?)\b",
+    re.IGNORECASE,
+)
+_SCORE_MENTION_RE = re.compile(
+    r"\b(?:scores?\s+(?:of|being|at|were|was|is|are)?\s*|scored\s+)(\d+(?:\.\d+)?)",
+    re.IGNORECASE,
+)
+_CLAUSE_SPLIT_RE = re.compile(r"\s*(?:,|;|\band\b)\s*", re.IGNORECASE)
+_TOPIC_RE = re.compile(
+    r"\b((?:[A-Za-z][A-Za-z0-9_-]*\s+){0,3}[A-Za-z][A-Za-z0-9_-]*)\s+(category|probes?|content)\b",
+    re.IGNORECASE,
+)
+_TOPIC_STOP = {
+    "this",
+    "that",
+    "these",
+    "those",
+    "each",
+    "every",
+    "same",
+    "other",
+    "another",
+    "both",
+    "such",
+    "any",
+    "some",
+    "overall",
+    "main",
+    "full",
+    "plain",
+    "live",
+    "total",
+    "final",
+    "whole",
+    "the",
+    "its",
+    "include",
+    "includes",
+    "including",
+    "with",
+    "most",
+    "except",
+    "for",
+    "from",
+    "into",
+    "about",
+    "under",
+    "score",
+    "scores",
+    "one",
+    "failure",
+    "failures",
+    "failed",
+    "failing",
+    "items",
+    "item",
+    "prompts",
+    "prompt",
+}
+
+
+def _score_matches(token: str, scores: set[float]) -> bool:
+    try:
+        value = float(token)
+    except ValueError:
+        return False
+    return any(abs(value - score) <= 1e-9 for score in scores)
+
+
+def _failure_score_tokens(narrative: str, results) -> list[str]:
+    """A score attributed to failures must be a score from the failed rows.
+
+    "most scores being 1.0" is rejected when the failed rows are 0.0 and 0.5,
+    even if 1.0 appears on a passing item.
+    """
+    sample = _failure_samples(results)
+    if not sample:
+        return []
+    allowed = {float(item["score"]) for item in sample if _is_number(item.get("score"))}
+    bad = []
+    for sentence in _sentences(narrative):
+        if not _FAILURE_CONTEXT_RE.search(sentence):
+            continue
+        for match in _SCORE_MENTION_RE.finditer(sentence):
+            token = match.group(1)
+            if not _score_matches(token, allowed):
+                bad.append(token)
+    return bad
+
+
+def _category_name_parts(row: dict) -> set[str]:
+    parts: set[str] = set()
+
+    def add(text: str) -> None:
+        raw = str(text).strip().lower()
+        if not raw:
+            return
+        parts.add(raw)
+        for piece in re.split(r"[^a-z0-9]+", raw):
+            if len(piece) >= 4:
+                parts.add(piece)
+
+    add(str(row.get("category") or ""))
+    add(str(row.get("label") or ""))
+    return parts
+
+
+def _category_figure_values(row: dict) -> tuple[list[float], list[float]]:
+    """Counts, rates, percents, and failed-row scores that belong to one category."""
+    figures: list[float] = []
+    percents: list[float] = []
+    total = row.get("sample_count")
+    if _is_number(total):
+        figures.append(float(total))
+    for key, item in row.items():
+        if not _is_number(item):
+            continue
+        name = str(key).lower()
+        number = float(item)
+        if "percent" in name and 0 <= number <= 100:
+            figures.append(number)
+            figures.append(100.0 - number)
+            percents.extend((number, 100.0 - number))
+        elif name in _RATE_KEYS and 0 <= number <= 1:
+            figures.extend((number, 1.0 - number, number * 100.0, (1.0 - number) * 100.0))
+            percents.extend((number * 100.0, (1.0 - number) * 100.0))
+    for count in _split_counts(row):
+        figures.append(float(count))
+    return figures, percents
+
+
+def _token_fits_category(token: str, figures: list[float], percents: list[float]) -> bool:
+    if number_allowed(token, figures):
+        return True
+    parsed = _parse_percent_token(token if token.endswith("%") else f"{token}%")
+    if token.endswith("%") and parsed is not None and percents:
+        shown, places = parsed
+        return _matches_rate_percent(shown, places, percents)
+    return False
+
+
+def _category_figure_tokens(narrative: str, results) -> list[str]:
+    """A figure in the same clause as a category must belong to that category.
+
+    "Factuality passed 68.4% of 50" is rejected because 68.4 is Security's
+    pass rate. The clause split is the same one the label scan uses.
+    """
+    rows = [row for row in _category_rows(results) if _category_name_parts(row)]
+    if not rows:
+        return []
+    bad = []
+    for sentence in _sentences(narrative):
+        for clause in _CLAUSE_SPLIT_RE.split(sentence):
+            if not clause.strip():
+                continue
+            named = [row for row in rows if _clause_names_category(clause, row)]
+            if not named:
+                continue
+            packed = [_category_figure_values(row) for row in named]
+            for token in extract_numbers(clause):
+                if any(_token_fits_category(token, figures, percents) for figures, percents in packed):
+                    continue
+                # A score on a failed row in this category is one of its figures.
+                if _score_matches(token.rstrip("%"), _category_failure_scores(named, results)):
+                    continue
+                bad.append(token)
+    return bad
+
+
+def _clause_names_category(clause: str, row: dict) -> bool:
+    lowered = clause.lower()
+    for name in _category_name_parts(row):
+        if re.search(rf"\b{re.escape(name)}\b", lowered):
+            return True
+    return False
+
+
+def _category_failure_scores(rows: list[dict], results) -> set[float]:
+    sample = _failure_samples(results) or []
+    wanted = set()
+    for row in rows:
+        wanted.update(_category_name_parts(row))
+    scores: set[float] = set()
+    for item in sample:
+        if not _is_number(item.get("score")):
+            continue
+        label = str(item.get("category") or "").lower()
+        if not label:
+            continue
+        item_parts = {label}
+        item_parts.update(part for part in re.split(r"[^a-z0-9]+", label) if len(part) >= 4)
+        if item_parts & wanted:
+            scores.add(float(item["score"]))
+    return scores
+
+
+def _known_topic_names(results) -> set[str]:
+    names: set[str] = set()
+
+    def add(text: str) -> None:
+        raw = str(text).strip().lower()
+        if len(raw) < 4:
+            return
+        names.add(raw)
+        for piece in re.split(r"[^a-z0-9]+", raw):
+            if len(piece) >= 4:
+                names.add(piece)
+
+    def walk(value) -> None:
+        if isinstance(value, dict):
+            for key, item in value.items():
+                if key in {"category", "label", "probe", "probe_name", "name"} and isinstance(item, str):
+                    add(item)
+                elif key == "probes" and isinstance(item, list):
+                    for probe in item:
+                        if isinstance(probe, str):
+                            add(probe)
+                elif isinstance(item, (dict, list, tuple)):
+                    walk(item)
+        elif isinstance(value, (list, tuple)):
+            for item in value:
+                if isinstance(item, (dict, list, tuple)):
+                    walk(item)
+                elif isinstance(item, str):
+                    continue
+
+    walk(results)
+    for row in _category_rows(results):
+        add(str(row.get("category") or ""))
+        add(str(row.get("label") or ""))
+    return names
+
+
+def _unsupported_topic_tokens(narrative: str, results) -> list[str]:
+    """Flag a category, probe, or content name that is not in the results.
+
+    "offensive content" is rejected. "security_jailbreak category" is kept
+    when that category is in the results. Vague words such as "this category"
+    are not treated as names.
+    """
+    known = _known_topic_names(results)
+    if not known:
+        return []
+    bad = []
+    for match in _TOPIC_RE.finditer(narrative or ""):
+        core = re.sub(r"^(?:the|a|an)\s+", "", " ".join(match.group(1).split()), flags=re.IGNORECASE)
+        words = [word.lower() for word in re.findall(r"[A-Za-z0-9_]+", core)]
+        words = [word for word in words if word not in {"the", "a", "an"}]
+        kept = [word for word in words if word not in _TOPIC_STOP]
+        if not kept or all(len(word) < 4 for word in kept):
+            continue
+        if any(word in known for word in kept) or core.lower() in known:
+            continue
+        bad.append(f"{' '.join(kept)} {match.group(2)}".strip())
+    return bad
+
+
 def unmatched_numbers(narrative: str, results: dict) -> list[str]:
     """A narrative number must be an input figure or one whitelisted derivation.
 
@@ -725,8 +1014,13 @@ def unmatched_numbers(narrative: str, results: dict) -> list[str]:
     category's failed or passed count. A count of shown failures at a score
     is rejected when it does not match those rows. A count written as words
     is held to the same list. A percent next to fail or pass must be that
-    kind of rate, and ``all N`` must be a category where every item has that
-    outcome. Numbers glued to words, such as a model name, are ignored.
+    kind of rate. The nearer label wins, and on a tie the word before the
+    percent wins. The scan stops at 'and', a comma, or a semicolon.
+    ``all N`` must be a category where every item has that outcome.
+    A score attributed to failures must be a score from the failed rows.
+    A figure in the same clause as a category name must belong to that
+    category. A category, probe, or content name that is not in the results
+    is rejected. Numbers glued to words, such as a model name, are ignored.
     """
     blob = json.dumps(results, default=str)
     present = set(extract_numbers(blob))
@@ -756,6 +1050,12 @@ def unmatched_numbers(narrative: str, results: dict) -> list[str]:
     for token in _label_claim_tokens(narrative, results):
         add(token)
     for token in _all_claim_tokens(narrative, results):
+        add(token)
+    for token in _failure_score_tokens(narrative, results):
+        add(token)
+    for token in _category_figure_tokens(narrative, results):
+        add(token)
+    for token in _unsupported_topic_tokens(narrative, results):
         add(token)
     return bad
 
@@ -1334,7 +1634,7 @@ def run_council(
             "Do not say all N failed or passed unless every item in that category had that outcome. "
             "Do not copy a number that appears only in a review. "
             "Do not add or subtract any other figures. "
-            "Finish the last sentence. "
+            "Do not stop mid-sentence. "
             "Do not add a note about omitted numbers or about these instructions.\n\n"
             f"Allowed figures:\n{allowed_figures_text(chair_sources)}\n\n"
             f"Aggregate ranking: {json.dumps(aggregate)}\n\n"
@@ -1380,7 +1680,7 @@ def run_council(
             "Do not say all N failed or passed unless every item in that category had that outcome. "
             "Do not copy a number that appears only in a review. "
             "Do not add or subtract any other figures. "
-            "Finish the last sentence. "
+            "Do not stop mid-sentence. "
             "Do not add a note about omitted numbers or about these instructions.\n\n"
             f"Unsupported figures:\n{_rejection_lines(first_bad)}\n\n"
             f"Allowed figures:\n{allowed_figures_text(chair_sources)}\n\n"

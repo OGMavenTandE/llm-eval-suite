@@ -28,6 +28,8 @@ from llm_eval.models.openai_model import OpenAIModel
 from llm_eval_suite.compare import compare_runs
 from llm_eval_suite.connections import ConnectionStore, build_model, judge_max_tokens, judge_timeout
 from llm_eval_suite.council import (
+    NUMBER_RE,
+    _nearby_label,
     complete_sentences,
     judge_generate,
     run_council,
@@ -2005,3 +2007,117 @@ def test_analyze_logs_rejected_numbers(tmp_path, monkeypatch):
     log = (run_dir / "run.log").read_text(encoding="utf-8")
     assert f"Number check rejected 68.4% in: {sentence}" in log
     assert result["number_rejections"][0]["token"] == "68.4%"
+
+
+def _percent_labels(text: str) -> list[tuple[str, str | None]]:
+    found = []
+    for match in NUMBER_RE.finditer(text):
+        token = match.group(1)
+        if token.endswith("%"):
+            found.append((token, _nearby_label(text, match.start(), match.end())))
+    return found
+
+
+def test_label_scan_keeps_the_rate_before_the_percent():
+    """A tie used to prefer the following word, so 20.8% was read as a pass rate.
+
+    The repro is a failure rate and a pass rate in one clause. The word before
+    the percent wins, and the scan stops at 'and'.
+    """
+    results = _smoke_results()
+    paired = "resulting in a failure rate of 20.8% and a pass rate of 79.2%."
+    security = "with a failure rate of 31.6% and a pass rate of 68.4%."
+    toxicity = "a failure rate of 0% and a pass rate of 100%."
+    factuality = "a failure rate of 6% and a pass rate of 94%."
+    follow = "20.8% failed and 79.2% passed overall."
+    overall = "the overall failure rate is 20.8%, with 7 failure scores at 0.0."
+    assert _percent_labels(paired) == [("20.8%", "fail"), ("79.2%", "pass")]
+    assert _percent_labels(security) == [("31.6%", "fail"), ("68.4%", "pass")]
+    assert _percent_labels(toxicity) == [("0%", "fail"), ("100%", "pass")]
+    assert _percent_labels(factuality) == [("6%", "fail"), ("94%", "pass")]
+    assert _percent_labels(follow) == [("20.8%", "fail"), ("79.2%", "pass")]
+    assert _percent_labels(overall) == [("20.8%", "fail")]
+    for text in (paired, security, toxicity, factuality, follow, overall):
+        assert unmatched_numbers(text, results) == []
+    assert unmatched_numbers(
+        "failure rate of 31.6% and a pass rate of 68.4%.",
+        results,
+    ) == []
+    swapped = unmatched_numbers(
+        "a pass rate of 20.8% and a failure rate of 79.2%.",
+        results,
+    )
+    assert "20.8%" in swapped
+    assert "79.2%" in swapped
+    assert unmatched_numbers("68.4% failure rate", results) == ["68.4%"]
+
+
+def test_score_and_category_claims_have_to_match_that_context():
+    """0.963 is a passing score. It is not a failure and not a security score.
+
+    Shown failures are 7 at 0.0 and 1 at 0.5. 68.4% belongs to Security, not Factuality.
+    """
+    results = _smoke_results()
+    results["sample_scores"] = [0.0, 0.5, 1.0, 0.963]
+    results["failures_sample"] = [
+        {"id": f"f{index}", "score": 0.0, "category": "security_jailbreak"}
+        for index in range(7)
+    ]
+    results["failures_sample"].append(
+        {"id": "f7", "score": 0.5, "category": "security_jailbreak"}
+    )
+    results["probes"] = ["encoding.Encoding"]
+    claim = (
+        "The failures include offensive content, with most scores being 1.0, "
+        "except for one score of 0.963 in the security_jailbreak category."
+    )
+    flagged = unmatched_numbers(claim, results)
+    assert "1.0" in flagged
+    assert "0.963" in flagged
+    assert "offensive content" in [token.lower() for token in flagged]
+    assert unmatched_numbers(
+        "The failures scored 0.0 and one score of 0.5 in security_jailbreak.",
+        results,
+    ) == []
+    assert unmatched_numbers("Security passed 68.4% of 76.", results) == []
+    factuality = unmatched_numbers("Factuality passed 68.4% of 50.", results)
+    assert "68.4%" in factuality
+    assert "50" not in factuality
+    assert unmatched_numbers("encoding probe passed.", results) == []
+    assert "malware probe" in [token.lower() for token in unmatched_numbers("A malware probe failed.", results)]
+
+
+def test_instruction_echo_is_stripped():
+    cleaned = strip_meta_notes("Security passed 68.4%. The last sentence is finished.")
+    assert "68.4%" in cleaned
+    assert "finished" not in cleaned.lower()
+    assert strip_meta_notes("Do not stop mid-sentence.") == ""
+
+    run, items = _smoke_run()
+    judges = [
+        {"model": "qwen2.5:3b-instruct", "type": "ollama", "base_url": "http://127.0.0.1:11434"},
+        {"model": "llama3.2:3b", "type": "ollama", "base_url": "http://127.0.0.1:11434"},
+    ]
+    prompts = []
+
+    def generate_for(_judge):
+        def generate(prompt: str) -> str:
+            prompts.append(prompt)
+            if prompt.startswith("TASK: review"):
+                return "The failure count is 27. Security passed 68.4%."
+            if prompt.startswith("TASK: rank"):
+                return "RANKING: Review A > Review B"
+            return "Security passed 68.4% of 76. The last sentence is finished."
+
+        return generate
+
+    council = run_council(run, items, judges, under_test=run["connection"], generate_for=generate_for)
+    assert council["number_guard"] == "pass"
+    assert council["mode"] == "council"
+    assert "68.4%" in council["narrative"]
+    assert "76" in council["narrative"]
+    assert "finished" not in council["narrative"].lower()
+    chair_prompts = [prompt for prompt in prompts if prompt.startswith("TASK: chair")]
+    assert chair_prompts
+    assert "Finish the last sentence" not in chair_prompts[0]
+    assert "Do not stop mid-sentence." in chair_prompts[0]
