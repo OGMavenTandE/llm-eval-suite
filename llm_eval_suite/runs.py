@@ -630,8 +630,20 @@ class RunManager:
         total_count = None if total is None else int(total)
         if total_count and done >= total_count and state.get("frozen_elapsed") is None:
             state["frozen_elapsed"] = max(0.0, now - float(state["started"]))
+        suite_name = str(progress.get("name") or "")
         suite_rates = estimate.get("suite_rates") or {}
-        known = suite_rates.get(str(progress.get("name") or ""))
+        known = suite_rates.get(suite_name)
+        # Garak's stored suite rate still folds startup into every prompt, so
+        # the early ETA runs about 40% high. Use the measured per-prompt rate
+        # the pre-run estimate already shows, then blend toward the rate
+        # observed after the first completed attempt.
+        measured_rate = estimate.get("seconds_per_prompt")
+        if (
+            suite_name == "garak"
+            and estimate.get("estimate_source") == "measured"
+            and measured_rate is not None
+        ):
+            known = float(measured_rate)
         observed = state.get("rate") if done >= ETA_MIN_ITEMS and state.get("rate") else None
         rate = observed if observed is not None else (float(known) if known is not None else None)
         remaining = None if total_count is None else max(0, total_count - done)

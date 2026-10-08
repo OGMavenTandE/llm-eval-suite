@@ -419,7 +419,8 @@ def test_screens_load_and_invalid_score_is_withheld(tmp_path: Path):
         page.locator("#compare-out").get_by_text("No matching prompts changed.").wait_for()
         garak_compared = page.locator("#compare-out").inner_text()
         assert "No matching prompts changed." in garak_compared
-        assert "1 prompt in this category in each run couldn't be paired" in garak_compared
+        assert "1 prompt in each run couldn't be paired" in garak_compared
+        assert "in this category" not in garak_compared
         assert "2 prompts" not in garak_compared
         assert "garak samples different prompts each run" in garak_compared
         assert "No prompt scores changed" not in garak_compared
@@ -428,7 +429,8 @@ def test_screens_load_and_invalid_score_is_withheld(tmp_path: Path):
         page.click("#do-compare")
         page.locator("#compare-out").get_by_text("Earlier: 1, later: 2").wait_for()
         uneven = page.locator("#compare-out").inner_text()
-        assert "Earlier: 1, later: 2 prompts in this category couldn't be paired" in uneven
+        assert "Earlier: 1, later: 2 prompts couldn't be paired" in uneven
+        assert "in this category" not in uneven
         assert "No matching prompts changed." in uneven
         assert "No prompt scores changed" not in uneven
         page.select_option("#compare-left", "garak-d")

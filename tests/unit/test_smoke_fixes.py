@@ -1065,8 +1065,9 @@ def test_category_rate_allows_the_security_failure_count():
     The slack is half a count plus the stored rate's rounding step, so 23, 25,
     and 4 (from 50 at 94%, which is 3 failures) are rejected. Integers 10
     through 199 now pass 15 of 190. Every one-decimal percent from 0.0%
-    through 100.0% passes 106 of 1001. The offline smoke on the wider window
-    sampled 500 of the percents (55 accepted) and accepted 12 of 190 integers.
+    through 100.0% passes 108 of 1001, including 20.8% (27/130) and 79.2%.
+    The offline smoke on the wider window sampled 500 of the percents (55
+    accepted) and accepted 12 of 190 integers.
     """
     payload = {
         "failure_count": 27,
@@ -1118,7 +1119,14 @@ def test_category_rate_allows_the_security_failure_count():
     integers = [n for n in range(10, 200) if unmatched_numbers(f"{n} items", payload) == []]
     percents = [i for i in range(1001) if unmatched_numbers(f"{i / 10:.1f}%", payload) == []]
     assert integers == [24, 27, 31, 32, 47, 50, 52, 68, 69, 76, 94, 96, 100, 128, 130]
-    assert len(percents) == 106
+    # 27/130 is 20.8% failing, and 79.2% is the complement. 26.3% is not.
+    assert unmatched_numbers("20.8% failing", payload) == []
+    assert unmatched_numbers("79.2% passing", payload) == []
+    assert unmatched_numbers("26.3%", payload) == ["26.3%"]
+    assert 208 in percents
+    assert 792 in percents
+    assert 263 not in percents
+    assert len(percents) == 108
     assert 24 in integers
     assert 23 not in integers
     assert 25 not in integers
@@ -1367,8 +1375,18 @@ def test_compare_pairs_garak_prompts_and_counts_unpaired():
     assert missed["unpaired_prompts"] == 2
     assert missed["unpaired_left"] == 1
     assert missed["unpaired_right"] == 1
-    assert unpaired["unpaired_note"].startswith("No matching prompts changed. ")
-    assert uneven["unpaired_note"].startswith("No matching prompts changed. ")
+    assert unpaired["unpaired_note"] == (
+        "No matching prompts changed. "
+        "1 prompt in each run couldn't be paired "
+        "(garak samples different prompts each run)."
+    )
+    assert "in this category" not in unpaired["unpaired_note"]
+    assert uneven["unpaired_note"] == (
+        "No matching prompts changed. "
+        "Earlier: 1, later: 2 prompts couldn't be paired "
+        "(garak samples different prompts each run)."
+    )
+    assert "in this category" not in uneven["unpaired_note"]
 
 
 def test_unpaired_note_omits_the_opener_when_prompts_changed():
@@ -1416,6 +1434,21 @@ def test_unpaired_note_omits_the_opener_when_prompts_changed():
         "(garak samples different prompts each run)."
     )
     assert "No matching prompts changed" not in compared["unpaired_note"]
+
+    toxicity = dict(left_only, id="garak:tox", prompt="Say something rude", category="toxicity", score=0.0)
+    toxicity_later = dict(toxicity, id="garak:tox-later", prompt="Say something mean", score=1.0)
+    spread = compare_runs(
+        earlier,
+        later,
+        [shared, left_only, toxicity],
+        [shared_later, right_only, toxicity_later],
+    )
+    assert spread["unpaired_left"] == 2
+    assert spread["unpaired_right"] == 2
+    assert "in this category" not in spread["unpaired_note"]
+    assert spread["unpaired_note"] == (
+        "2 prompts in each run couldn't be paired (garak samples different prompts each run)."
+    )
 
 
 def test_elapsed_freezes_when_garak_hits_its_total(tmp_path: Path):
@@ -1527,3 +1560,250 @@ def test_eta_blend_replays_measured_garak_timelines():
                 assert error <= 0.25
     assert checked == 27
     assert worst <= 0.25
+
+
+def _shown_seconds(eta: float) -> int:
+    """Same half-up rounding the progress line uses for a whole number of seconds."""
+    return int(float(eta) + 0.5)
+
+
+def test_early_garak_eta_replays_the_live_smoke(tmp_path: Path, monkeypatch):
+    """Replay the two quick-preset garak clocks from the 02af232 smoke.
+
+    From 1% to 60% progress the old ETA ran about 0.33 s/prompt, +7 to +8 s
+    high. The pre-run rate was already 0.1953 s/prompt, then 0.1965 s/prompt.
+    The early error on the displayed seconds stays within 25%. The rate after
+    the first completed attempt does not include the startup gap.
+    """
+    clock = {"t": 0.0}
+    monkeypatch.setattr("llm_eval_suite.runs.time.perf_counter", lambda: clock["t"])
+    # 26 s at 1/78 is the rate the old ETA used. It must not be the prior.
+    startup_rate = 26 / 77
+    runs = (
+        (
+            "87463a5790ee",
+            0.1953,
+            [
+                (8.0, 1, 18.1),
+                (9.1, 4, 17.0),
+                (10.1, 8, 16.0),
+                (11.1, 10, 15.0),
+                (12.1, 13, 14.0),
+                (13.2, 17, 12.9),
+                (14.2, 19, 11.9),
+                (15.2, 23, 10.9),
+                (16.2, 26, 9.9),
+                (17.2, 28, 8.9),
+            ],
+            (9.1, 4, (9.1 - 8.0) / (4 - 1)),
+        ),
+        (
+            "80beca95e3d5",
+            0.1965,
+            [
+                (5.0, 1, 17.6),
+                (6.1, 5, 16.5),
+                (7.1, 7, 15.5),
+                (8.1, 11, 14.5),
+                (9.1, 13, 13.5),
+                (10.1, 18, 12.5),
+                (11.1, 22, 11.5),
+                (12.2, 24, 10.4),
+                (13.2, 28, 9.4),
+                (14.2, 33, 8.4),
+            ],
+            (6.1, 5, (6.1 - 5.0) / (5 - 1)),
+        ),
+    )
+    for run_id, prior, points, rate_check in runs:
+        manager = RunManager(tmp_path / "runs")
+        run_dir = manager.runs_dir / run_id
+        manager._write_run(
+            run_dir,
+            {
+                "run_id": run_id,
+                "estimate": {
+                    "estimate_source": "measured",
+                    "seconds_per_prompt": prior,
+                    "suite_rates": {"garak": startup_rate},
+                },
+            },
+        )
+        errors = []
+        for stamp, done, actual in points:
+            clock["t"] = stamp
+            progress = {"name": "garak", "total": 78, "done": done, "status": "running"}
+            manager._stamp_eta(run_dir, progress, run_id)
+            assert progress["eta_seconds"] is not None
+            shown = _shown_seconds(progress["eta_seconds"])
+            error = abs(shown - actual) / actual
+            errors.append(error)
+            assert error <= 0.25
+            if (stamp, done) == (rate_check[0], rate_check[1]):
+                assert manager._eta_state[(run_id, "garak")]["rate"] == pytest.approx(rate_check[2])
+        assert sum(errors) / len(errors) <= 0.25
+        # At 1 of 78 the displayed ETA is the measured prior, not 26 s.
+        assert errors[0] <= 0.25
+
+
+def _smoke_results() -> dict:
+    """Figures from run 878bd6a66542. 27 of 130 failed. Security was 24 of 76."""
+    failures = [{"id": f"f{index}", "score": 0.0} for index in range(7)]
+    failures.append({"id": "f7", "score": 0.5})
+    return {
+        "failure_count": 27,
+        "item_count": 130,
+        "failures_shown": 8,
+        "overall_pass_rate": None,
+        "overall_pass_percent": None,
+        "categories": [
+            {
+                "category": "security_jailbreak",
+                "label": "Security / jailbreak",
+                "sample_count": 76,
+                "pass_percent": 68.4,
+                "pass_rate": 0.6842,
+            },
+            {
+                "category": "toxicity",
+                "label": "Toxicity",
+                "sample_count": 2,
+                "pass_percent": 100.0,
+                "pass_rate": 1.0,
+            },
+            {
+                "category": "hallucination_factuality",
+                "label": "Factuality",
+                "sample_count": 50,
+                "pass_percent": 94.0,
+                "pass_rate": 0.94,
+            },
+        ],
+        "failures_sample": failures,
+        "sample_scores": [0.0, 0.5, 1.0],
+    }
+
+
+def test_number_guard_rejects_the_three_council_tries():
+    results = _smoke_results()
+    assert unmatched_numbers("20.8% failing", results) == []
+    assert unmatched_numbers("24 out of 76 failed, 31.6%", results) == []
+    assert unmatched_numbers("Toxicity passed 2 of 2.", results) == []
+    assert unmatched_numbers("Factuality passed 94% of 50.", results) == []
+    assert unmatched_numbers("7 responses scored 0.0 and 1 response scored 0.5.", results) == []
+
+    # Try 3. 20 and 26.3% are wrong. 20.8% and the seven 0.0 scores are real.
+    try3 = "Security had 20 out of 76 items failing, or 26.3%. Overall 20.8% failed. 7 responses scored 0.0."
+    flagged = unmatched_numbers(try3, results)
+    assert "20.8%" not in flagged
+    assert "7" not in flagged
+    assert "20" in flagged
+    assert "26.3%" in flagged
+
+    # Try 1. 27 and 76 are both real, but 27 is not Security's failed count.
+    try1 = "In Security / jailbreak, 27 out of 76 samples failed. One response scored 0.0."
+    flagged = unmatched_numbers(try1, results)
+    assert "27" in flagged
+    assert "one" in [token.lower() for token in flagged]
+
+    # Try 2. The counts that are stated match the shown failures. 1.0 is a real score.
+    try2 = "One sample scored 0.5, another scored 0.0, and most scored 1.0."
+    assert unmatched_numbers(try2, results) == []
+    # Against the results alone, the wrong Security figures stay illegal.
+    assert "20" in unmatched_numbers(try3, {"results": results, "aggregate_ranking": []})
+    assert "26.3%" in unmatched_numbers(try3, {"results": results, "aggregate_ranking": []})
+
+
+def test_council_does_not_accept_numbers_from_a_review():
+    results_card = _smoke_results()
+    run = {
+        "run_id": "878bd6a66542",
+        "preset": "quick",
+        "status": "completed",
+        "validity": "ok",
+        "connection": {"model": "model-under-test", "type": "ollama"},
+        "scorecard": {
+            "failure_count": results_card["failure_count"],
+            "item_count": results_card["item_count"],
+            "live_item_count": results_card["item_count"],
+            "categories": results_card["categories"],
+            "overall_pass_rate": None,
+            "overall_pass_percent": None,
+        },
+    }
+    items = [
+        {
+            "id": row["id"],
+            "passed": False,
+            "score": row["score"],
+            "source": "live",
+            "counts_toward_score": True,
+            "prompt": "probe",
+            "response": "bad",
+            "category": "security_jailbreak",
+        }
+        for row in results_card["failures_sample"]
+    ]
+    items.append(
+        {
+            "id": "pass-1",
+            "passed": True,
+            "score": 1.0,
+            "source": "live",
+            "counts_toward_score": True,
+            "prompt": "ok",
+            "response": "ok",
+            "category": "hallucination_factuality",
+        }
+    )
+    prompts = []
+
+    def generate_for(judge):
+        def generate(prompt: str) -> str:
+            prompts.append(prompt)
+            if prompt.startswith("TASK: review"):
+                if judge["model"] == "qwen2.5:3b-instruct":
+                    return (
+                        "The failure count is 27. "
+                        "Security had 20 out of 76 items failing, or about 26.3%."
+                    )
+                return "Security passed 68.4%. The failure count is 27."
+            if prompt.startswith("TASK: rank"):
+                return "RANKING: Review A > Review B"
+            return "Security had 20 out of 76 items failing, or 26.3%."
+
+        return generate
+
+    judges = [
+        {"model": "qwen2.5:3b-instruct", "type": "ollama", "base_url": "http://127.0.0.1:11434"},
+        {"model": "llama3.2:3b", "type": "ollama", "base_url": "http://127.0.0.1:11434"},
+    ]
+    council = run_council(run, items, judges, under_test=run["connection"], generate_for=generate_for)
+    chair_prompts = [prompt for prompt in prompts if prompt.startswith("TASK: chair")]
+    assert chair_prompts
+    assert "26.3" not in chair_prompts[0]
+    assert "20 out of 76" not in chair_prompts[0]
+    assert council["number_guard"] == "fallback"
+    assert "26.3" not in council["narrative"]
+    assert "20 out of 76" not in council["narrative"]
+
+    def accurate_for(_judge):
+        def generate(prompt: str) -> str:
+            if prompt.startswith("TASK: review"):
+                return "The failure count is 27. Security passed 68.4%."
+            if prompt.startswith("TASK: rank"):
+                return "RANKING: Review A > Review B"
+            return (
+                "27 of 130 items failed, 20.8%. "
+                "Security had 24 out of 76 failing, 31.6%. "
+                "Toxicity passed 2 of 2. Factuality passed 94% of 50. "
+                "7 responses scored 0.0 and 1 response scored 0.5."
+            )
+
+        return generate
+
+    passed = run_council(run, items, judges, under_test=run["connection"], generate_for=accurate_for)
+    assert passed["number_guard"] == "pass"
+    assert "20.8%" in passed["narrative"]
+    assert "24 out of 76" in passed["narrative"]
+    assert "31.6%" in passed["narrative"]
