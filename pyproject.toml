@@ -59,7 +59,7 @@ Issues = "https://github.com/OGMavenTandE/llm-eval-suite/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["llm_eval*", "apps*", "llm_eval_suite*", "dow_bench*"]
+include = ["llm_eval*", "apps*", "llm_eval_suite*", "dow_bench", "dow_bench.*"]
 
 [tool.setuptools.package-data]
 llm_eval_suite = ["static/*", "static/fonts/*", "static/favicon.ico", "presets.json"]

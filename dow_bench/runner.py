@@ -24,10 +24,33 @@ def _cancelled(ctx) -> bool:
     return bool(ctx.cancel is not None and ctx.cancel.is_set())
 
 
+def _answer_cap(ctx, config: dict) -> int:
+    """Preset cap, unless the caller set ``--max-new-tokens`` on this run."""
+    if ctx.connection.get("max_new_tokens_explicit"):
+        return int(ctx.connection.get("max_new_tokens") or 1024)
+    if config.get("max_new_tokens"):
+        return int(config["max_new_tokens"])
+    if ctx.connection.get("max_new_tokens"):
+        return int(ctx.connection["max_new_tokens"])
+    return 1024
+
+
+def _hit_token_cap(result, cap: int) -> bool:
+    meta = dict(getattr(result, "metadata", None) or {})
+    if "hit_token_cap" in meta:
+        return bool(meta.get("hit_token_cap"))
+    completion = meta.get("completion_tokens")
+    if completion is None:
+        completion = getattr(result, "tokens_used", None)
+    if completion is None:
+        return False
+    return int(completion) >= int(cap)
+
+
 def run_dow_suite(ctx, config: dict, suite: str) -> dict:
     path, sample_note = resolve_item_path(suite, config)
     rows = load_items(path)
-    cap = config.get("max_new_tokens") or ctx.connection.get("max_new_tokens") or 512
+    cap = _answer_cap(ctx, config)
     items = []
     done = 0
     total = len(rows)
@@ -59,6 +82,10 @@ def run_dow_suite(ctx, config: dict, suite: str) -> dict:
             "raw_response": raw_response,
             "empty": not bool(answer.strip()),
             "expected": row.get("answer_key") or "",
+            "answer_key": row.get("answer_key") or "",
+            "expected_ids": list(row.get("expected_ids") or []),
+            "correction_phrases": list(row.get("correction_phrases") or []),
+            "hit_token_cap": _hit_token_cap(result, cap),
             "rubric": row.get("rubric") or "",
             "source": "live",
             "dataset_category": row.get("type"),

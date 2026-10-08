@@ -13,7 +13,7 @@ apply_startup_offline()
 
 import requests
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -140,6 +140,17 @@ def create_app(
 
     @app.get("/api/dow/export")
     def dow_export():
+        from dow_bench.export import collect_rows, render_csv
+
+        payload = render_csv(collect_rows(runs))
+        return Response(
+            content=payload,
+            media_type="text/csv",
+            headers={"Content-Disposition": 'attachment; filename="dow_leaderboard.csv"'},
+        )
+
+    @app.post("/api/dow/export")
+    def dow_export_write():
         from dow_bench.export import write_export
 
         destination = runs / "dow_leaderboard.csv"

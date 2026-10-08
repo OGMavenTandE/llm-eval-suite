@@ -340,20 +340,8 @@ class HuggingFaceFolderModel(BaseModel):
         max_new = max(1, min(max_new, self.max_context - 1))
         budget = max(1, self.max_context - max_new)
         tokenizer = self._tokenizer
-        if self.use_chat_template is True:
-            use_chat = bool(getattr(tokenizer, "chat_template", None))
-        elif self.use_chat_template is False:
-            use_chat = False
-        else:
-            use_chat = self.mode == "chat" or (
-                self.mode == "auto" and getattr(tokenizer, "chat_template", None)
-            )
-        if use_chat and getattr(tokenizer, "chat_template", None):
-            prompt = tokenizer.apply_chat_template(
-                [{"role": "user", "content": prompt}],
-                tokenize=False,
-                add_generation_prompt=True,
-            )
+        use_chat = self._use_chat(tokenizer)
+        prompt = self.prepare_prompt(prompt)
         opened_think = prompt_opened_think(prompt)
         token_ids = tokenizer.encode(prompt)
         if len(token_ids) > budget:
@@ -380,6 +368,7 @@ class HuggingFaceFolderModel(BaseModel):
         limited = _trim_thinking(raw_text, tokenizer, think_cap) if think_cap > 0 else raw_text
         text = answer_after_think(limited, prompt_opened_think=opened_think)
         completion_tokens = int(new_tokens.shape[-1])
+        hit_token_cap = completion_tokens >= max_new
         return ModelResponse(
             text=text,
             latency_ms=latency_ms,
@@ -398,8 +387,33 @@ class HuggingFaceFolderModel(BaseModel):
                 "raw_text": raw_text,
                 "thinking_default": thinking,
                 "mamba_path": self.mamba_path,
+                "hit_token_cap": hit_token_cap,
             },
         )
+
+    def _use_chat(self, tokenizer) -> bool:
+        if self.use_chat_template is True:
+            return bool(getattr(tokenizer, "chat_template", None))
+        if self.use_chat_template is False:
+            return False
+        return self.mode == "chat" or (self.mode == "auto" and getattr(tokenizer, "chat_template", None))
+
+    def prepare_prompt(self, prompt: str) -> str:
+        """Apply the chat template when this folder uses one. Otherwise return the prompt."""
+        tokenizer = self._tokenizer
+        if tokenizer is not None and self._use_chat(tokenizer) and getattr(tokenizer, "chat_template", None):
+            return tokenizer.apply_chat_template(
+                [{"role": "user", "content": prompt}],
+                tokenize=False,
+                add_generation_prompt=True,
+            )
+        return prompt
+
+    def count_prompt_tokens(self, prompt: str) -> int:
+        """Token count of the prompt the way ``generate`` will send it."""
+        self._load()
+        prepared = self.prepare_prompt(prompt)
+        return len(self._tokenizer.encode(prepared or " "))
 
 
 def _model_thinks(name: str) -> bool:
