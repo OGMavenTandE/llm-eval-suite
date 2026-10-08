@@ -15,8 +15,10 @@ from llm_eval.models.context import strip_think_blocks
 from dow_bench.meta import PACKAGE_DIR
 
 SAME_FAMILY_STATUS = "not graded: judge is the same family"
+OVER_BUDGET_STATUS = "over_budget"
 DEFAULT_JUDGE = "Phi-4-mini-instruct"
 DEFAULT_BACKUP = "Granite 4.2 3B"
+DEFAULT_JUDGE_MAX_CONTEXT = 2048
 
 JUDGE_INSTRUCTION = (
     "Grade the answer against the rubric. Reply in exactly this form and nothing else:\n"
@@ -116,6 +118,20 @@ def apply_verdict(item: dict, parsed: dict, judge_name: str) -> dict:
     return updated
 
 
+def mark_over_budget(item: dict, judge_name: str) -> dict:
+    """The judge prompt does not fit. Do not truncate it and do not call the model."""
+    updated = dict(item)
+    updated["judge_verdict"] = None
+    updated["judge_reason"] = ""
+    updated["judge_status"] = OVER_BUDGET_STATUS
+    updated["judge_model"] = judge_name
+    if item.get("detector") == "judge":
+        updated["passed"] = None
+        updated["score"] = None
+        updated["counts_toward_score"] = False
+    return updated
+
+
 def mark_same_family(item: dict, judge_name: str) -> dict:
     updated = dict(item)
     updated["judge_verdict"] = None
@@ -129,6 +145,10 @@ def mark_same_family(item: dict, judge_name: str) -> dict:
     return updated
 
 
+def _word_count(text: str) -> int:
+    return len((text or "").split())
+
+
 def grade_items(
     items: list[dict],
     *,
@@ -136,9 +156,17 @@ def grade_items(
     judge_name: str,
     judge_generate,
     family_map: dict[str, str] | None = None,
+    judge_max_context: int = DEFAULT_JUDGE_MAX_CONTEXT,
+    count_tokens=None,
 ) -> list[dict]:
-    """Grade rubric rows. ``judge_generate`` is called with the judge prompt."""
+    """Grade rubric rows. ``judge_generate`` is called with the judge prompt.
+
+    A prompt longer than ``judge_max_context`` is recorded as ``over_budget``
+    and is not truncated or sent. ``count_tokens`` defaults to a whitespace
+    word count when the judge tokenizer is not loaded.
+    """
     mapping = family_map if family_map is not None else load_family_map()
+    counter = count_tokens or _word_count
     skip = same_family(model_name, judge_name, mapping)
     graded = []
     for item in items:
@@ -151,7 +179,11 @@ def grade_items(
         if skip:
             graded.append(mark_same_family(item, judge_name))
             continue
-        reply = judge_generate(judge_prompt(item))
+        prompt = judge_prompt(item)
+        if judge_max_context is not None and counter(prompt) > int(judge_max_context):
+            graded.append(mark_over_budget(item, judge_name))
+            continue
+        reply = judge_generate(prompt)
         graded.append(apply_verdict(item, parse_judge_output(reply), judge_name))
     return graded
 
@@ -163,6 +195,8 @@ def grade_run_dir(
     judge_generate,
     family_map: dict[str, str] | None = None,
     model_name: str | None = None,
+    judge_max_context: int = DEFAULT_JUDGE_MAX_CONTEXT,
+    count_tokens=None,
 ) -> dict:
     """Judge-only pass over a finished run. Rewrites items.jsonl."""
     directory = Path(run_dir)
@@ -184,13 +218,23 @@ def grade_run_dir(
         judge_name=judge_name,
         judge_generate=judge_generate,
         family_map=family_map,
+        judge_max_context=judge_max_context,
+        count_tokens=count_tokens,
     )
     items_path.write_text(
         "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in updated),
         encoding="utf-8",
     )
+    over_budget = sum(1 for row in updated if row.get("judge_status") == OVER_BUDGET_STATUS)
     record["judge_model"] = judge_name
     record["judge_status"] = "completed"
+    record["judge_over_budget"] = over_budget
+    record["judge_max_context"] = judge_max_context
     if run_path.is_file() or record:
         run_path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
-    return {"items": len(updated), "judge_model": judge_name, "model": model_name}
+    return {
+        "items": len(updated),
+        "judge_model": judge_name,
+        "model": model_name,
+        "over_budget": over_budget,
+    }

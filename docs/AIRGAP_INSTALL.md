@@ -22,8 +22,11 @@ Download torch from the CUDA index first so the wheelhouse contains the CUDA bui
 
 ```bash
 python -m pip install --no-index --find-links wheelhouse torch==2.13.0 garak==0.17.0 transformers==5.18.0
-python -m pip install --no-index --find-links wheelhouse -e .[api]
+python -m pip install --no-index --find-links wheelhouse .[api]
+pip install -e . --no-deps --no-index --no-build-isolation
 ```
+
+The last command is the offline editable install. `--no-deps` keeps pip from looking up packages. `--no-index` blocks the package index. `--no-build-isolation` uses the setuptools already on the machine, which is what writes the console scripts, including `llm-eval-dow`. setuptools and wheel have to be installed before that command. If the Scripts directory is not on PATH, `python -m dow_bench` runs the same tools.
 
 Set these before starting the app or a run:
 
@@ -69,3 +72,11 @@ garak 0.17.0 loads two classifiers from the Hugging Face hub when a misleading p
 - vocab.json
 
 `LLM_EVAL_GARAK_DETECTORS_DIR` changes the parent of both folders. The stage-1 Department of War suites do not call these detectors. Government T&E does, because its garak list includes the misleading probes.
+
+## Pinned offline wheels
+
+Copy this wheel into `wheelhouse` on the connected machine and check the sha256 before moving the media. It is used only for 8-bit loading of models such as Gemma 4 E2B.
+
+- bitsandbytes 0.50.2
+- `bitsandbytes-0.50.2-py3-none-win_amd64.whl`
+- sha256 `c697963c8fda3dcd0d7ebd9b5211ae4067feef7cd06e0350d4e816a434fe683d`

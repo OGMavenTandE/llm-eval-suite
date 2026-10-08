@@ -339,6 +339,10 @@ def test_airgap_install_note_matches_the_wheel_list():
     assert TRANSFORMERS_VERSION in text
     assert CUDA_INDEX in text
     assert "--no-index" in text
+    assert "pip install -e . --no-deps --no-index --no-build-isolation" in text
+    assert "bitsandbytes-0.50.2-py3-none-win_amd64.whl" in text
+    assert "c697963c8fda3dcd0d7ebd9b5211ae4067feef7cd06e0350d4e816a434fe683d" in text
+    assert "8-bit" in text
     assert "Department of War" in text
     assert "DoD" not in text
     assert "not an accreditation" in text

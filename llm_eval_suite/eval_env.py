@@ -11,6 +11,10 @@ from __future__ import annotations
 TORCH_VERSION = "2.13.0"
 GARAK_VERSION = "0.17.0"
 TRANSFORMERS_VERSION = "5.18.0"
+BITSANDBYTES_VERSION = "0.50.2"
+BITSANDBYTES_WHEEL = "bitsandbytes-0.50.2-py3-none-win_amd64.whl"
+BITSANDBYTES_SHA256 = "c697963c8fda3dcd0d7ebd9b5211ae4067feef7cd06e0350d4e816a434fe683d"
+OFFLINE_EDITABLE_INSTALL = "pip install -e . --no-deps --no-index --no-build-isolation"
 CUDA_INDEX = "https://download.pytorch.org/whl/cu126"
 CPU_INDEX = "https://download.pytorch.org/whl/cpu"
 VENV_DIR = ".venv-eval"
@@ -52,7 +56,8 @@ def wheelhouse_commands(dest: str = "wheelhouse") -> list[str]:
         f"python -m pip download -d {dest} {garak} {transformers} {torch} --extra-index-url {CUDA_INDEX}",
         f"python -m pip download -d {dest} .[api]",
         f"python -m pip install --no-index --find-links {dest} {torch} {garak} {transformers}",
-        f"python -m pip install --no-index --find-links {dest} -e .[api]",
+        f"python -m pip install --no-index --find-links {dest} .[api]",
+        OFFLINE_EDITABLE_INSTALL,
     ]
 
 

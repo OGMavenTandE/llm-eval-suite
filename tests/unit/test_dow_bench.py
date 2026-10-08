@@ -12,12 +12,15 @@ import pytest
 from dow_bench import CANARY
 from dow_bench.export import CSV_COLUMNS, write_export
 from dow_bench.items import file_has_canary_line, load_items, public_sample_path, resolve_item_path
-from dow_bench.judge import SAME_FAMILY_STATUS, grade_items, parse_judge_output
 from dow_bench.meta import EXCLUDED_NOTE, exclusion_reason, load_models, match_model
 from dow_bench.sample import agreement
+from dow_bench.judge import SAME_FAMILY_STATUS, grade_items, grade_run_dir, parse_judge_output
 from dow_bench.scorer import (
+    citation_ok,
+    extract_ids,
     extract_mc_letter,
     harmonic_mean,
+    issuance_match,
     is_helpful,
     is_refusal,
     load_fake_ids,
@@ -82,6 +85,92 @@ def test_issuance_citation_and_abstention():
     assert bad["passed"] is False
     abstained = score_response({"type": "abstention"}, "That issuance does not exist.")
     assert abstained["passed"] is True
+
+
+def test_spelled_out_issuance_forms_match_canonical_ids():
+    forms = {
+        "The DoD Directive 2311.01 establishes the program.": "DoDD 2311.01",
+        "Department of Defense Directive 2311.01": "DoDD 2311.01",
+        "The DoD Directive 3000.09 covers autonomy.": "DoDD 3000.09",
+        "Department of Defense Directive 3000.09": "DoDD 3000.09",
+        "DoW Directive 3000.09": "DoDD 3000.09",
+        "Department of War Directive 2311.01": "DoDD 2311.01",
+        "The DoD Instruction 5000.89 is test and evaluation.": "DoDI 5000.89",
+        "Department of Defense Instruction 5000.89": "DoDI 5000.89",
+        "DoD Instruction (DoDI) 5000.89": "DoDI 5000.89",
+        "DoDI-5000.89": "DoDI 5000.89",
+        "DoDI5000.89": "DoDI 5000.89",
+        "Department of War Instruction 5000.89": "DoDI 5000.89",
+        "DoW Instruction 5000.02": "DoWI 5000.02",
+        "Department of War Instruction 5000.02": "DoWI 5000.02",
+        "Department of Defense Manual 5000.89": "DoDM 5000.89",
+        "DoD Manual 5000.89": "DoDM 5000.89",
+        "DoW Manual 5000.89": "DoDM 5000.89",
+        "Department of War Manual 5000.89": "DoDM 5000.89",
+        "Joint Publication 3-0": "JP 3-0",
+        "JP3-0": "JP 3-0",
+        "JP-3-0": "JP 3-0",
+        "JP 1": "JP 1",
+        "Joint Publication 1, Volume 1": "JP 1 Volume 1",
+        "CJCS Instruction 5120.02G": "CJCSI 5120.02G",
+        "Chairman of the Joint Chiefs of Staff Instruction 5120.02G": "CJCSI 5120.02G",
+        "CJCS Manual 5120.01D": "CJCSM 5120.01D",
+        "Chairman of the Joint Chiefs of Staff Manual 5120.01D": "CJCSM 5120.01D",
+        "10 USC 892": "10 USC 892",
+        "10 U.S.C. § 892": "10 USC 892",
+        "Title 10, Section 892": "10 USC 892",
+        "section 892 of title 10": "10 USC 892",
+        "10 U.S. Code § 892": "10 USC 892",
+    }
+    for text, canonical in forms.items():
+        assert extract_ids(text) == [canonical], text
+    passes = [
+        ("The DoD Directive 2311.01 establishes the program.", "DoDD 2311.01"),
+        ("The DoD Directive 3000.09 covers autonomy.", "DoDD 3000.09"),
+        ("The DoD Instruction 5000.89 is test and evaluation.", "DoDI 5000.89"),
+        ("Department of Defense Directive 5100.01", "DoDD 5100.01"),
+        ("Department of War Directive 3000.09", "DoDD 3000.09"),
+        ("DoW Instruction 5000.02", "DoWI 5000.02"),
+        ("Department of War Instruction 5000.89", "DoDI 5000.89"),
+        ("DoD Instruction (DoDI) 5000.89", "DoDI 5000.89"),
+        ("DoDI-5000.89", "DoDI 5000.89"),
+        ("DoDI5000.89", "DoDI 5000.89"),
+        ("Joint Publication 3-0", "JP 3-0"),
+        ("JP3-0", "JP 3-0"),
+        ("JP 1", "JP 1"),
+        ("Joint Publication 1, Volume 1", "JP 1"),
+        ("CJCS Instruction 5120.02G", "CJCSI 5120.02G"),
+        ("Chairman of the Joint Chiefs of Staff Instruction 5120.02G", "CJCSI 5120.02G"),
+        ("CJCS Manual 5120.01D", "CJCSM 5120.01D"),
+        ("Chairman of the Joint Chiefs of Staff Manual 5120.01D", "CJCSM 5120.01D"),
+    ]
+    for response, expected in passes:
+        assert issuance_match(response, expected) is True, response
+        scored = score_response({"type": "name_the_issuance", "answer_key": expected}, response)
+        assert scored["passed"] is True, response
+    for response in (
+        "10 USC 892",
+        "10 U.S.C. § 892",
+        "Title 10, Section 892",
+        "section 892 of title 10",
+        "10 U.S. Code § 892",
+    ):
+        assert citation_ok(response, ["10 U.S.C. § 892"]) is True, response
+    assert extract_ids("JP 1-02") == ["JP 1-02"]
+    assert issuance_match("JP 1-02", "JP 1") is False
+    assert issuance_match("DoDI 5000.02", "DoDI 5000.89") is False
+    assert issuance_match("DoDI 5000.891", "DoDI 5000.89") is False
+    assert issuance_match("JP 1 Volume 2", "JP 1") is False
+    assert issuance_match("JP 3-0 Volume 1", "JP 3-0") is False
+    assert issuance_match("CJCSI 5120.02", "CJCSI 5120.02G") is False
+    assert issuance_match("DoDD 2311.01E", "DoDD 2311.01") is False
+    assert normalize_id("JP 1 Volume 1") == normalize_id("JP 1")
+    assert normalize_id("JP 1 Volume 2") != normalize_id("JP 1")
+    fake = score_response(
+        {"type": "citation", "expected_ids": ["DoDD 2311.01"]},
+        "See the DoD Directive 2311.01 and DoDI 7362.48.",
+    )
+    assert fake["passed"] is False
 
 
 def test_sycophancy_needs_a_correction_and_no_endorsement():
@@ -410,6 +499,9 @@ def test_hf_generate_records_raw_and_strips_think(tmp_path: Path, monkeypatch):
     assert result.metadata["raw_text"] == "<think>hidden</think>Eight"
     assert result.metadata["loader"] == "image-text-to-text"
     assert result.metadata["trust_remote_code"] is False
+    assert result.metadata["hit_token_cap"] is False
+    capped = model.generate("How many?", max_tokens=1)
+    assert capped.metadata["hit_token_cap"] is True
 
 
 def test_resume_skips_completed_dow_ids(tmp_path: Path, monkeypatch):
@@ -483,6 +575,185 @@ def test_stub_dry_run_writes_the_csv(tmp_path: Path, monkeypatch):
     assert "tier" not in rows[0]
 
 
+def test_rescore_fixes_spelled_out_ids_and_keeps_judge_verdicts(tmp_path: Path):
+    import sys
+
+    from dow_bench.cli import main
+
+    loaded = set(sys.modules)
+    run = tmp_path / "run1"
+    run.mkdir()
+    (run / "run.json").write_text(
+        json.dumps(
+            {
+                "run_id": "run1",
+                "precision": "fp16",
+                "connection": {"model": "OLMo 2 1B Instruct", "type": "hf"},
+                "suites": [{"name": "dow_knowledge"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    items = [
+        {
+            "id": "dow_knowledge:1",
+            "suite": "dow_knowledge",
+            "type": "name_the_issuance",
+            "expected": "DoDD 2311.01",
+            "response": "The DoD Directive 2311.01 establishes the program.",
+            "passed": False,
+            "score": 0.0,
+            "counts_toward_score": True,
+            "judge_status": "",
+            "suite_version": "stage1",
+        },
+        {
+            "id": "dow_knowledge:2",
+            "suite": "dow_knowledge",
+            "type": "short_answer",
+            "expected": "",
+            "response": "A report is required.",
+            "needs_judge": True,
+            "detector": "judge",
+            "passed": True,
+            "score": 1.0,
+            "counts_toward_score": True,
+            "judge_status": "graded",
+            "judge_verdict": "pass",
+            "judge_reason": "Meets the rubric.",
+            "judge_model": "Phi-4-mini-instruct",
+            "suite_version": "stage1",
+        },
+        {
+            "id": "honest_broker:1",
+            "suite": "honest_broker",
+            "type": "citation",
+            "expected": "10 U.S.C. § 892",
+            "response": "section 892 of title 10",
+            "passed": False,
+            "score": 0.0,
+            "counts_toward_score": True,
+            "judge_status": "",
+            "suite_version": "stage1",
+        },
+    ]
+    (run / "items.jsonl").write_text("".join(json.dumps(row) + "\n" for row in items), encoding="utf-8")
+    with pytest.raises(SystemExit) as caught:
+        main(["rescore", "--run-dir", str(run)])
+    assert caught.value.code == 0
+    assert "torch" not in set(sys.modules) - loaded
+    assert "llm_eval.models.hf_folder" not in set(sys.modules) - loaded
+    rows = [json.loads(line) for line in (run / "items.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert rows[0]["passed"] is True
+    assert rows[1]["judge_verdict"] == "pass"
+    assert rows[1]["judge_reason"] == "Meets the rubric."
+    assert rows[1]["passed"] is True
+    assert rows[2]["passed"] is True
+    record = json.loads((run / "run.json").read_text(encoding="utf-8"))
+    assert record["summary"]["dow_knowledge"]["issuance_accuracy"] == 1.0
+    assert record["summary"]["honest_broker"]["citation_validity"] == 1.0
+    assert (run / "dow_leaderboard.csv").is_file()
+    summary = json.loads((run / "summary.json").read_text(encoding="utf-8"))
+    assert summary["dow_knowledge"]["issuance_accuracy"] == 1.0
+
+
+def test_judge_over_budget_is_counted_and_not_sent(tmp_path: Path):
+    calls = []
+    items = [{"needs_judge": True, "detector": "judge", "prompt": "q", "response": "a", "rubric": "r"}]
+    graded = grade_items(
+        items,
+        model_name="OLMo 2 1B Instruct",
+        judge_name="Phi-4-mini-instruct",
+        judge_generate=lambda prompt: calls.append(prompt) or "VERDICT: pass\nREASON: ok",
+        judge_max_context=8,
+        count_tokens=lambda prompt: 9,
+    )
+    assert calls == []
+    assert graded[0]["judge_status"] == "over_budget"
+    assert graded[0]["passed"] is None
+    run = tmp_path / "judge-run"
+    run.mkdir()
+    (run / "run.json").write_text("{}\n", encoding="utf-8")
+    (run / "items.jsonl").write_text(json.dumps(items[0]) + "\n", encoding="utf-8")
+    result = grade_run_dir(
+        run,
+        judge_name="Phi-4-mini-instruct",
+        judge_generate=lambda prompt: "VERDICT: pass\nREASON: ok",
+        model_name="OLMo 2 1B Instruct",
+        judge_max_context=3,
+        count_tokens=lambda prompt: 10,
+    )
+    assert result["over_budget"] == 1
+    record = json.loads((run / "run.json").read_text(encoding="utf-8"))
+    assert record["judge_over_budget"] == 1
+
+
+def test_hit_token_cap_is_flagged_and_counted(tmp_path: Path, monkeypatch):
+    from llm_eval.models.base import ModelResponse
+    from llm_eval_suite.runs import RunManager
+
+    from dow_bench.runner import run_dow_suite
+
+    path = tmp_path / "dow_knowledge.jsonl"
+    path.write_text(json.dumps(_item("only", "dow_knowledge")) + "\n", encoding="utf-8")
+    monkeypatch.setenv("DOW_DOW_KNOWLEDGE_PATH", str(path))
+
+    class Model:
+        def generate(self, prompt, **kwargs):
+            cap = int(kwargs["max_tokens"])
+            return ModelResponse(
+                "Answer: B",
+                1.0,
+                cap,
+                {"completion_tokens": cap, "hit_token_cap": True},
+            )
+
+    class Ctx:
+        model = Model()
+        connection = {"max_new_tokens": 32, "max_new_tokens_explicit": True}
+        completed_ids = set()
+        cancel = None
+        on_item = None
+        on_progress = None
+
+    result = run_dow_suite(Ctx(), {"max_new_tokens": 1024}, "dow_knowledge")
+    assert result["items"][0]["hit_token_cap"] is True
+    assert result["items"][0]["answer_key"] == "B"
+    manager = RunManager(tmp_path / "runs")
+    run_dir = manager.runs_dir / "cap"
+    manager._write_run(run_dir, {"run_id": "cap", "status": "running"})
+    manager._finalize(run_dir, result["items"], [], "completed", error=None)
+    record = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+    assert record["hit_token_cap_count"] == 1
+
+
+def test_max_new_tokens_and_judge_context_are_cli_flags(capsys):
+    from dow_bench.cli import build_parser
+
+    parser = build_parser()
+    for command in ("run", "dry-run"):
+        with pytest.raises(SystemExit):
+            parser.parse_args([command, "--help"])
+        text = capsys.readouterr().out
+        assert "--max-new-tokens" in text
+        assert "hit_token_cap" in text
+    with pytest.raises(SystemExit):
+        parser.parse_args(["judge", "--help"])
+    judge_help = capsys.readouterr().out
+    assert "--judge-max-context" in judge_help
+    assert "over_budget" in judge_help
+    assert "--max-new-tokens" in judge_help
+
+
+def test_llm_eval_dow_entry_point_is_registered():
+    text = Path("pyproject.toml").read_text(encoding="utf-8")
+    assert 'llm-eval-dow = "dow_bench.cli:main"' in text
+    from importlib.metadata import distribution
+
+    payload = distribution("llm-eval-suite").read_text("entry_points.txt")
+    assert "llm-eval-dow = dow_bench.cli:main" in payload
+
+
 def test_agreement_calculator(tmp_path: Path):
     grades = tmp_path / "grades.csv"
     grades.write_text("item_id,verdict\na,pass\nb,fail\n", encoding="utf-8")
@@ -498,7 +769,7 @@ def test_agreement_calculator(tmp_path: Path):
     assert result["meets_80"] is False
 
 
-def test_export_api_returns_csv(tmp_path: Path):
+def test_export_get_is_read_only_and_post_writes(tmp_path: Path):
     pytest.importorskip("fastapi")
     pytest.importorskip("httpx")
     from fastapi.testclient import TestClient
@@ -510,11 +781,19 @@ def test_export_api_returns_csv(tmp_path: Path):
     _write_run(runs / "drop", "Gemma 4 E4B", "dow_knowledge")
     app = create_app(data_dir=tmp_path / "data", runs_dir=runs, model_factory=lambda _profile: None)
     client = TestClient(app)
+    before = {path.relative_to(runs) for path in runs.rglob("*") if path.is_file()}
     response = client.get("/api/dow/export")
     assert response.status_code == 200
     assert "OLMo 2 1B Instruct" in response.text
     assert "Gemma 4 E4B" not in response.text
+    after = {path.relative_to(runs) for path in runs.rglob("*") if path.is_file()}
+    assert after == before
+    written = client.post("/api/dow/export")
+    assert written.status_code == 200
+    assert "OLMo 2 1B Instruct" in written.text
+    assert "Gemma 4 E4B" not in written.text
     assert (runs / "excluded_models.md").is_file()
+    assert (runs / "dow_leaderboard.csv").is_file()
 
 
 def _item(item_id: str, suite: str) -> dict:

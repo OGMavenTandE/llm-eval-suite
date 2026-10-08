@@ -585,6 +585,7 @@ class RunManager:
         record["scorecard"] = scorecard(items)
         record["error"] = error
         record["items_completed"] = len(items)
+        record["hit_token_cap_count"] = sum(1 for item in items if item.get("hit_token_cap") is True)
         record["log_path"] = str(run_dir / "run.log")
         fact_validity = factcheck_empty_validity(items)
         if fact_validity["validity"] == "invalid":
