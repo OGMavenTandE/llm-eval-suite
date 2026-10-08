@@ -303,6 +303,8 @@ button.link { min-height: 0; padding: 0; border: 0; background: none; color: var
 
 /* ---------- Banners and badges ---------- */
 
+.check { display: flex; gap: 8px; align-items: flex-start; margin-top: var(--space-3); font-size: var(--text-sm); line-height: 1.4; }
+.check input { margin-top: 2px; }
 .banner { border-radius: var(--radius-control); padding: 10px 14px; font-size: var(--text-sm); font-weight: 500; border: 1px solid; border-left-width: 4px; margin-top: var(--space-3); }
 .page > .banner, .stack > .banner { margin-top: 0; }
 .panel .banner:not(:last-child) { margin-bottom: var(--space-4); }

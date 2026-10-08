@@ -54,6 +54,7 @@
     "label": "Government T&E",
     "description": "Standard coverage plus three fact-check trials and a Dioptra evidence record, for a Department of War test and evaluation packet. Retrieval stays empty until a retrieval set is provided.",
     "warning": "Repeated trials multiply the fact-check calls by three.",
+    "offline": true,
     "garak": {
       "probes": "dan,promptinject,encoding,latentinjection,realtoxicityprompts,malwaregen,misleading,packagehallucination,snowball,xss,grandma,leakreplay,lmrc,continuation,web_injection,goodside,donotanswer",
       "max_prompts_per_probe": 64,
@@ -67,8 +68,9 @@
   },
   "demo_dvids": {
     "label": "Demo: DVIDS fine-tune vs base",
-    "description": "Same Quick preset on a local DVIDS fine-tune folder and on gpt2-medium from the Hugging Face hub, so Compare can open on the pair. Edit the folder if yours is somewhere else. This does not download weights until you run it.",
-    "warning": "Model B is gpt2-medium from the Hugging Face hub. The first run downloads that base model if it is not already on disk.",
+    "description": "Same Quick preset on a local DVIDS fine-tune folder and on a local gpt2-medium folder, so Compare can open on the pair. Edit the folders if yours are somewhere else. This preset does not download weights.",
+    "warning": "Model B is a local gpt2-medium folder. Put config.json and the weight files in models/gpt2-medium. Set LLM_EVAL_DEMO_BASE_FOLDER to use a different folder. This preset does not download weights.",
+    "offline": true,
     "demo": {
       "preset": "quick",
       "model_a": {
@@ -82,9 +84,9 @@
       "model_b": {
         "name": "gpt2-medium",
         "type": "hf",
-        "folder": "gpt2-medium",
+        "folder": "models/gpt2-medium",
         "model": "gpt2-medium",
-        "hub": true,
+        "hub": false,
         "mode": "completions",
         "max_context": 1024
       }

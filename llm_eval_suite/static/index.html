@@ -44,10 +44,11 @@
       </button>
     </nav>
     <p class="nav-scroll-hint">Scroll for more sections</p>
-    <p class="rail-note"><span class="local-dot" aria-hidden="true"></span>Runs on this computer. Nothing leaves it unless you choose a cloud endpoint.</p>
+    <p class="rail-note"><span class="local-dot" aria-hidden="true"></span><span id="rail-offline-note">Runs on this computer. Nothing leaves it unless you choose a cloud endpoint.</span></p>
   </aside>
 
   <main>
+    <div id="offline-banner" class="banner hidden" role="status"></div>
     <section id="connect" class="page">
       <header class="page-head">
         <h2>Connect a model</h2>
@@ -102,6 +103,10 @@
                 <input id="conn-context" type="number" min="8" placeholder="1024 for GPT-2">
               </div>
             </div>
+            <label class="check" for="offline-toggle">
+              <input id="offline-toggle" type="checkbox">
+              Offline mode. Blocks the OpenAI cloud API and refuses weight downloads.
+            </label>
             <div id="cloud-banner" class="banner banner-warn hidden">This endpoint is not on this computer. Prompts will leave the machine.</div>
             <div class="actions actions-primary">
               <button id="test-connection" class="primary" type="button">Test connection</button>
@@ -192,7 +197,7 @@
         <div class="stack">
           <div class="panel panel-quiet">
             <h3>Demo: DVIDS fine-tune vs base</h3>
-            <p class="hint">Runs the same preset on a local fine-tune folder and on gpt2-medium, then opens Compare on that pair. Weights are not downloaded until you start the demo.</p>
+            <p class="hint">Runs the same preset on a local fine-tune folder and on a local gpt2-medium folder, then opens Compare on that pair. Put the base weights in models/gpt2-medium, or set LLM_EVAL_DEMO_BASE_FOLDER. This demo does not download weights.</p>
             <div class="field">
               <label for="demo-folder">Fine-tune folder</label>
               <input id="demo-folder" value="C:\AI Eval\LLMs\nanoGPT-master\nanoGPT-master\hf-dow-news" spellcheck="false">

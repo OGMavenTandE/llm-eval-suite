@@ -5,6 +5,7 @@ from urllib.parse import urlparse
 import requests
 
 from llm_eval.models.base import BaseModel, ModelResponse
+from llm_eval.offline import refuse_remote_http
 from llm_eval.models.context import clamp_prompt_and_new_tokens, strip_think_blocks
 
 # Connection settings are not generation parameters.
@@ -79,6 +80,7 @@ class OpenAIModel(BaseModel):
         if self.think is not None:
             payload["think"] = self.think
 
+        refuse_remote_http(self.base_url, what="OpenAI cloud API")
         start = time.perf_counter()
         resp = self._post(url, payload, headers)
         latency_ms = (time.perf_counter() - start) * 1000

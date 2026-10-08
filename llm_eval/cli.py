@@ -76,6 +76,9 @@ def main(argv=None):
     if args.output_dir is not None:
         config["output_dir"] = args.output_dir
 
+    from llm_eval.offline import activate_run_offline
+
+    activate_run_offline(config=config)
     config["_config_path"] = args.config
 
     if args.dry_run:

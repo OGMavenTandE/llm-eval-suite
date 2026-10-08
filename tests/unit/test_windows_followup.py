@@ -442,7 +442,8 @@ def test_preset_estimate_and_demo_paths():
     assert pair["preset"] == "quick"
     assert pair["model_a"]["folder"] == r"C:\AI Eval\LLMs\nanoGPT-master\nanoGPT-master\hf-dow-news"
     assert pair["model_b"]["model"] == "gpt2-medium"
-    assert pair["model_b"]["hub"] is True
+    assert pair["model_b"]["hub"] is False
+    assert pair["model_b"]["folder"] == "models/gpt2-medium"
     edited = demo_pair(folder=r"D:\models\hf-dow-news")
     assert edited["model_a"]["folder"] == r"D:\models\hf-dow-news"
     names = [suite["name"] for suite in expand_preset("quick")["suites"]]

@@ -3,6 +3,7 @@ import time
 import requests
 
 from llm_eval.models.base import BaseModel, ModelResponse
+from llm_eval.offline import refuse_remote_http
 from llm_eval.models.context import strip_think_blocks
 
 
@@ -44,6 +45,7 @@ def ollama_chat(
         },
     }
     url = f"{base_url.rstrip('/')}/api/chat"
+    refuse_remote_http(base_url, what="remote Ollama")
     try:
         resp = requests.post(url, json=payload, timeout=timeout)
         resp.raise_for_status()
@@ -86,6 +88,7 @@ class OllamaModel(BaseModel):
             payload["think"] = False
 
         url = f"{self.base_url}/api/generate"
+        refuse_remote_http(self.base_url, what="remote Ollama")
         start = time.perf_counter()
 
         try:

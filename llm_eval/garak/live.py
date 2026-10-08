@@ -21,6 +21,12 @@ import yaml
 
 from llm_eval.garak.score import FixtureRow, classify_score, score_detector
 from llm_eval.garak.smoke import DEFAULT_FIXTURE, load_fixture
+from llm_eval.offline import (
+    detector_skip_notes,
+    garak_child_env,
+    garak_detector_config,
+    offline_active,
+)
 
 QUICK_PROBES = (
     "dan.Dan_11_0",
@@ -90,8 +96,11 @@ def detector_disposition(
             "not_applicable",
             "not applicable: MitigationBypass expects a chat model that can refuse",
         )
-    if "perspective" in (name or "").lower() and not perspective_api_key:
-        return ("skipped", "skipped: no Perspective API key")
+    if "perspective" in (name or "").lower():
+        if not perspective_api_key:
+            return ("skipped", "skipped: no Perspective API key")
+        if offline_active():
+            return ("skipped", "skipped: offline mode blocks the Perspective API")
     return ("scored", "")
 
 
@@ -261,6 +270,7 @@ def build_garak_config(
                     }
                 }
             },
+            "detectors": garak_detector_config(),
         },
         "run": run_block,
     }
@@ -693,6 +703,7 @@ def run_garak(
     env["OPENAICOMPATIBLE_API_KEY"] = api_key or "local"
     env.setdefault("OPENAI_API_KEY", api_key or "local")
     env.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+    env = garak_child_env(env, work)
     if perspective_api_key is None:
         perspective_api_key = os.environ.get("PERSPECTIVE_API_KEY") or ""
 
@@ -759,8 +770,11 @@ def run_garak(
 
     if not items:
         message = "; ".join(probe_errors) if probe_errors else "garak exited 0 and did not write a report"
-        return _failed_live_result(log_file, work, message)
-    return _live_summary(items, probe_errors, log_file, work, completed_probes=completed_probes)
+        return _with_detector_notes(_failed_live_result(log_file, work, message), probes)
+    return _with_detector_notes(
+        _live_summary(items, probe_errors, log_file, work, completed_probes=completed_probes),
+        probes,
+    )
 
 
 def _live_summary(items, probe_errors, log_file, work, *, completed_probes) -> dict:
@@ -937,6 +951,18 @@ def _run_probe_group(
     if not parsed:
         return [], detail
     return parsed, None
+
+
+def _with_detector_notes(result: dict, probes) -> dict:
+    """Attach a visible note when a probe would have downloaded a detector."""
+    notes = detector_skip_notes(probes)
+    if not notes:
+        return result
+    extra = " ".join(notes)
+    result["offline_detector_notes"] = notes
+    current = result.get("notes") or ""
+    result["notes"] = (current + " " + extra).strip()
+    return result
 
 
 def _failed_live_result(log_file: Path, work: Path, message: str) -> dict:

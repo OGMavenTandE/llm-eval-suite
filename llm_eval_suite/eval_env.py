@@ -37,6 +37,25 @@ def cuda_torch_reinstall_args() -> list[str]:
     ]
 
 
+def wheelhouse_commands(dest: str = "wheelhouse") -> list[str]:
+    """Commands for a connected build machine. An evaluation run does not call these.
+
+    The first command fetches the CUDA torch wheel. The later commands fill the
+    same folder with garak, transformers, and the suite's other dependencies.
+    Install on the closed network with ``--no-index --find-links``.
+    """
+    torch = f"torch=={TORCH_VERSION}"
+    garak = f"garak=={GARAK_VERSION}"
+    transformers = f"transformers=={TRANSFORMERS_VERSION}"
+    return [
+        f"python -m pip download -d {dest} {torch} --index-url {CUDA_INDEX}",
+        f"python -m pip download -d {dest} {garak} {transformers} {torch} --extra-index-url {CUDA_INDEX}",
+        f"python -m pip download -d {dest} .[api]",
+        f"python -m pip install --no-index --find-links {dest} {torch} {garak} {transformers}",
+        f"python -m pip install --no-index --find-links {dest} -e .[api]",
+    ]
+
+
 def garak_pip_args(*, nvidia_gpu: bool) -> list[str]:
     """Install garak and transformers without replacing the torch build."""
     index = CUDA_INDEX if nvidia_gpu else CPU_INDEX
