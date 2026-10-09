@@ -1437,6 +1437,150 @@ def test_fallback_judge_is_used_only_for_the_same_family(tmp_path: Path):
     assert other_item["judge_same_family_fallback"] is False
 
 
+def test_same_family_run_does_not_load_the_primary_judge(tmp_path: Path, monkeypatch, capsys):
+    from dow_bench.cli import main
+
+    import weakref
+
+    loaded = []
+    resident = []
+
+    def _live():
+        return [ref() for ref in resident if ref() is not None]
+
+    class FakeJudge:
+        def __init__(self, name):
+            live = _live()
+            if live:
+                raise AssertionError(f"still resident: {[item.name for item in live]}")
+            self.name = name
+            resident.append(weakref.ref(self))
+            loaded.append(name)
+
+        def count_prompt_tokens(self, prompt):
+            return 1
+
+        def generate(self, prompt, **kwargs):
+            return types.SimpleNamespace(text="VERDICT: pass\nREASON: ok")
+
+    def build_model(profile):
+        return FakeJudge(profile["model"])
+
+    monkeypatch.setattr("llm_eval_suite.connections.build_model", build_model)
+    run = tmp_path / "phi"
+    run.mkdir()
+    (run / "run.json").write_text(
+        json.dumps({"connection": {"model": "microsoft/Phi-4-mini-instruct", "type": "hf"}}),
+        encoding="utf-8",
+    )
+    rows = [
+        {
+            "id": "phi-1",
+            "needs_judge": True,
+            "detector": "judge",
+            "type": "rubric",
+            "prompt": "q",
+            "response": "a",
+            "rubric": "r",
+            "judge_status": "graded",
+            "judge_verdict": "fail",
+            "judge_model": "Phi-4-mini-instruct",
+        },
+        {
+            "id": "phi-2",
+            "needs_judge": False,
+            "type": "multiple_choice",
+            "prompt": "q",
+            "response": "B",
+        },
+    ]
+    (run / "items.jsonl").write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+    with pytest.raises(SystemExit) as caught:
+        main(
+            [
+                "judge",
+                "--run-dir",
+                str(run),
+                "--judge-model",
+                "Phi-4-mini-instruct",
+                "--judge-folder",
+                "primary-weights",
+                "--fallback-judge",
+                "Granite 4.2 3B",
+                "--fallback-judge-folder",
+                "fallback-weights",
+                "--model",
+                "",
+            ]
+        )
+    assert caught.value.code == 0
+    assert loaded == ["Granite 4.2 3B"]
+    assert _live() == []
+    text = capsys.readouterr().out
+    progress = next(line for line in text.splitlines() if line.startswith("[judge]"))
+    assert progress.startswith("[judge] 1/1 phi-1 judge=Granite 4.2 3B ")
+    assert progress.endswith("s")
+    saved = json.loads((run / "items.jsonl").read_text(encoding="utf-8").splitlines()[0])
+    assert saved["judge_model"] == "Granite 4.2 3B"
+    assert saved["judge_same_family_fallback"] is True
+    assert saved["judge_verdict"] == "pass"
+
+
+def test_judge_groups_keep_one_model_resident(monkeypatch):
+    import gc
+    import sys
+
+    from dow_bench.judge import grade_judge_groups
+
+    import weakref
+
+    resident = []
+    order = []
+    torch_mod = types.ModuleType("torch")
+
+    def empty_cache():
+        order.append("cache")
+
+    torch_mod.cuda = types.SimpleNamespace(empty_cache=empty_cache)
+    monkeypatch.setitem(sys.modules, "torch", torch_mod)
+
+    def _live():
+        return [ref() for ref in resident if ref() is not None]
+
+    class FakeJudge:
+        def __init__(self, name):
+            live = _live()
+            if live:
+                raise AssertionError(f"still resident: {[item.name for item in live]}")
+            self.name = name
+            resident.append(weakref.ref(self))
+            order.append(f"load {name}")
+
+        def __del__(self):
+            order.append(f"free {self.name}")
+
+    def load_model(role, name):
+        return FakeJudge(name)
+
+    def grade_with_model(role, model, name, rows):
+        assert [item.name for item in _live()] == [name]
+        assert rows and rows[0]["id"]
+
+    grade_judge_groups(
+        [
+            ("primary", "Phi-4-mini-instruct", [{"id": "a"}]),
+            ("fallback", "Granite 4.2 3B", [{"id": "b"}]),
+        ],
+        load_model,
+        grade_with_model,
+    )
+    gc.collect()
+    assert order.index("free Phi-4-mini-instruct") < order.index("load Granite 4.2 3B")
+    assert order.index("cache") < order.index("load Granite 4.2 3B")
+    assert order.count("cache") >= 2
+    assert _live() == []
+
+
 def test_lawful_order_verdict_flips_to_pass_on_rescore(tmp_path: Path):
     from dow_bench.rescore import rescore_run_dir
     from dow_bench.scorer import aggregate_suite
