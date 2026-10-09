@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from pathlib import Path
 
 from llm_eval.models.context import strip_think_blocks
@@ -223,6 +224,74 @@ def resolve_model_name(model_name: str | None, record: dict | None) -> str:
     return str(connection.get("model") or connection.get("name") or payload.get("model") or "").strip()
 
 
+def judge_role(
+    item: dict,
+    *,
+    model_name: str,
+    judge_name: str,
+    family_map: dict[str, str] | None = None,
+    fallback_name: str = "",
+    fallback_available: bool = False,
+) -> str:
+    """Which judge an item needs: ``keep``, ``skip``, ``primary``, or ``fallback``.
+
+    This does not load a model. A same-family item uses the fallback when
+    that fallback is a different family, and is skipped otherwise.
+    """
+    mapping = family_map if family_map is not None else load_family_map()
+    if not item.get("needs_judge"):
+        return "keep"
+    if _keep_existing_grade(item, model_name, mapping):
+        return "keep"
+    fallback = str(fallback_name or "").strip()
+    fallback_ok = bool(
+        fallback_available
+        and fallback
+        and not same_family(model_name, fallback, mapping)
+    )
+    if same_family(model_name, judge_name, mapping):
+        return "fallback" if fallback_ok else "skip"
+    return "primary"
+
+
+def format_judge_progress(index: int, total: int, item_id: str, judge_name: str, seconds: float) -> str:
+    """One console line so a stalled judge item is visible."""
+    return f"[judge] {index}/{total} {item_id} judge={judge_name} {seconds:.1f}s"
+
+
+def free_judge_memory() -> None:
+    """Collect a judge that the caller has already deleted, then drop the CUDA cache."""
+    import gc
+
+    gc.collect()
+    try:
+        import torch
+
+        torch.cuda.empty_cache()
+    except Exception:
+        return
+
+
+def grade_judge_groups(groups: list[tuple[str, str, list]], load_model, grade_with_model) -> None:
+    """Load one judge, grade its items, free it, then load the next.
+
+    ``groups`` is ``(role, judge_name, rows)`` for the judges that have work.
+    ``load_model(role, judge_name)`` returns the model. ``grade_with_model``
+    must not keep that model after it returns.
+    """
+    for role, judge_name, rows in groups:
+        if not rows:
+            continue
+        model = None
+        try:
+            model = load_model(role, judge_name)
+            grade_with_model(role, model, judge_name, rows)
+        finally:
+            if model is not None:
+                del model
+                free_judge_memory()
+
+
 def _keep_existing_grade(item: dict, model_name: str, family_map: dict[str, str]) -> bool:
     """Keep a grade from another family. Reprocess a same-family grade."""
     if item.get("judge_status") != "graded":
@@ -251,6 +320,7 @@ def grade_items(
     count_tokens=None,
     fallback_name: str = "",
     fallback_generate=None,
+    on_item=None,
 ) -> list[dict]:
     """Grade rubric rows. ``judge_generate`` is called with the judge prompt.
 
@@ -260,42 +330,53 @@ def grade_items(
 
     ``fallback_generate`` runs only when the primary judge is the same family
     as the candidate and the fallback is not. With no usable fallback those
-    items are ``judge_skipped`` and are not fails.
+    items are ``judge_skipped`` and are not fails. ``on_item`` receives
+    ``(item, judge_name, seconds)`` after each item that is sent to a judge.
     """
     mapping = family_map if family_map is not None else load_family_map()
     counter = count_tokens or _word_count
-    skip = same_family(model_name, judge_name, mapping)
-    fallback = str(fallback_name or "").strip()
-    use_fallback = bool(
-        skip
-        and fallback
-        and fallback_generate is not None
-        and not same_family(model_name, fallback, mapping)
-    )
+    fallback_available = fallback_generate is not None
     graded = []
     for item in items:
-        if not item.get("needs_judge"):
+        role = judge_role(
+            item,
+            model_name=model_name,
+            judge_name=judge_name,
+            family_map=mapping,
+            fallback_name=fallback_name,
+            fallback_available=fallback_available,
+        )
+        if role == "keep":
             graded.append(item)
             continue
-        if _keep_existing_grade(item, model_name, mapping):
-            graded.append(item)
-            continue
-        if skip and not use_fallback:
+        if role == "skip":
             graded.append(mark_same_family(item, judge_name))
             continue
-        active_name = fallback if use_fallback else judge_name
-        active_generate = fallback_generate if use_fallback else judge_generate
+        if role == "fallback":
+            active_name = str(fallback_name or "").strip()
+            active_generate = fallback_generate
+            used_fallback = True
+        else:
+            active_name = judge_name
+            active_generate = judge_generate
+            used_fallback = False
         prompt = judge_prompt(item)
         if judge_max_context is not None and counter(prompt) > int(judge_max_context):
             graded.append(mark_over_budget(item, active_name))
+            if on_item is not None:
+                on_item(item, active_name, 0.0)
             continue
+        started = time.perf_counter()
         reply = active_generate(prompt)
+        elapsed = time.perf_counter() - started
+        if on_item is not None:
+            on_item(item, active_name, elapsed)
         graded.append(
             apply_verdict(
                 item,
                 parse_judge_output(reply),
                 active_name,
-                same_family_fallback=use_fallback,
+                same_family_fallback=used_fallback,
             )
         )
     return graded
@@ -337,6 +418,44 @@ def grade_run_dir(
         fallback_name=fallback_name,
         fallback_generate=fallback_generate,
     )
+    return commit_graded_run(
+        directory,
+        updated,
+        record=record,
+        model_name=model_name,
+        judge_max_context=judge_max_context,
+    )
+
+
+def read_run_items(run_dir: str | Path) -> tuple[dict, list[dict]]:
+    """Load ``run.json`` and ``items.jsonl``. Missing files yield an empty record or list."""
+    directory = Path(run_dir)
+    record = {}
+    run_path = directory / "run.json"
+    if run_path.is_file():
+        record = json.loads(run_path.read_text(encoding="utf-8"))
+    rows = []
+    items_path = directory / "items.jsonl"
+    if items_path.is_file():
+        for line in items_path.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                rows.append(json.loads(line))
+    return record, rows
+
+
+def commit_graded_run(
+    run_dir: str | Path,
+    updated: list[dict],
+    *,
+    record: dict | None = None,
+    model_name: str = "",
+    judge_max_context: int = DEFAULT_JUDGE_MAX_CONTEXT,
+) -> dict:
+    """Rewrite items.jsonl and the judge fields on run.json."""
+    directory = Path(run_dir)
+    payload = dict(record or {})
+    items_path = directory / "items.jsonl"
+    run_path = directory / "run.json"
     items_path.write_text(
         "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in updated),
         encoding="utf-8",
@@ -351,17 +470,17 @@ def grade_run_dir(
         for row in updated
         if row.get("judge_status") == "graded" and row.get("judge_model")
     ]
-    record["judge_model"] = graders[0] if graders else ""
-    record["judge_same_family_fallback"] = used_fallback
-    record["judge_status"] = "completed"
-    record["judge_over_budget"] = over_budget
-    record["judge_skipped"] = skipped
-    record["judge_max_context"] = judge_max_context
-    if run_path.is_file() or record:
-        run_path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+    payload["judge_model"] = graders[0] if graders else ""
+    payload["judge_same_family_fallback"] = used_fallback
+    payload["judge_status"] = "completed"
+    payload["judge_over_budget"] = over_budget
+    payload["judge_skipped"] = skipped
+    payload["judge_max_context"] = judge_max_context
+    if run_path.is_file() or payload:
+        run_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     return {
         "items": len(updated),
-        "judge_model": record["judge_model"],
+        "judge_model": payload["judge_model"],
         "judge_same_family_fallback": used_fallback,
         "model": model_name,
         "over_budget": over_budget,

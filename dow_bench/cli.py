@@ -11,10 +11,16 @@ from dow_bench.export import write_export
 from dow_bench.judge import (
     DEFAULT_JUDGE,
     DEFAULT_JUDGE_MAX_CONTEXT,
+    commit_graded_run,
+    format_judge_progress,
+    grade_items,
+    grade_judge_groups,
     grade_run_dir,
+    judge_role,
     load_family_map,
+    mark_same_family,
+    read_run_items,
     resolve_model_name,
-    same_family,
 )
 from dow_bench.meta import DEFAULT_PROMPT_BUDGET, derive_max_context, exclusion_reason, thinking_cap
 from dow_bench.rescore import rescore_run_dir
@@ -172,67 +178,111 @@ def export_only(args: argparse.Namespace) -> int:
     return 0
 
 
+def _refuse_primary(prompt: str) -> str:
+    raise RuntimeError("The primary judge is not loaded for this item.")
+
+
 def judge_only(args: argparse.Namespace) -> int:
-    count_tokens = None
     family_map = load_family_map(args.families) if args.families else load_family_map()
     model_name = _candidate_from_run(args.run_dir, args.model)
     fallback_name = str(getattr(args, "fallback_judge", "") or "").strip()
-    fallback_generate = None
+    judge_name = args.judge_model
     if args.stub:
-        generate = stub_judge_reply
-        judge_name = args.judge_model
-        if fallback_name:
-            fallback_generate = stub_judge_reply
-    else:
+        result = grade_run_dir(
+            args.run_dir,
+            judge_name=judge_name,
+            judge_generate=stub_judge_reply,
+            family_map=family_map,
+            model_name=model_name,
+            judge_max_context=args.judge_max_context,
+            fallback_name=fallback_name,
+            fallback_generate=stub_judge_reply if fallback_name else None,
+        )
+        print(json.dumps(result))
+        return 0
+
+    record, rows = read_run_items(args.run_dir)
+    roles = [
+        judge_role(
+            item,
+            model_name=model_name,
+            judge_name=judge_name,
+            family_map=family_map,
+            fallback_name=fallback_name,
+            fallback_available=bool(fallback_name),
+        )
+        for item in rows
+    ]
+    if any(role == "fallback" for role in roles) and not str(args.fallback_judge_folder or "").strip():
+        print("--fallback-judge-folder is required for a live fallback judge", file=sys.stderr)
+        return 2
+
+    updated: list[dict | None] = [None] * len(rows)
+    for index, item in enumerate(rows):
+        if roles[index] == "keep":
+            updated[index] = item
+        elif roles[index] == "skip":
+            updated[index] = mark_same_family(item, judge_name)
+
+    groups = []
+    for role, name in (("primary", judge_name), ("fallback", fallback_name)):
+        indexed = [(index, rows[index]) for index, assigned in enumerate(roles) if assigned == role]
+        if indexed:
+            groups.append((role, name, indexed))
+    total = sum(len(indexed) for _role, _name, indexed in groups)
+    done = {"n": 0}
+
+    def load_model(role: str, name: str):
         from llm_eval_suite.connections import build_model
 
-        profile = build_judge_profile(args)
-        model = build_model(profile)
-        judge_name = args.judge_model
-        limits = judge_limits(args)
+        if role == "fallback":
+            profile = build_judge_profile(args, name, args.fallback_judge_folder)
+        else:
+            profile = build_judge_profile(args)
+        return build_model(profile)
 
-        def count_tokens(prompt: str) -> int:
-            return model.count_prompt_tokens(prompt)
+    def grade_with_model(role: str, model, name: str, indexed: list) -> None:
+        limits = judge_limits(args, name if role == "fallback" else None)
 
-        def generate(prompt: str) -> str:
-            return model.generate(
+        def generate(prompt: str, _model=model, _limits=limits) -> str:
+            return _model.generate(
                 prompt,
-                max_tokens=limits["answer_cap"],
-                prompt_budget=limits["prompt_budget"],
-                thinking_max_tokens=limits["thinking_budget"],
+                max_tokens=_limits["answer_cap"],
+                prompt_budget=_limits["prompt_budget"],
+                thinking_max_tokens=_limits["thinking_budget"],
             ).text
 
-        use_fallback = bool(
-            fallback_name
-            and same_family(model_name, judge_name, family_map)
-            and not same_family(model_name, fallback_name, family_map)
+        def count_tokens(prompt: str, _model=model) -> int:
+            return _model.count_prompt_tokens(prompt)
+
+        def on_item(item: dict, active_name: str, seconds: float) -> None:
+            done["n"] += 1
+            ident = str(item.get("id") or done["n"])
+            print(format_judge_progress(done["n"], total, ident, active_name, seconds), flush=True)
+
+        batch = [item for _index, item in indexed]
+        graded = grade_items(
+            batch,
+            model_name=model_name,
+            judge_name=judge_name,
+            judge_generate=generate if role == "primary" else _refuse_primary,
+            family_map=family_map,
+            judge_max_context=args.judge_max_context,
+            count_tokens=count_tokens,
+            fallback_name=fallback_name if role == "fallback" else "",
+            fallback_generate=generate if role == "fallback" else None,
+            on_item=on_item,
         )
-        if use_fallback:
-            if not str(args.fallback_judge_folder or "").strip():
-                print("--fallback-judge-folder is required for a live fallback judge", file=sys.stderr)
-                return 2
-            fallback_profile = build_judge_profile(args, fallback_name, args.fallback_judge_folder)
-            fallback_model = build_model(fallback_profile)
-            fallback_limits = judge_limits(args, fallback_name)
+        for (index, _item), row in zip(indexed, graded):
+            updated[index] = row
 
-            def fallback_generate(prompt: str, _model=fallback_model, _limits=fallback_limits) -> str:
-                return _model.generate(
-                    prompt,
-                    max_tokens=_limits["answer_cap"],
-                    prompt_budget=_limits["prompt_budget"],
-                    thinking_max_tokens=_limits["thinking_budget"],
-                ).text
-
-    result = grade_run_dir(
+    grade_judge_groups(groups, load_model, grade_with_model)
+    result = commit_graded_run(
         args.run_dir,
-        judge_name=judge_name,
-        judge_generate=generate,
-        family_map=family_map,
+        [row if row is not None else {} for row in updated],
+        record=record,
         model_name=model_name,
         judge_max_context=args.judge_max_context,
-        count_tokens=count_tokens,
-        fallback_name=fallback_name,
-        fallback_generate=fallback_generate,
     )
     print(json.dumps(result))
     return 0
