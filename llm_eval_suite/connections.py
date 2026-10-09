@@ -269,6 +269,7 @@ def build_model(profile: dict) -> BaseModel:
                 "thinking_max_tokens": profile.get("thinking_max_tokens"),
                 "trust_remote_code": bool(profile.get("trust_remote_code")),
                 "use_chat_template": profile.get("use_chat_template"),
+                "prompt_budget": profile.get("prompt_budget"),
             },
         )
     if kind == "nanogpt":

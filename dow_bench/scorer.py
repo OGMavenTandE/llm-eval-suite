@@ -77,12 +77,20 @@ _UCMJ_TO_USC = {
     "118": "10USC918",
 }
 
-_MC_MARKED = re.compile(
-    r"(?i)\b(?:the\s+)?(?:correct\s+)?(?:answer|choice|option)\s*(?:is|=|:|-)?\s*[\(\[]?\s*([A-D])\s*[\)\]]?"
+# An explicit answer needs a separator: "is", "is:", ":", "=", or "-".
+# Optional newlines, markdown bold or italics, and brackets sit before the letter.
+# A bare "option C" later in the reply is not an answer statement.
+_MC_ASSERT = re.compile(
+    r"(?i)\b(?:the\s+)?(?:correct\s+)?(?:answer|choice|option)"
+    r"(?:\s+is\s*[:=-]?\s*|\s*[:=-]\s*)"
+    r"(?:[\s*_])*[\(\[]?\s*([A-D])(?![A-Za-z])"
 )
-_MC_LEADING = re.compile(r"(?i)^\s*[\(\[]?\s*([A-D])\s*[\)\]]?\s*[\.\)\:\-]")
-_MC_BARE = re.compile(r"(?i)^\s*[\(\[]?\s*([A-D])\s*[\)\]]?\s*\.?\s*$")
-_OR_AFTER = re.compile(r"(?i)\bor\s*[\(\[]?\s*[A-D]\s*[\)\]]?")
+# First line that opens with a choice letter, optional markdown, then ) . or :
+_MC_LINE = re.compile(
+    r"(?im)^[ \t]*[*_]*[ \t]*[\(\[]?[ \t]*([A-D])(?![A-Za-z])[ \t]*[\)\].:]"
+)
+_MC_BARE = re.compile(r"(?i)^\s*[*_]*\s*[\(\[]?\s*([A-D])\s*[\)\]]?\s*[*_]*\s*$")
+_OR_AFTER = re.compile(r"(?i)\s*\bor\s*[\(\[]?\s*[A-D](?![A-Za-z])")
 
 ABSTAIN_PHRASES = (
     "does not exist",
@@ -311,33 +319,36 @@ def on_whitelist(token: str, whitelist: dict[str, str] | None = None) -> bool:
 def extract_mc_letter(text: str) -> str | None:
     """Pull one answer letter from a model reply.
 
-    Accepts ``B``, ``(B)``, ``Answer: B``, and a letter with a trailing
-    explanation. Two different letters joined by ``or`` are not a match.
+    An explicit answer statement wins. It may include "is", a colon, blank
+    lines, markdown bold or italics, and brackets, as in ``Answer: (B)`` or
+    ``The correct answer is:`` followed by ``**D)``. Otherwise the first line
+    that starts with a choice letter and ``)``, ``.``, or ``:`` is the answer.
+    Otherwise a lone letter is the answer. Two different letters asserted as
+    the answer, including ``B or C``, are not a match.
     """
     raw = (text or "").strip()
     if not raw:
         return None
+    asserted: list[str] = []
+    for match in _MC_ASSERT.finditer(raw):
+        tail = raw[match.end() : match.end() + 16]
+        if _OR_AFTER.match(tail):
+            return None
+        asserted.append(match.group(1).upper())
+    unique = list(dict.fromkeys(asserted))
+    if len(unique) > 1:
+        return None
+    if len(unique) == 1:
+        return unique[0]
+    line = _MC_LINE.search(raw)
+    if line:
+        tail = raw[line.end() : line.end() + 16]
+        if _OR_AFTER.match(tail):
+            return None
+        return line.group(1).upper()
     bare = _MC_BARE.fullmatch(raw)
     if bare:
         return bare.group(1).upper()
-    marked = list(_MC_MARKED.finditer(raw))
-    if marked:
-        letters = []
-        for match in marked:
-            tail = raw[match.end() : match.end() + 12]
-            if _OR_AFTER.match(tail):
-                return None
-            letters.append(match.group(1).upper())
-        unique = list(dict.fromkeys(letters))
-        if len(unique) == 1:
-            return unique[0]
-        return None
-    leading = _MC_LEADING.match(raw)
-    if leading:
-        tail = raw[leading.end() : leading.end() + 12]
-        if _OR_AFTER.match(tail):
-            return None
-        return leading.group(1).upper()
     return None
 
 

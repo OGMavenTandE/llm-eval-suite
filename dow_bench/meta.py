@@ -58,9 +58,31 @@ def match_model(name: str | None, path: str | None = None) -> dict | None:
     return None
 
 
+# Tokens reserved for the prompt before the thinking budget and the answer cap.
+# The longest stage-1 prompt is 216 tokens with the chat template.
+DEFAULT_PROMPT_BUDGET = 512
+DEFAULT_ANSWER_CAP = 1024
+
+
 def thinking_default(name: str | None, path: str | None = None) -> bool:
     row = match_model(name, path)
     return bool(row and row.get("thinking_default"))
+
+
+def thinking_cap(name: str | None, path: str | None = None) -> int:
+    """Per-model thinking budget from models.json. Non-thinking models return 0."""
+    row = match_model(name, path)
+    if not row or row.get("excluded") or not row.get("thinking_default"):
+        return 0
+    raw = row.get("thinking_cap", row.get("thinking_max_tokens"))
+    if raw in (None, ""):
+        return 0
+    return max(0, int(raw))
+
+
+def derive_max_context(prompt_budget: int, thinking_budget: int, answer_cap: int) -> int:
+    """Context window that holds the prompt, the thinking budget, and the answer cap."""
+    return int(prompt_budget) + int(thinking_budget) + int(answer_cap)
 
 
 def hybrid_mamba(name: str | None, path: str | None = None) -> bool:

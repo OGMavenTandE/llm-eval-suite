@@ -36,14 +36,47 @@ from llm_eval.models.hf_folder import (
 )
 
 
-def test_mc_letter_edges():
-    assert extract_mc_letter("B") == "B"
-    assert extract_mc_letter("(B)") == "B"
-    assert extract_mc_letter("b") == "B"
-    assert extract_mc_letter("Answer: B. The directive says so.") == "B"
-    assert extract_mc_letter("The correct choice is (C)") == "C"
-    assert extract_mc_letter("A or B") is None
-    assert extract_mc_letter("Answer: B or C") is None
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("The correct answer is:\n\n**D) Destroyer**", "D"),
+        ("The correct answer is:\n\nA) Alpha", "A"),
+        ("Answer: (B)", "B"),
+        ("Answer: [C]", "C"),
+        ("*The answer is B*", "B"),
+        ("The answer is _D_", "D"),
+        ("Answer: B. The directive says so.", "B"),
+        ("The correct choice is (C)", "C"),
+        ("The correct option is: A", "A"),
+        ("B", "B"),
+        ("(B)", "B"),
+        ("b", "B"),
+        ("**B**", "B"),
+        ("A) Alpha is the choice", "A"),
+        ("B. Bravo follows", "B"),
+        ("C: Charlie follows", "C"),
+        ("**D) Destroyer**", "D"),
+        ("_A)_ italic line", "A"),
+        ("The correct answer is:\n\nD) The ship\nLater, option C is discussed.", "D"),
+        ("The correct answer is:\n\n**D) The ship**\nI also considered option C.", "D"),
+        ("D) The ship\nThe text mentions option C.", "D"),
+        ("B) first line\nA) later line", "B"),
+        ("The answer is B. The answer is B.", "B"),
+        ("A or B", None),
+        ("Answer: B or C", None),
+        ("The answer is B. The answer is D.", None),
+        ("The correct answer is A or D.", None),
+        ("", None),
+        ("   ", None),
+        ("I do not know.", None),
+        ("option C is mentioned without a mark", None),
+        ("The options are A, B, C, and D.", None),
+        ("E) outside the range", None),
+        ("Answer: always careful", None),
+    ],
+)
+def test_extract_mc_letter_formats(text, expected):
+    assert extract_mc_letter(text) == expected
 
 
 def test_refusal_helpfulness_and_harmonic_mean():
@@ -220,6 +253,14 @@ def test_models_json_uses_the_weights_manifest():
     assert by_repo["ibm-granite/granite-4.0-h-1b"]["hybrid_mamba"] is True
     assert by_repo["LiquidAI/LFM2.5-2.6B"]["thinking_default"] is True
     assert by_repo["microsoft/Phi-4-mini-reasoning"]["thinking_default"] is True
+    for repo in (
+        "LiquidAI/LFM2.5-2.6B",
+        "ibm-granite/granite-4.2-3b",
+        "nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16",
+        "microsoft/Phi-4-mini-reasoning",
+    ):
+        assert by_repo[repo]["thinking_cap"] == 2048
+    assert by_repo["allenai/OLMo-2-0425-1B-Instruct"].get("thinking_cap") in (None, 0)
     excluded = by_repo["google/gemma-4-E4B-it"]
     assert excluded["excluded"] is True
     assert excluded["total_params"] == 7996156490
@@ -736,13 +777,527 @@ def test_max_new_tokens_and_judge_context_are_cli_flags(capsys):
             parser.parse_args([command, "--help"])
         text = capsys.readouterr().out
         assert "--max-new-tokens" in text
+        assert "--max-context" in text
+        assert "--prompt-budget" in text
         assert "hit_token_cap" in text
+        assert "prompt_over_budget" in text
     with pytest.raises(SystemExit):
         parser.parse_args(["judge", "--help"])
     judge_help = capsys.readouterr().out
     assert "--judge-max-context" in judge_help
     assert "over_budget" in judge_help
     assert "--max-new-tokens" in judge_help
+
+
+def test_run_limits_reserve_prompt_thinking_and_answer():
+    from dow_bench.cli import build_parser, build_run_connection, judge_limits
+    from dow_bench.meta import thinking_cap
+
+    parser = build_parser()
+    olmo = parser.parse_args(
+        ["run", "--output", "out.csv", "--model", "OLMo 2 1B Instruct", "--max-new-tokens", "1024"]
+    )
+    connection = build_run_connection(olmo)
+    assert connection["prompt_budget"] == 512
+    assert connection["thinking_max_tokens"] == 0
+    assert connection["max_new_tokens"] == 1024
+    assert connection["max_context"] == 512 + 1024
+    assert thinking_cap("OLMo 2 1B Instruct") == 0
+
+    lfm = parser.parse_args(["dry-run", "--output", "out.csv", "--model", "LFM2.5-2.6B"])
+    lfm_connection = build_run_connection(lfm)
+    assert lfm_connection["thinking_max_tokens"] == 2048
+    assert lfm_connection["max_context"] == 512 + 2048 + 1024
+
+    explicit = parser.parse_args(
+        ["run", "--output", "out.csv", "--model", "OLMo 2 1B Instruct", "--max-context", "4096"]
+    )
+    assert build_run_connection(explicit)["max_context"] == 4096
+
+    phi = parser.parse_args(
+        ["judge", "--run-dir", "runs/x", "--judge-model", "Phi-4-mini-instruct", "--judge-max-context", "2048"]
+    )
+    phi_limits = judge_limits(phi)
+    assert phi_limits["prompt_budget"] == 2048
+    assert phi_limits["thinking_budget"] == 0
+    assert phi_limits["answer_cap"] == 256
+    assert phi_limits["max_context"] == 2048 + 256
+
+    granite = parser.parse_args(
+        ["judge", "--run-dir", "runs/x", "--judge-model", "Granite 4.2 3B", "--judge-max-context", "2048"]
+    )
+    granite_limits = judge_limits(granite)
+    assert granite_limits["thinking_budget"] == 2048
+    assert granite_limits["max_context"] == 2048 + 2048 + 256
+
+
+def test_run_json_records_budgets(tmp_path: Path, monkeypatch):
+    from dow_bench.cli import main
+
+    for suite in ("dow_knowledge", "honest_broker", "lawful_order"):
+        path = tmp_path / f"{suite}.jsonl"
+        path.write_text(json.dumps(_item("only", suite)) + "\n", encoding="utf-8")
+        monkeypatch.setenv(f"DOW_{suite.upper()}_PATH", str(path))
+    runs = tmp_path / "runs"
+    output = tmp_path / "leaderboard.csv"
+    with pytest.raises(SystemExit) as caught:
+        main(
+            [
+                "dry-run",
+                "--stub",
+                "--output",
+                str(output),
+                "--runs-dir",
+                str(runs),
+                "--model",
+                "LFM2.5-2.6B",
+                "--max-new-tokens",
+                "1024",
+            ]
+        )
+    assert caught.value.code == 0
+    record = json.loads(next(runs.glob("*/run.json")).read_text(encoding="utf-8"))
+    assert record["prompt_budget"] == 512
+    assert record["thinking_budget"] == 2048
+    assert record["answer_cap"] == 1024
+    assert record["max_context"] == 512 + 2048 + 1024
+    assert record["connection"]["prompt_budget"] == 512
+    assert record["connection"]["max_context"] == record["max_context"]
+    assert record["think_truncated_count"] == 0
+    assert record["prompt_over_budget_count"] == 0
+
+
+def test_runner_stores_thinking_and_over_budget_flags(tmp_path: Path, monkeypatch):
+    from llm_eval.models.base import ModelResponse
+    from llm_eval_suite.runs import RunManager
+
+    from dow_bench.runner import run_dow_suite
+
+    path = tmp_path / "dow_knowledge.jsonl"
+    path.write_text(json.dumps(_item("only", "dow_knowledge")) + "\n", encoding="utf-8")
+    monkeypatch.setenv("DOW_DOW_KNOWLEDGE_PATH", str(path))
+    seen = {}
+
+    class Model:
+        def generate(self, prompt, **kwargs):
+            seen.update(kwargs)
+            return ModelResponse(
+                "Answer: B",
+                1.0,
+                4,
+                {
+                    "raw_text": "thinking</think>\nAnswer: B",
+                    "hit_token_cap": False,
+                    "think_truncated": True,
+                    "prompt_over_budget": False,
+                },
+            )
+
+    class Ctx:
+        model = Model()
+        connection = {
+            "max_new_tokens": 1024,
+            "max_new_tokens_explicit": True,
+            "prompt_budget": 512,
+            "thinking_max_tokens": 2048,
+        }
+        completed_ids = set()
+        cancel = None
+        on_item = None
+        on_progress = None
+
+    result = run_dow_suite(Ctx(), {"max_new_tokens": 32}, "dow_knowledge")
+    item = result["items"][0]
+    assert seen["max_tokens"] == 1024
+    assert seen["prompt_budget"] == 512
+    assert seen["thinking_max_tokens"] == 2048
+    assert item["think_truncated"] is True
+    assert item["prompt_over_budget"] is False
+    assert item["hit_token_cap"] is False
+    assert item["response"] == "Answer: B"
+    manager = RunManager(tmp_path / "runs")
+    run_dir = manager.runs_dir / "flags"
+    manager._write_run(run_dir, {"run_id": "flags", "status": "running"})
+    rows = [
+        item,
+        {"hit_token_cap": False, "think_truncated": False, "prompt_over_budget": True},
+    ]
+    manager._finalize(run_dir, rows, [], "completed", error=None)
+    record = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+    assert record["think_truncated_count"] == 1
+    assert record["prompt_over_budget_count"] == 1
+
+
+class _Ids:
+    def __init__(self, row, device="cpu"):
+        self.row = [int(value) for value in row]
+        self.data = self.row
+        self.device = device
+        self.shape = (len(self.row),)
+
+    def __getitem__(self, item):
+        if isinstance(item, slice):
+            return _Ids(self.row[item], self.device)
+        return self.row[item]
+
+
+class _Batch:
+    def __init__(self, row, device="cpu"):
+        self.row = [int(value) for value in row]
+        self.data = [self.row]
+        self.device = device
+        self.shape = (1, len(self.row))
+
+    def __getitem__(self, item):
+        if item == 0:
+            return _Ids(self.row, self.device)
+        raise IndexError(item)
+
+
+def _install_fake_transformers(monkeypatch, folder: Path, tokenizer, generate):
+    import sys
+
+    folder.mkdir()
+    (folder / "config.json").write_text(
+        json.dumps({"architectures": ["Phi3ForCausalLM"], "model_type": "phi3"}),
+        encoding="utf-8",
+    )
+
+    class Scripted:
+        def to(self, device, dtype=None):
+            return self
+
+        def eval(self):
+            return self
+
+        def generate(self, **kwargs):
+            return generate(kwargs)
+
+    torch_mod = types.ModuleType("torch")
+    torch_mod.float16 = "float16"
+    torch_mod.bfloat16 = "bfloat16"
+    torch_mod.long = "long"
+    torch_mod.cuda = types.SimpleNamespace(is_available=lambda: False)
+    torch_mod.device = lambda name: name
+    torch_mod.tensor = lambda data, dtype=None, device=None: _Batch(data[0], device or "cpu")
+    torch_mod.ones_like = lambda tensor: tensor
+
+    class NoGrad:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    torch_mod.no_grad = NoGrad
+    transformers = types.ModuleType("transformers")
+    transformers.__version__ = "5.5.0"
+    transformers.AutoTokenizer = types.SimpleNamespace(from_pretrained=lambda *args, **kwargs: tokenizer)
+    transformers.AutoModelForCausalLM = types.SimpleNamespace(
+        from_pretrained=lambda *args, **kwargs: Scripted()
+    )
+    monkeypatch.setitem(sys.modules, "torch", torch_mod)
+    monkeypatch.setitem(sys.modules, "transformers", transformers)
+
+
+def test_two_hundred_token_prompt_survives_answer_cap_1024(tmp_path: Path, monkeypatch):
+    calls = []
+
+    class Tokenizer:
+        eos_token_id = 0
+        chat_template = None
+
+        def encode(self, text, add_special_tokens=False):
+            return list(range(200))
+
+        def decode(self, tokens, skip_special_tokens=True):
+            return "Answer: B"
+
+    def generate(kwargs):
+        calls.append({"ids": list(kwargs["input_ids"].row), "max_new": kwargs["max_new_tokens"]})
+        return _Batch(list(kwargs["input_ids"].row) + [7, 8, 9])
+
+    _install_fake_transformers(monkeypatch, tmp_path / "weights", Tokenizer(), generate)
+    from llm_eval.models.hf_folder import HuggingFaceFolderModel
+
+    model = HuggingFaceFolderModel(
+        "OLMo 2 1B Instruct",
+        {
+            "folder": str(tmp_path / "weights"),
+            "mode": "completions",
+            "max_context": 512 + 1024,
+            "max_new_tokens": 1024,
+            "prompt_budget": 512,
+        },
+    )
+    result = model.generate("Department of War question", max_tokens=1024)
+    assert calls[0]["ids"] == list(range(200))
+    assert calls[0]["max_new"] == 1024
+    assert len(calls) == 1
+    assert result.metadata["prompt_over_budget"] is False
+    assert result.metadata["hit_token_cap"] is False
+    assert result.text == "Answer: B"
+
+
+def test_overlong_prompt_is_not_left_truncated(tmp_path: Path, monkeypatch):
+    calls = []
+
+    class Tokenizer:
+        eos_token_id = 0
+        chat_template = None
+
+        def encode(self, text, add_special_tokens=False):
+            return list(range(200))
+
+        def decode(self, tokens, skip_special_tokens=True):
+            return "should not run"
+
+    def generate(kwargs):
+        calls.append(list(kwargs["input_ids"].row))
+        return _Batch(list(kwargs["input_ids"].row) + [1])
+
+    _install_fake_transformers(monkeypatch, tmp_path / "weights", Tokenizer(), generate)
+    from llm_eval.models.hf_folder import HuggingFaceFolderModel
+
+    model = HuggingFaceFolderModel(
+        "OLMo 2 1B Instruct",
+        {"folder": str(tmp_path / "weights"), "mode": "completions", "max_context": 1024, "max_new_tokens": 1024},
+    )
+    result = model.generate("Department of War question", max_tokens=1024)
+    assert calls == []
+    assert result.metadata["prompt_over_budget"] is True
+    assert result.text == ""
+    assert "not truncated" in result.metadata["prompt_budget_error"]
+
+
+def test_judge_prompt_fits_in_2048(tmp_path: Path, monkeypatch):
+    calls = []
+
+    class Tokenizer:
+        eos_token_id = 0
+        chat_template = None
+
+        def encode(self, text, add_special_tokens=False):
+            return list(range(1800))
+
+        def decode(self, tokens, skip_special_tokens=True):
+            return "VERDICT: pass\nREASON: ok"
+
+    def generate(kwargs):
+        calls.append({"n": len(kwargs["input_ids"].row), "max_new": kwargs["max_new_tokens"]})
+        return _Batch(list(kwargs["input_ids"].row) + [3])
+
+    _install_fake_transformers(monkeypatch, tmp_path / "weights", Tokenizer(), generate)
+    from dow_bench.cli import judge_limits
+    from dow_bench.cli import build_parser
+    from llm_eval.models.hf_folder import HuggingFaceFolderModel
+
+    args = build_parser().parse_args(
+        ["judge", "--run-dir", "runs/x", "--judge-model", "Phi-4-mini-instruct", "--judge-max-context", "2048"]
+    )
+    limits = judge_limits(args)
+    model = HuggingFaceFolderModel(
+        "Phi-4-mini-instruct",
+        {
+            "folder": str(tmp_path / "weights"),
+            "mode": "completions",
+            "max_context": limits["max_context"],
+            "max_new_tokens": limits["answer_cap"],
+            "prompt_budget": limits["prompt_budget"],
+            "thinking_max_tokens": limits["thinking_budget"],
+        },
+    )
+    result = model.generate("grade this", max_tokens=limits["answer_cap"], prompt_budget=limits["prompt_budget"])
+    assert limits["max_context"] == 2304
+    assert calls == [{"n": 1800, "max_new": 256}]
+    assert result.metadata["prompt_over_budget"] is False
+    assert result.text.startswith("VERDICT")
+
+    granite_calls = []
+
+    class GraniteTokenizer:
+        eos_token_id = 0
+        chat_template = "</think>"
+
+        def encode(self, text, add_special_tokens=False):
+            if text.startswith("</"):
+                return [50]
+            return list(range(1800))
+
+        def decode(self, tokens, skip_special_tokens=True):
+            return "done</think>\nVERDICT: pass"
+
+    def granite_generate(kwargs):
+        granite_calls.append({"n": len(kwargs["input_ids"].row), "max_new": kwargs["max_new_tokens"]})
+        return _Batch(list(kwargs["input_ids"].row) + [8])
+
+    _install_fake_transformers(monkeypatch, tmp_path / "granite", GraniteTokenizer(), granite_generate)
+    granite_args = build_parser().parse_args(
+        ["judge", "--run-dir", "runs/x", "--judge-model", "Granite 4.2 3B", "--judge-max-context", "2048"]
+    )
+    granite_limits = judge_limits(granite_args)
+    granite = HuggingFaceFolderModel(
+        "Granite 4.2 3B",
+        {
+            "folder": str(tmp_path / "granite"),
+            "mode": "completions",
+            "max_context": granite_limits["max_context"],
+            "max_new_tokens": granite_limits["answer_cap"],
+            "prompt_budget": granite_limits["prompt_budget"],
+            "thinking_max_tokens": granite_limits["thinking_budget"],
+        },
+    )
+    graded = granite.generate(
+        "grade this",
+        max_tokens=granite_limits["answer_cap"],
+        prompt_budget=granite_limits["prompt_budget"],
+        thinking_max_tokens=granite_limits["thinking_budget"],
+    )
+    assert granite_limits["max_context"] == 2048 + 2048 + 256
+    assert granite_calls[0] == {"n": 1800, "max_new": 2048}
+    assert graded.metadata["prompt_over_budget"] is False
+
+
+def test_end_of_thinking_marker_comes_from_the_template():
+    from llm_eval.models.hf_folder import end_of_thinking_marker
+
+    assert end_of_thinking_marker(types.SimpleNamespace(chat_template="turn </think>")) == "</think>"
+    assert end_of_thinking_marker(types.SimpleNamespace(chat_template="turn </reasoning> next")) == "</reasoning>"
+    assert end_of_thinking_marker(types.SimpleNamespace(chat_template=None, added_tokens_encoder={})) == "</think>"
+
+
+def test_budget_forcing_closes_think_then_answers(tmp_path: Path, monkeypatch):
+    calls = []
+
+    class Tokenizer:
+        eos_token_id = 0
+        chat_template = "assistant <think>\n</think>"
+
+        def encode(self, text, add_special_tokens=False):
+            if text == "</think>\n":
+                return [50, 51]
+            return [1, 2, 3]
+
+        def decode(self, tokens, skip_special_tokens=True):
+            ids = list(getattr(tokens, "row", None) or getattr(tokens, "data", None) or tokens)
+            if ids and isinstance(ids[0], list):
+                ids = ids[0]
+            if ids == [9, 9, 9, 9]:
+                return "still thinking"
+            if ids == [4]:
+                return "Answer: B"
+            if ids == [4, 4, 4]:
+                return "Answer: B"
+            return ""
+
+    def generate(kwargs):
+        row = list(kwargs["input_ids"].row)
+        calls.append({"ids": row, "max_new": kwargs["max_new_tokens"]})
+        if len(calls) == 1:
+            new = [9, 9, 9, 9]
+        else:
+            new = [4, 4, 4] if kwargs["max_new_tokens"] == 3 else [4]
+        return _Batch(row + new)
+
+    _install_fake_transformers(monkeypatch, tmp_path / "weights", Tokenizer(), generate)
+    from llm_eval.models.hf_folder import HuggingFaceFolderModel
+
+    model = HuggingFaceFolderModel(
+        "LFM2.5-2.6B",
+        {
+            "folder": str(tmp_path / "weights"),
+            "mode": "completions",
+            "max_context": 128,
+            "prompt_budget": 32,
+            "thinking_max_tokens": 4,
+        },
+    )
+    short = model.generate("Question <think>", max_tokens=8, thinking_max_tokens=4)
+    assert calls[0]["max_new"] == 4
+    assert calls[1]["max_new"] == 8
+    assert calls[1]["ids"][-2:] == [50, 51]
+    assert short.metadata["think_truncated"] is True
+    assert short.metadata["hit_token_cap"] is False
+    assert short.text == "Answer: B"
+
+    calls.clear()
+    capped = model.generate("Question <think>", max_tokens=3, thinking_max_tokens=4)
+    assert capped.metadata["think_truncated"] is True
+    assert capped.metadata["hit_token_cap"] is True
+    assert capped.text == "Answer: B"
+
+
+def test_closed_think_does_not_count_as_truncated(tmp_path: Path, monkeypatch):
+    calls = []
+
+    class Tokenizer:
+        eos_token_id = 0
+        chat_template = "</think>"
+
+        def encode(self, text, add_special_tokens=False):
+            return [1, 2, 3]
+
+        def decode(self, tokens, skip_special_tokens=True):
+            return "done</think>\nAnswer: B"
+
+    def generate(kwargs):
+        calls.append(kwargs["max_new_tokens"])
+        return _Batch(list(kwargs["input_ids"].row) + [8])
+
+    _install_fake_transformers(monkeypatch, tmp_path / "weights", Tokenizer(), generate)
+    from llm_eval.models.hf_folder import HuggingFaceFolderModel
+
+    model = HuggingFaceFolderModel(
+        "Granite 4.2 3B",
+        {
+            "folder": str(tmp_path / "weights"),
+            "mode": "completions",
+            "max_context": 32 + 4 + 1024,
+            "prompt_budget": 32,
+        },
+    )
+    result = model.generate("Question <think>", max_tokens=1024, thinking_max_tokens=4)
+    assert calls == [4]
+    assert result.metadata["think_truncated"] is False
+    assert result.metadata["hit_token_cap"] is False
+    assert result.text == "Answer: B"
+
+
+def test_non_thinking_model_stays_one_shot(tmp_path: Path, monkeypatch):
+    calls = []
+
+    class Tokenizer:
+        eos_token_id = 0
+        chat_template = "</think>"
+
+        def encode(self, text, add_special_tokens=False):
+            return [1, 2, 3]
+
+        def decode(self, tokens, skip_special_tokens=True):
+            return "Answer: B"
+
+    def generate(kwargs):
+        calls.append(kwargs["max_new_tokens"])
+        return _Batch(list(kwargs["input_ids"].row) + [6])
+
+    _install_fake_transformers(monkeypatch, tmp_path / "weights", Tokenizer(), generate)
+    from llm_eval.models.hf_folder import HuggingFaceFolderModel
+
+    model = HuggingFaceFolderModel(
+        "OLMo 2 1B Instruct",
+        {
+            "folder": str(tmp_path / "weights"),
+            "mode": "completions",
+            "max_context": 512 + 1024,
+            "prompt_budget": 512,
+            "max_new_tokens": 1024,
+        },
+    )
+    result = model.generate("Question", max_tokens=1024, thinking_max_tokens=2048)
+    assert calls == [1024]
+    assert result.metadata["think_truncated"] is False
+    assert result.metadata["thinking_default"] is False
+    assert result.text == "Answer: B"
 
 
 def test_llm_eval_dow_entry_point_is_registered():

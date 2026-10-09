@@ -179,6 +179,7 @@ def _public_connection(connection: dict) -> dict:
         "trust_remote_code": bool(connection.get("trust_remote_code")),
         "use_chat_template": connection.get("use_chat_template"),
         "max_new_tokens": connection.get("max_new_tokens"),
+        "prompt_budget": connection.get("prompt_budget"),
     }
 
 
@@ -248,6 +249,10 @@ class RunManager:
                 "items_completed": len(completed),
                 "error": None,
                 "audit": record.get("audit") or {"events": []},
+                "max_context": connection.get("max_context"),
+                "prompt_budget": connection.get("prompt_budget"),
+                "thinking_budget": connection.get("thinking_max_tokens"),
+                "answer_cap": connection.get("max_new_tokens"),
             }
         )
         suite_rates = {}
@@ -586,6 +591,8 @@ class RunManager:
         record["error"] = error
         record["items_completed"] = len(items)
         record["hit_token_cap_count"] = sum(1 for item in items if item.get("hit_token_cap") is True)
+        record["think_truncated_count"] = sum(1 for item in items if item.get("think_truncated") is True)
+        record["prompt_over_budget_count"] = sum(1 for item in items if item.get("prompt_over_budget") is True)
         record["log_path"] = str(run_dir / "run.log")
         fact_validity = factcheck_empty_validity(items)
         if fact_validity["validity"] == "invalid":

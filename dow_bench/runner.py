@@ -62,15 +62,19 @@ def run_dow_suite(ctx, config: dict, suite: str) -> dict:
         if _cancelled(ctx):
             return _partial(suite, items, total, done, sample_note)
         think_cap = ctx.connection.get("thinking_max_tokens")
-        result = ctx.model.generate(
-            str(row.get("prompt") or ""),
-            max_tokens=int(cap),
-            thinking_max_tokens=think_cap,
-        )
-        raw_response = (result.metadata or {}).get("raw_text")
+        generate_kwargs = {
+            "max_tokens": int(cap),
+            "thinking_max_tokens": think_cap,
+        }
+        if ctx.connection.get("prompt_budget") is not None:
+            generate_kwargs["prompt_budget"] = int(ctx.connection["prompt_budget"])
+        result = ctx.model.generate(str(row.get("prompt") or ""), **generate_kwargs)
+        meta = dict(getattr(result, "metadata", None) or {})
+        raw_response = meta.get("raw_text")
         if raw_response is None:
             raw_response = result.text
         answer = strip_think_blocks(result.text)
+        over_budget = bool(meta.get("prompt_over_budget"))
         scored = score_response(row, answer)
         item = {
             "id": item_id,
@@ -80,12 +84,15 @@ def run_dow_suite(ctx, config: dict, suite: str) -> dict:
             "prompt": row.get("prompt") or "",
             "response": answer,
             "raw_response": raw_response,
-            "empty": not bool(answer.strip()),
+            "empty": not bool(str(answer or "").strip()),
             "expected": row.get("answer_key") or "",
             "answer_key": row.get("answer_key") or "",
             "expected_ids": list(row.get("expected_ids") or []),
             "correction_phrases": list(row.get("correction_phrases") or []),
-            "hit_token_cap": _hit_token_cap(result, cap),
+            "hit_token_cap": False if over_budget else _hit_token_cap(result, cap),
+            "think_truncated": bool(meta.get("think_truncated")),
+            "prompt_over_budget": over_budget,
+            "prompt_budget_error": meta.get("prompt_budget_error") or "",
             "rubric": row.get("rubric") or "",
             "source": "live",
             "dataset_category": row.get("type"),

@@ -61,9 +61,11 @@
       "precision_plan": "full precision and 8-bit",
       "model_type": "phi3",
       "thinking_default": true,
+      "thinking_cap": 2048,
       "hybrid_mamba": false,
       "trust_remote_code": false,
       "min_transformers": "5.5.0",
+      "note": "Reasoning model. The stage-1 thinking cap is 2048 tokens, separate from the answer cap.",
       "excluded": false
     },
     {
@@ -81,10 +83,11 @@
       "license_note": "No LICENSE file in the repo. The license is the model card tag apache-2.0.",
       "precision_plan": "full precision and 8-bit",
       "thinking_default": true,
+      "thinking_cap": 2048,
       "hybrid_mamba": false,
       "trust_remote_code": false,
       "min_transformers": "5.5.0",
-      "note": "IBM publishes no -instruct repo for 4.2. ibm-granite/granite-4.2-3b is the post-trained chat and reasoning model. Thinking is on by default (enable_thinking).",
+      "note": "IBM publishes no -instruct repo for 4.2. ibm-granite/granite-4.2-3b is the post-trained chat and reasoning model. Thinking is on by default (enable_thinking). The stage-1 thinking cap is 2048 tokens, separate from the answer cap.",
       "excluded": false
     },
     {
@@ -102,10 +105,11 @@
       "precision_plan": "full precision and 8-bit",
       "model_type": "nemotron_h",
       "thinking_default": true,
+      "thinking_cap": 2048,
       "hybrid_mamba": true,
       "trust_remote_code": false,
       "min_transformers": "5.5.0",
-      "note": "Hybrid Mamba. The repo ships an auto_map .py file. Do not download it. Load with trust_remote_code false. mamba-ssm is optional and Linux-only. Windows uses the torch path.",
+      "note": "Hybrid Mamba. The repo ships an auto_map .py file. Do not download it. Load with trust_remote_code false. mamba-ssm is optional and Linux-only. Windows uses the torch path. The stage-1 thinking cap is 2048 tokens, separate from the answer cap.",
       "excluded": false
     },
     {
@@ -183,10 +187,11 @@
       "precision_plan": "full precision and 8-bit",
       "model_type": "lfm2",
       "thinking_default": true,
+      "thinking_cap": 2048,
       "hybrid_mamba": false,
       "trust_remote_code": false,
       "min_transformers": "5.5.0",
-      "note": "The chat template always opens a think block. Apply the thinking-token cap and strip the block before scoring.",
+      "note": "The chat template always opens a think block. The stage-1 thinking cap is 2048 tokens, separate from the answer cap. Strip the block before scoring.",
       "excluded": false
     },
     {
