@@ -91,6 +91,7 @@ def run_dow_suite(ctx, config: dict, suite: str) -> dict:
             "correction_phrases": list(row.get("correction_phrases") or []),
             "hit_token_cap": False if over_budget else _hit_token_cap(result, cap),
             "think_truncated": bool(meta.get("think_truncated")),
+            "stopped_on_newline_run": bool(meta.get("stopped_on_newline_run")),
             "prompt_over_budget": over_budget,
             "prompt_budget_error": meta.get("prompt_budget_error") or "",
             "rubric": row.get("rubric") or "",

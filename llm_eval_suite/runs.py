@@ -593,6 +593,9 @@ class RunManager:
         record["hit_token_cap_count"] = sum(1 for item in items if item.get("hit_token_cap") is True)
         record["think_truncated_count"] = sum(1 for item in items if item.get("think_truncated") is True)
         record["prompt_over_budget_count"] = sum(1 for item in items if item.get("prompt_over_budget") is True)
+        record["stopped_on_newline_run_count"] = sum(
+            1 for item in items if item.get("stopped_on_newline_run") is True
+        )
         record["log_path"] = str(run_dir / "run.log")
         fact_validity = factcheck_empty_validity(items)
         if fact_validity["validity"] == "invalid":

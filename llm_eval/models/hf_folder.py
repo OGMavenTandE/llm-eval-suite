@@ -208,6 +208,159 @@ _THINK_MARKERS = (
 )
 
 
+NEWLINE_RUN_LIMIT = 64
+_END_OF_TURN_TOKENS = (
+    "<|im_end|>",
+    "<|end|>",
+    "<|eot_id|>",
+    "<end_of_turn>",
+)
+
+
+def _id_list(value) -> list[int]:
+    if value is None or isinstance(value, bool):
+        return []
+    if isinstance(value, int):
+        return [value]
+    if isinstance(value, (list, tuple)):
+        found: list[int] = []
+        for item in value:
+            found.extend(_id_list(item))
+        return found
+    return []
+
+
+def _vocab_table(tokenizer) -> dict[str, int]:
+    table: dict[str, int] = {}
+    get_vocab = getattr(tokenizer, "get_vocab", None)
+    if callable(get_vocab):
+        try:
+            raw = get_vocab() or {}
+        except Exception:
+            raw = {}
+        if isinstance(raw, dict):
+            for key, token_id in raw.items():
+                if isinstance(token_id, int) and not isinstance(token_id, bool):
+                    table[str(key)] = token_id
+    encoder = getattr(tokenizer, "added_tokens_encoder", None) or {}
+    if isinstance(encoder, dict):
+        for key, token_id in encoder.items():
+            if isinstance(token_id, int) and not isinstance(token_id, bool):
+                table[str(key)] = token_id
+    return table
+
+
+def stop_token_ids(model, tokenizer) -> list[int]:
+    """End tokens that should stop generation.
+
+    The union of ``generation_config.eos_token_id`` (an int or a list),
+    ``tokenizer.eos_token_id``, and chat-template end-of-turn tokens such as
+    ``<|im_end|>`` or ``<|end|>`` when those strings are in the vocab.
+    """
+    found: list[int] = []
+    seen: set[int] = set()
+
+    def add(value) -> None:
+        for token_id in _id_list(value):
+            if token_id not in seen:
+                seen.add(token_id)
+                found.append(token_id)
+
+    config = getattr(model, "generation_config", None)
+    if isinstance(config, dict):
+        add(config.get("eos_token_id"))
+    elif config is not None:
+        add(getattr(config, "eos_token_id", None))
+    add(getattr(tokenizer, "eos_token_id", None))
+    vocab = _vocab_table(tokenizer)
+    template = str(getattr(tokenizer, "chat_template", None) or "")
+    for token in _END_OF_TURN_TOKENS:
+        if token not in vocab:
+            continue
+        if template and token not in template:
+            continue
+        add(vocab[token])
+    return found
+
+
+def _row_ids(input_ids) -> list[int]:
+    if input_ids is None:
+        return []
+    row = input_ids
+    if isinstance(row, (list, tuple)):
+        if row and isinstance(row[0], (list, tuple)):
+            row = row[0]
+        return [int(token) for token in row]
+    shape = getattr(row, "shape", None)
+    if shape is not None and len(shape) == 2:
+        row = row[0]
+    if hasattr(row, "tolist"):
+        raw = row.tolist()
+        if raw and isinstance(raw[0], (list, tuple)):
+            raw = raw[0]
+        return [int(token) for token in raw]
+    if hasattr(row, "row"):
+        return [int(token) for token in row.row]
+    return [int(token) for token in list(row)]
+
+
+def _newline_only_token(tokenizer, token_id: int) -> bool:
+    try:
+        text = tokenizer.decode([int(token_id)], skip_special_tokens=False)
+    except TypeError:
+        text = tokenizer.decode([int(token_id)])
+    if not text:
+        return False
+    return all(char in "\n\r" for char in text)
+
+
+class NewlineRunStoppingCriteria:
+    """Stop after ``limit`` newline-only tokens in a row. The prompt is ignored."""
+
+    def __init__(self, tokenizer, prompt_len: int, limit: int = NEWLINE_RUN_LIMIT):
+        self.tokenizer = tokenizer
+        self.prompt_len = max(0, int(prompt_len))
+        self.limit = max(1, int(limit))
+        self.stopped = False
+        self._cache: dict[int, bool] = {}
+
+    def _is_newline(self, token_id: int) -> bool:
+        cached = self._cache.get(token_id)
+        if cached is None:
+            cached = _newline_only_token(self.tokenizer, token_id)
+            self._cache[token_id] = cached
+        return cached
+
+    def __call__(self, input_ids, scores=None, **kwargs) -> bool:
+        tail = _row_ids(input_ids)[self.prompt_len :]
+        run = 0
+        for token_id in tail:
+            if self._is_newline(token_id):
+                run += 1
+                if run >= self.limit:
+                    self.stopped = True
+                    return True
+            else:
+                run = 0
+        return False
+
+
+def _stopping_list(criteria: NewlineRunStoppingCriteria):
+    try:
+        from transformers import StoppingCriteria, StoppingCriteriaList
+    except Exception:
+        return [criteria]
+
+    class _Wrap(StoppingCriteria):
+        def __call__(self, input_ids, scores=None, **kwargs):
+            return bool(criteria(input_ids, scores, **kwargs))
+
+    try:
+        return StoppingCriteriaList([_Wrap()])
+    except Exception:
+        return [criteria]
+
+
 def end_of_thinking_marker(tokenizer) -> str:
     """Close tag from the chat template or tokenizer, otherwise ``</think>``."""
     blobs: list[str] = []
@@ -453,6 +606,7 @@ class HuggingFaceFolderModel(BaseModel):
                 think_truncated=False,
                 prompt_over_budget=True,
                 prompt_budget_error=message,
+                stopped_on_newline_run=False,
             )
         if use_thinking:
             return self._generate_with_thinking(
@@ -462,7 +616,7 @@ class HuggingFaceFolderModel(BaseModel):
                 use_chat=use_chat,
                 prompt_budget=allowed,
             )
-        new_tokens, raw_text, latency_ms = self._generate_new(token_ids, answer_cap)
+        new_tokens, raw_text, latency_ms, newline_stop = self._generate_new(token_ids, answer_cap)
         completion_tokens = _token_count(new_tokens)
         text = answer_after_think(raw_text, prompt_opened_think=opened_think)
         return self._response(
@@ -476,10 +630,11 @@ class HuggingFaceFolderModel(BaseModel):
             thinking=_model_thinks(self.name),
             prompt_tokens=len(token_ids),
             prompt_budget=allowed,
-            hit_token_cap=completion_tokens >= answer_cap,
+            hit_token_cap=completion_tokens >= answer_cap and not newline_stop,
             think_truncated=False,
             prompt_over_budget=False,
             prompt_budget_error="",
+            stopped_on_newline_run=newline_stop,
         )
 
     def _resolved_think_cap(self, explicit) -> int:
@@ -504,22 +659,32 @@ class HuggingFaceFolderModel(BaseModel):
         tokenizer = self._tokenizer
         input_ids = torch.tensor([token_ids], dtype=torch.long, device=self._device)
         attention = torch.ones_like(input_ids)
+        stop_ids: list[int] = []
+        seen: set[int] = set()
+        for token_id in _id_list(eos_token_id) + stop_token_ids(self._model, tokenizer):
+            if token_id not in seen:
+                seen.add(token_id)
+                stop_ids.append(token_id)
+        newline_run = NewlineRunStoppingCriteria(tokenizer, prompt_len=len(token_ids))
         generate_kwargs = {
             "input_ids": input_ids,
             "attention_mask": attention,
             "max_new_tokens": max(1, int(max_new)),
             "do_sample": False,
             "pad_token_id": getattr(tokenizer, "eos_token_id", None),
+            "stopping_criteria": _stopping_list(newline_run),
         }
-        if eos_token_id is not None:
-            generate_kwargs["eos_token_id"] = eos_token_id
+        if len(stop_ids) == 1:
+            generate_kwargs["eos_token_id"] = stop_ids[0]
+        elif stop_ids:
+            generate_kwargs["eos_token_id"] = stop_ids
         start = time.perf_counter()
         with torch.no_grad():
             output = self._model.generate(**generate_kwargs)
         latency_ms = (time.perf_counter() - start) * 1000
         new_tokens = output[0][input_ids.shape[-1] :]
         raw_text = tokenizer.decode(new_tokens, skip_special_tokens=True)
-        return new_tokens, raw_text, latency_ms
+        return new_tokens, raw_text, latency_ms, bool(newline_run.stopped)
 
     def _generate_with_thinking(
         self,
@@ -545,7 +710,9 @@ class HuggingFaceFolderModel(BaseModel):
                 phase1_eos = marker_ids[0]
             else:
                 phase1_eos = [phase1_eos, marker_ids[0]]
-        think_tokens, think_text, think_latency = self._generate_new(token_ids, think_cap, eos_token_id=phase1_eos)
+        think_tokens, think_text, think_latency, think_newline = self._generate_new(
+            token_ids, think_cap, eos_token_id=phase1_eos
+        )
         think_ids = _token_list(think_tokens)
         control = ""
         try:
@@ -558,20 +725,21 @@ class HuggingFaceFolderModel(BaseModel):
         think_truncated = False
         answer_ids: list[int] = []
         answer_latency = 0.0
+        answer_newline = False
         if not closed:
             think_truncated = True
             prefix = list(token_ids) + think_ids + _encode_ids(tokenizer, marker + "\n")
-            answer_tokens, answer_text, answer_latency = self._generate_new(prefix, answer_cap)
+            answer_tokens, answer_text, answer_latency, answer_newline = self._generate_new(prefix, answer_cap)
             answer_ids = _token_list(answer_tokens)
             raw_text = f"{think_text}{marker}\n{answer_text}"
         elif not after.strip():
             prefix = list(token_ids) + think_ids
-            answer_tokens, answer_text, answer_latency = self._generate_new(prefix, answer_cap)
+            answer_tokens, answer_text, answer_latency, answer_newline = self._generate_new(prefix, answer_cap)
             answer_ids = _token_list(answer_tokens)
             raw_text = f"{think_text}{answer_text}"
         elif len(think_ids) >= think_cap:
             prefix = list(token_ids) + think_ids
-            answer_tokens, answer_text, answer_latency = self._generate_new(prefix, answer_cap)
+            answer_tokens, answer_text, answer_latency, answer_newline = self._generate_new(prefix, answer_cap)
             answer_ids = _token_list(answer_tokens)
             raw_text = f"{think_text}{answer_text}"
         else:
@@ -588,10 +756,11 @@ class HuggingFaceFolderModel(BaseModel):
             thinking=True,
             prompt_tokens=len(token_ids),
             prompt_budget=prompt_budget,
-            hit_token_cap=len(answer_ids) >= answer_cap,
+            hit_token_cap=len(answer_ids) >= answer_cap and not answer_newline,
             think_truncated=think_truncated,
             prompt_over_budget=False,
             prompt_budget_error="",
+            stopped_on_newline_run=bool(think_newline or answer_newline),
         )
 
     def _response(
@@ -611,6 +780,7 @@ class HuggingFaceFolderModel(BaseModel):
         think_truncated: bool,
         prompt_over_budget: bool,
         prompt_budget_error: str,
+        stopped_on_newline_run: bool = False,
     ) -> ModelResponse:
         return ModelResponse(
             text=text,
@@ -636,6 +806,7 @@ class HuggingFaceFolderModel(BaseModel):
                 "think_truncated": think_truncated,
                 "prompt_over_budget": prompt_over_budget,
                 "prompt_budget_error": prompt_budget_error,
+                "stopped_on_newline_run": stopped_on_newline_run,
             },
         )
 

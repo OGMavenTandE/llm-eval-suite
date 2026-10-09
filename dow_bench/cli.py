@@ -8,7 +8,14 @@ import sys
 from pathlib import Path
 
 from dow_bench.export import write_export
-from dow_bench.judge import DEFAULT_JUDGE, DEFAULT_JUDGE_MAX_CONTEXT, grade_run_dir, load_family_map
+from dow_bench.judge import (
+    DEFAULT_JUDGE,
+    DEFAULT_JUDGE_MAX_CONTEXT,
+    grade_run_dir,
+    load_family_map,
+    resolve_model_name,
+    same_family,
+)
 from dow_bench.meta import DEFAULT_PROMPT_BUDGET, derive_max_context, exclusion_reason, thinking_cap
 from dow_bench.rescore import rescore_run_dir
 from dow_bench.sample import agreement, load_items_for_agreement, write_sheet
@@ -81,7 +88,7 @@ def build_run_connection(args: argparse.Namespace) -> dict:
     }
 
 
-def judge_limits(args: argparse.Namespace) -> dict:
+def judge_limits(args: argparse.Namespace, model_name: str | None = None) -> dict:
     """Judge prompt budget is ``--judge-max-context``. The window also holds the reply.
 
     A thinking judge keeps its own thinking budget on top of that prompt budget,
@@ -89,7 +96,8 @@ def judge_limits(args: argparse.Namespace) -> dict:
     """
     answer_cap = int(args.max_new_tokens)
     prompt_budget = int(args.judge_max_context)
-    thinking_budget = thinking_cap(getattr(args, "judge_model", None))
+    name = model_name if model_name is not None else getattr(args, "judge_model", None)
+    thinking_budget = thinking_cap(name)
     return {
         "prompt_budget": prompt_budget,
         "thinking_budget": thinking_budget,
@@ -98,12 +106,13 @@ def judge_limits(args: argparse.Namespace) -> dict:
     }
 
 
-def build_judge_profile(args: argparse.Namespace) -> dict:
-    limits = judge_limits(args)
+def build_judge_profile(args: argparse.Namespace, model_name: str | None = None, folder: str | None = None) -> dict:
+    name = model_name if model_name is not None else args.judge_model
+    limits = judge_limits(args, name)
     return {
         "type": "hf",
-        "model": args.judge_model,
-        "folder": args.judge_folder,
+        "model": name,
+        "folder": args.judge_folder if folder is None else folder,
         "precision": args.precision,
         "trust_remote_code": bool(args.trust_remote_code),
         "max_new_tokens": limits["answer_cap"],
@@ -112,6 +121,14 @@ def build_judge_profile(args: argparse.Namespace) -> dict:
         "thinking_max_tokens": limits["thinking_budget"],
         "mode": "chat",
     }
+
+
+def _candidate_from_run(run_dir: str, explicit: str) -> str:
+    path = Path(run_dir) / "run.json"
+    record = {}
+    if path.is_file():
+        record = json.loads(path.read_text(encoding="utf-8"))
+    return resolve_model_name(explicit, record)
 
 
 def dry_run(args: argparse.Namespace) -> int:
@@ -157,9 +174,15 @@ def export_only(args: argparse.Namespace) -> int:
 
 def judge_only(args: argparse.Namespace) -> int:
     count_tokens = None
+    family_map = load_family_map(args.families) if args.families else load_family_map()
+    model_name = _candidate_from_run(args.run_dir, args.model)
+    fallback_name = str(getattr(args, "fallback_judge", "") or "").strip()
+    fallback_generate = None
     if args.stub:
         generate = stub_judge_reply
         judge_name = args.judge_model
+        if fallback_name:
+            fallback_generate = stub_judge_reply
     else:
         from llm_eval_suite.connections import build_model
 
@@ -179,14 +202,37 @@ def judge_only(args: argparse.Namespace) -> int:
                 thinking_max_tokens=limits["thinking_budget"],
             ).text
 
+        use_fallback = bool(
+            fallback_name
+            and same_family(model_name, judge_name, family_map)
+            and not same_family(model_name, fallback_name, family_map)
+        )
+        if use_fallback:
+            if not str(args.fallback_judge_folder or "").strip():
+                print("--fallback-judge-folder is required for a live fallback judge", file=sys.stderr)
+                return 2
+            fallback_profile = build_judge_profile(args, fallback_name, args.fallback_judge_folder)
+            fallback_model = build_model(fallback_profile)
+            fallback_limits = judge_limits(args, fallback_name)
+
+            def fallback_generate(prompt: str, _model=fallback_model, _limits=fallback_limits) -> str:
+                return _model.generate(
+                    prompt,
+                    max_tokens=_limits["answer_cap"],
+                    prompt_budget=_limits["prompt_budget"],
+                    thinking_max_tokens=_limits["thinking_budget"],
+                ).text
+
     result = grade_run_dir(
         args.run_dir,
         judge_name=judge_name,
         judge_generate=generate,
-        family_map=load_family_map(args.families) if args.families else load_family_map(),
-        model_name=args.model,
+        family_map=family_map,
+        model_name=model_name,
         judge_max_context=args.judge_max_context,
         count_tokens=count_tokens,
+        fallback_name=fallback_name,
+        fallback_generate=fallback_generate,
     )
     print(json.dumps(result))
     return 0
@@ -297,6 +343,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     judge.add_argument("--trust-remote-code", action="store_true")
     judge.add_argument("--families", default="")
+    judge.add_argument(
+        "--fallback-judge",
+        default="",
+        help=(
+            "Judge used only when the primary judge is the same family as the model under test. "
+            "With no fallback, those items are judge_skipped and are not counted as fails."
+        ),
+    )
+    judge.add_argument(
+        "--fallback-judge-folder",
+        default="",
+        help="Local folder for --fallback-judge. Required when the fallback is a live model.",
+    )
     judge.set_defaults(func=judge_only)
 
     sample = sub.add_parser("sample", help="Write the 30-item grading sheet")
