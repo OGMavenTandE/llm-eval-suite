@@ -40,7 +40,7 @@ from llm_eval.offline import (
 apply_startup_offline()
 
 from llm_eval.models.base import BaseModel, ModelResponse
-from llm_eval.models.context import strip_think_blocks, truncate_to_token_budget
+from llm_eval.models.context import strip_think_blocks
 
 logger = logging.getLogger("llm_eval.models.hf_folder")
 
@@ -199,12 +199,101 @@ def answer_after_think(raw: str, *, prompt_opened_think: bool = False) -> str:
     return strip_think_blocks(text)
 
 
+_THINK_MARKERS = (
+    "</think>",
+    "</thinking>",
+    "</reasoning>",
+    "<|end_of_thought|>",
+    "<|end_think|>",
+)
+
+
+def end_of_thinking_marker(tokenizer) -> str:
+    """Close tag from the chat template or tokenizer, otherwise ``</think>``."""
+    blobs: list[str] = []
+    template = getattr(tokenizer, "chat_template", None)
+    if template:
+        blobs.append(str(template))
+    for attr in ("additional_special_tokens", "all_special_tokens"):
+        values = getattr(tokenizer, attr, None) or []
+        blobs.extend(str(value) for value in values)
+    encoder = getattr(tokenizer, "added_tokens_encoder", None) or {}
+    if isinstance(encoder, dict):
+        blobs.extend(str(key) for key in encoder)
+    haystack = "\n".join(blobs)
+    lowered = haystack.lower()
+    for marker in _THINK_MARKERS:
+        index = lowered.find(marker.lower())
+        if index >= 0:
+            return haystack[index : index + len(marker)]
+    return "</think>"
+
+
+def _flatten_ids(raw) -> list[int]:
+    if raw is None:
+        return []
+    if isinstance(raw, int):
+        return [raw]
+    if hasattr(raw, "tolist"):
+        raw = raw.tolist()
+    values = list(raw)
+    if values and isinstance(values[0], (list, tuple)):
+        values = list(values[0])
+    return [int(value) for value in values]
+
+
+def _encode_ids(tokenizer, text: str) -> list[int]:
+    try:
+        ids = tokenizer.encode(text, add_special_tokens=False)
+    except TypeError:
+        ids = tokenizer.encode(text)
+    return _flatten_ids(ids)
+
+
+def _token_list(tokens) -> list[int]:
+    if tokens is None:
+        return []
+    if hasattr(tokens, "tolist"):
+        return _flatten_ids(tokens.tolist())
+    if hasattr(tokens, "data"):
+        return _flatten_ids(tokens.data)
+    return _flatten_ids(tokens)
+
+
+def _token_count(tokens) -> int:
+    shape = getattr(tokens, "shape", None)
+    if shape:
+        return int(shape[-1])
+    return len(_token_list(tokens))
+
+
+def _think_split(text: str, marker: str) -> tuple[bool, str]:
+    """Whether ``marker`` closed the think block, and the text after it."""
+    if not text or not marker:
+        return False, ""
+    index = text.lower().find(marker.lower())
+    if index < 0:
+        return False, ""
+    return True, text[index + len(marker) :]
+
+
+def _scored_after_thinking(raw_text: str, marker: str) -> str:
+    """Answer text after the think block. The block itself is not scored."""
+    if marker.lower() == "</think>":
+        return answer_after_think(raw_text, prompt_opened_think=True)
+    closed, after = _think_split(raw_text, marker)
+    if closed:
+        return strip_think_blocks(after)
+    return ""
+
+
 class HuggingFaceFolderModel(BaseModel):
     """Load a local transformers folder and generate text.
 
     Chat mode is used only when the tokenizer has a chat template. Otherwise
     the folder is treated as a base model (completions). GPT-2's 1,024-token
-    window is the default cap: the prompt is truncated and new tokens are capped.
+    window is the default context size. An eval prompt that does not fit its
+    budget is refused. It is not left-truncated.
     """
 
     def __init__(self, name: str, params: dict):
@@ -213,6 +302,8 @@ class HuggingFaceFolderModel(BaseModel):
         self.folder = str(folder)
         self.max_context = int(params.get("max_context") or 1024)
         self.max_new_tokens = int(params.get("max_new_tokens") or 64)
+        raw_budget = params.get("prompt_budget", None)
+        self.prompt_budget = None if raw_budget in (None, "") else int(raw_budget)
         self.mode = params.get("mode") or "auto"
         self.hub = bool(params.get("hub"))
         self.precision = str(params.get("precision") or "").strip().lower()
@@ -324,51 +415,203 @@ class HuggingFaceFolderModel(BaseModel):
 
     def generate(self, prompt: str, **kwargs) -> ModelResponse:
         self._load()
-        torch = self._torch
         answer_cap = int(kwargs.get("max_tokens") or kwargs.get("max_new_tokens") or self.max_new_tokens)
         answer_cap = max(1, answer_cap)
-        think_cap = kwargs.get("thinking_max_tokens", self.thinking_max_tokens)
-        try:
-            think_cap = int(think_cap) if think_cap else 0
-        except (TypeError, ValueError):
-            think_cap = 0
-        thinking = _model_thinks(self.name) or think_cap > 0
-        if thinking and think_cap > 0:
-            max_new = answer_cap + think_cap
-        else:
-            max_new = answer_cap
-        max_new = max(1, min(max_new, self.max_context - 1))
-        budget = max(1, self.max_context - max_new)
+        think_cap = self._resolved_think_cap(kwargs.get("thinking_max_tokens", self.thinking_max_tokens))
+        use_thinking = think_cap > 0
+        generation_tokens = answer_cap + (think_cap if use_thinking else 0)
+        override = kwargs.get("prompt_budget", self.prompt_budget)
+        allowed, residual = self._prompt_limit(generation_tokens, override)
         tokenizer = self._tokenizer
         use_chat = self._use_chat(tokenizer)
-        prompt = self.prepare_prompt(prompt)
-        opened_think = prompt_opened_think(prompt)
-        token_ids = tokenizer.encode(prompt)
-        if len(token_ids) > budget:
-            token_ids = token_ids[-budget:]
-        elif len(prompt.split()) > budget and not token_ids:
-            prompt = truncate_to_token_budget(prompt, budget)
-            token_ids = tokenizer.encode(prompt)
+        prepared = self.prepare_prompt(prompt)
+        opened_think = prompt_opened_think(prepared)
+        token_ids = _encode_ids(tokenizer, prepared)
         if not token_ids:
-            token_ids = tokenizer.encode(prompt or " ")
+            token_ids = _encode_ids(tokenizer, prepared or " ")
+        if len(token_ids) > allowed:
+            message = (
+                f"Prompt is {len(token_ids)} tokens. The prompt budget is {allowed}. "
+                f"max_context is {self.max_context}, the thinking budget is {think_cap}, "
+                f"and the answer cap is {answer_cap}. "
+                f"The context window leaves {max(0, residual)} tokens beside the reserved generation. "
+                "The prompt was not truncated."
+            )
+            logger.error("%s", message)
+            return self._response(
+                text="",
+                raw_text="",
+                latency_ms=0.0,
+                completion_tokens=0,
+                answer_cap=answer_cap,
+                think_cap=think_cap,
+                use_chat=use_chat,
+                thinking=_model_thinks(self.name),
+                prompt_tokens=len(token_ids),
+                prompt_budget=allowed,
+                hit_token_cap=False,
+                think_truncated=False,
+                prompt_over_budget=True,
+                prompt_budget_error=message,
+            )
+        if use_thinking:
+            return self._generate_with_thinking(
+                token_ids,
+                answer_cap=answer_cap,
+                think_cap=think_cap,
+                use_chat=use_chat,
+                prompt_budget=allowed,
+            )
+        new_tokens, raw_text, latency_ms = self._generate_new(token_ids, answer_cap)
+        completion_tokens = _token_count(new_tokens)
+        text = answer_after_think(raw_text, prompt_opened_think=opened_think)
+        return self._response(
+            text=text,
+            raw_text=raw_text,
+            latency_ms=latency_ms,
+            completion_tokens=completion_tokens,
+            answer_cap=answer_cap,
+            think_cap=0,
+            use_chat=use_chat,
+            thinking=_model_thinks(self.name),
+            prompt_tokens=len(token_ids),
+            prompt_budget=allowed,
+            hit_token_cap=completion_tokens >= answer_cap,
+            think_truncated=False,
+            prompt_over_budget=False,
+            prompt_budget_error="",
+        )
+
+    def _resolved_think_cap(self, explicit) -> int:
+        """Thinking models use their cap. Models with no thinking mode stay one-shot."""
+        if not _model_thinks(self.name):
+            return 0
+        if explicit in (None, ""):
+            return _metadata_thinking_cap(self.name)
+        try:
+            return max(0, int(explicit))
+        except (TypeError, ValueError):
+            return _metadata_thinking_cap(self.name)
+
+    def _prompt_limit(self, generation_tokens: int, override) -> tuple[int, int]:
+        residual = int(self.max_context) - int(generation_tokens)
+        declared = override if override is not None else self.prompt_budget
+        allowed = residual if declared is None else min(int(declared), residual)
+        return max(0, allowed), residual
+
+    def _generate_new(self, token_ids: list[int], max_new: int, eos_token_id=None):
+        torch = self._torch
+        tokenizer = self._tokenizer
         input_ids = torch.tensor([token_ids], dtype=torch.long, device=self._device)
         attention = torch.ones_like(input_ids)
+        generate_kwargs = {
+            "input_ids": input_ids,
+            "attention_mask": attention,
+            "max_new_tokens": max(1, int(max_new)),
+            "do_sample": False,
+            "pad_token_id": getattr(tokenizer, "eos_token_id", None),
+        }
+        if eos_token_id is not None:
+            generate_kwargs["eos_token_id"] = eos_token_id
         start = time.perf_counter()
         with torch.no_grad():
-            output = self._model.generate(
-                input_ids=input_ids,
-                attention_mask=attention,
-                max_new_tokens=max_new,
-                do_sample=False,
-                pad_token_id=getattr(tokenizer, "eos_token_id", None),
-            )
+            output = self._model.generate(**generate_kwargs)
         latency_ms = (time.perf_counter() - start) * 1000
         new_tokens = output[0][input_ids.shape[-1] :]
         raw_text = tokenizer.decode(new_tokens, skip_special_tokens=True)
-        limited = _trim_thinking(raw_text, tokenizer, think_cap) if think_cap > 0 else raw_text
-        text = answer_after_think(limited, prompt_opened_think=opened_think)
-        completion_tokens = int(new_tokens.shape[-1])
-        hit_token_cap = completion_tokens >= max_new
+        return new_tokens, raw_text, latency_ms
+
+    def _generate_with_thinking(
+        self,
+        token_ids: list[int],
+        *,
+        answer_cap: int,
+        think_cap: int,
+        use_chat: bool,
+        prompt_budget: int,
+    ) -> ModelResponse:
+        """Think up to the thinking cap, then generate the answer under its own cap.
+
+        If the think block is still open, append the model's end-of-thinking
+        marker and a newline before the answer phase. ``hit_token_cap`` is true
+        only when that answer phase fills the answer cap.
+        """
+        tokenizer = self._tokenizer
+        marker = end_of_thinking_marker(tokenizer)
+        marker_ids = _encode_ids(tokenizer, marker)
+        phase1_eos = getattr(tokenizer, "eos_token_id", None)
+        if len(marker_ids) == 1:
+            if phase1_eos is None:
+                phase1_eos = marker_ids[0]
+            else:
+                phase1_eos = [phase1_eos, marker_ids[0]]
+        think_tokens, think_text, think_latency = self._generate_new(token_ids, think_cap, eos_token_id=phase1_eos)
+        think_ids = _token_list(think_tokens)
+        control = ""
+        try:
+            control = tokenizer.decode(think_tokens, skip_special_tokens=False)
+        except TypeError:
+            control = think_text
+        closed, after = _think_split(control or think_text, marker)
+        if not closed:
+            closed, after = _think_split(think_text, marker)
+        think_truncated = False
+        answer_ids: list[int] = []
+        answer_latency = 0.0
+        if not closed:
+            think_truncated = True
+            prefix = list(token_ids) + think_ids + _encode_ids(tokenizer, marker + "\n")
+            answer_tokens, answer_text, answer_latency = self._generate_new(prefix, answer_cap)
+            answer_ids = _token_list(answer_tokens)
+            raw_text = f"{think_text}{marker}\n{answer_text}"
+        elif not after.strip():
+            prefix = list(token_ids) + think_ids
+            answer_tokens, answer_text, answer_latency = self._generate_new(prefix, answer_cap)
+            answer_ids = _token_list(answer_tokens)
+            raw_text = f"{think_text}{answer_text}"
+        elif len(think_ids) >= think_cap:
+            prefix = list(token_ids) + think_ids
+            answer_tokens, answer_text, answer_latency = self._generate_new(prefix, answer_cap)
+            answer_ids = _token_list(answer_tokens)
+            raw_text = f"{think_text}{answer_text}"
+        else:
+            raw_text = think_text
+        text = _scored_after_thinking(raw_text, marker)
+        return self._response(
+            text=text,
+            raw_text=raw_text,
+            latency_ms=think_latency + answer_latency,
+            completion_tokens=len(answer_ids),
+            answer_cap=answer_cap,
+            think_cap=think_cap,
+            use_chat=use_chat,
+            thinking=True,
+            prompt_tokens=len(token_ids),
+            prompt_budget=prompt_budget,
+            hit_token_cap=len(answer_ids) >= answer_cap,
+            think_truncated=think_truncated,
+            prompt_over_budget=False,
+            prompt_budget_error="",
+        )
+
+    def _response(
+        self,
+        *,
+        text: str,
+        raw_text: str,
+        latency_ms: float,
+        completion_tokens: int,
+        answer_cap: int,
+        think_cap: int,
+        use_chat: bool,
+        thinking: bool,
+        prompt_tokens: int,
+        prompt_budget: int,
+        hit_token_cap: bool,
+        think_truncated: bool,
+        prompt_over_budget: bool,
+        prompt_budget_error: str,
+    ) -> ModelResponse:
         return ModelResponse(
             text=text,
             latency_ms=latency_ms,
@@ -378,6 +621,8 @@ class HuggingFaceFolderModel(BaseModel):
                 "completion_tokens": completion_tokens,
                 "max_context": self.max_context,
                 "max_new_tokens": answer_cap,
+                "prompt_budget": prompt_budget,
+                "prompt_tokens": prompt_tokens,
                 "thinking_max_tokens": think_cap or None,
                 "mode": "chat" if use_chat else "completions",
                 "device": self.device_name,
@@ -388,6 +633,9 @@ class HuggingFaceFolderModel(BaseModel):
                 "thinking_default": thinking,
                 "mamba_path": self.mamba_path,
                 "hit_token_cap": hit_token_cap,
+                "think_truncated": think_truncated,
+                "prompt_over_budget": prompt_over_budget,
+                "prompt_budget_error": prompt_budget_error,
             },
         )
 
@@ -424,14 +672,9 @@ def _model_thinks(name: str) -> bool:
     return thinking_default(name)
 
 
-def _trim_thinking(text: str, tokenizer, cap: int) -> str:
-    """Keep at most ``cap`` tokens inside a think block."""
-    match = re.search(r"(?is)<think>(.*?)</think>", text)
-    if not match:
-        return text
-    body = match.group(1)
-    tokens = tokenizer.encode(body)
-    if len(tokens) <= cap:
-        return text
-    trimmed = tokenizer.decode(tokens[:cap])
-    return text[: match.start(1)] + trimmed + text[match.end(1) :]
+def _metadata_thinking_cap(name: str) -> int:
+    try:
+        from dow_bench.meta import thinking_cap
+    except ImportError:
+        return 0
+    return thinking_cap(name)

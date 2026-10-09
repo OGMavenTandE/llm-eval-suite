@@ -41,6 +41,8 @@ def rescore_run_dir(run_dir: str | Path) -> dict:
             summaries[suite] = aggregate_suite(suite, rows)
     record["summary"] = summaries
     record["hit_token_cap_count"] = sum(1 for item in updated if item.get("hit_token_cap") is True)
+    record["think_truncated_count"] = sum(1 for item in updated if item.get("think_truncated") is True)
+    record["prompt_over_budget_count"] = sum(1 for item in updated if item.get("prompt_over_budget") is True)
     record["judge_over_budget"] = sum(1 for item in updated if item.get("judge_status") == "over_budget")
     from llm_eval_suite.scoring import scorecard
 
@@ -60,6 +62,8 @@ def rescore_run_dir(run_dir: str | Path) -> dict:
         "summary": str(summary_path),
         "items": len(updated),
         "hit_token_cap_count": record["hit_token_cap_count"],
+        "think_truncated_count": record["think_truncated_count"],
+        "prompt_over_budget_count": record["prompt_over_budget_count"],
         "judge_over_budget": record["judge_over_budget"],
         "suites": summaries,
     }

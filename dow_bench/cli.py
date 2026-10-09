@@ -9,14 +9,24 @@ from pathlib import Path
 
 from dow_bench.export import write_export
 from dow_bench.judge import DEFAULT_JUDGE, DEFAULT_JUDGE_MAX_CONTEXT, grade_run_dir, load_family_map
-from dow_bench.meta import exclusion_reason
+from dow_bench.meta import DEFAULT_PROMPT_BUDGET, derive_max_context, exclusion_reason, thinking_cap
 from dow_bench.rescore import rescore_run_dir
 from dow_bench.sample import agreement, load_items_for_agreement, write_sheet
 from dow_bench.stub import StubDowModel, stub_judge_reply
 
 _MAX_NEW_TOKENS_HELP = (
-    "Maximum new tokens for each answer. Default 1024. "
-    "An item that stops on this cap is stored with hit_token_cap true and counted in run.json."
+    "Answer cap for each item. Default 1024. "
+    "Thinking models use a separate thinking budget from the model list. "
+    "An item whose answer phase stops on this cap is stored with hit_token_cap true and counted in run.json."
+)
+_MAX_CONTEXT_HELP = (
+    "Context window for the answer call. "
+    "The default is the prompt budget plus the thinking budget plus the answer cap. "
+    "The default prompt budget is 512. The longest stage-1 prompt is 216 tokens with the chat template."
+)
+_PROMPT_BUDGET_HELP = (
+    "Tokens reserved for the prompt. Default 512. "
+    "A longer prompt is stored as prompt_over_budget and is not truncated."
 )
 
 
@@ -35,6 +45,75 @@ def _dataset_path(path: str | None) -> str:
     return str(fallback)
 
 
+def run_limits(args: argparse.Namespace) -> dict:
+    """Prompt budget, thinking budget, answer cap, and the context window they need."""
+    answer_cap = int(args.max_new_tokens)
+    prompt_budget = int(getattr(args, "prompt_budget", None) or DEFAULT_PROMPT_BUDGET)
+    thinking_budget = thinking_cap(getattr(args, "model", None))
+    explicit = getattr(args, "max_context", None)
+    if explicit:
+        max_context = int(explicit)
+    else:
+        max_context = derive_max_context(prompt_budget, thinking_budget, answer_cap)
+    return {
+        "prompt_budget": prompt_budget,
+        "thinking_budget": thinking_budget,
+        "answer_cap": answer_cap,
+        "max_context": max_context,
+    }
+
+
+def build_run_connection(args: argparse.Namespace) -> dict:
+    limits = run_limits(args)
+    return {
+        "type": "hf",
+        "name": args.model,
+        "model": args.model,
+        "folder": args.folder or "stub",
+        "precision": args.precision,
+        "mode": "chat",
+        "max_new_tokens": limits["answer_cap"],
+        "max_new_tokens_explicit": True,
+        "max_context": limits["max_context"],
+        "prompt_budget": limits["prompt_budget"],
+        "thinking_max_tokens": limits["thinking_budget"],
+        "trust_remote_code": False,
+    }
+
+
+def judge_limits(args: argparse.Namespace) -> dict:
+    """Judge prompt budget is ``--judge-max-context``. The window also holds the reply.
+
+    A thinking judge keeps its own thinking budget on top of that prompt budget,
+    so a prompt that passed the 2048 check is not then truncated.
+    """
+    answer_cap = int(args.max_new_tokens)
+    prompt_budget = int(args.judge_max_context)
+    thinking_budget = thinking_cap(getattr(args, "judge_model", None))
+    return {
+        "prompt_budget": prompt_budget,
+        "thinking_budget": thinking_budget,
+        "answer_cap": answer_cap,
+        "max_context": derive_max_context(prompt_budget, thinking_budget, answer_cap),
+    }
+
+
+def build_judge_profile(args: argparse.Namespace) -> dict:
+    limits = judge_limits(args)
+    return {
+        "type": "hf",
+        "model": args.judge_model,
+        "folder": args.judge_folder,
+        "precision": args.precision,
+        "trust_remote_code": bool(args.trust_remote_code),
+        "max_new_tokens": limits["answer_cap"],
+        "max_context": limits["max_context"],
+        "prompt_budget": limits["prompt_budget"],
+        "thinking_max_tokens": limits["thinking_budget"],
+        "mode": "chat",
+    }
+
+
 def dry_run(args: argparse.Namespace) -> int:
     from llm_eval_suite.runs import RunManager
 
@@ -45,17 +124,7 @@ def dry_run(args: argparse.Namespace) -> int:
     runs_dir.mkdir(parents=True, exist_ok=True)
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
-    connection = {
-        "type": "hf",
-        "name": args.model,
-        "model": args.model,
-        "folder": args.folder or "stub",
-        "precision": args.precision,
-        "mode": "chat",
-        "max_new_tokens": args.max_new_tokens,
-        "max_new_tokens_explicit": True,
-        "trust_remote_code": False,
-    }
+    connection = build_run_connection(args)
     if args.stub:
         manager = RunManager(runs_dir, model_factory=lambda _profile: StubDowModel(args.model))
     else:
@@ -94,24 +163,21 @@ def judge_only(args: argparse.Namespace) -> int:
     else:
         from llm_eval_suite.connections import build_model
 
-        profile = {
-            "type": "hf",
-            "model": args.judge_model,
-            "folder": args.judge_folder,
-            "precision": args.precision,
-            "trust_remote_code": bool(args.trust_remote_code),
-            "max_new_tokens": args.max_new_tokens,
-            "max_context": int(args.judge_max_context) + int(args.max_new_tokens),
-            "mode": "chat",
-        }
+        profile = build_judge_profile(args)
         model = build_model(profile)
         judge_name = args.judge_model
+        limits = judge_limits(args)
 
         def count_tokens(prompt: str) -> int:
             return model.count_prompt_tokens(prompt)
 
         def generate(prompt: str) -> str:
-            return model.generate(prompt, max_tokens=args.max_new_tokens).text
+            return model.generate(
+                prompt,
+                max_tokens=limits["answer_cap"],
+                prompt_budget=limits["prompt_budget"],
+                thinking_max_tokens=limits["thinking_budget"],
+            ).text
 
     result = grade_run_dir(
         args.run_dir,
@@ -151,6 +217,12 @@ def agreement_only(args: argparse.Namespace) -> int:
     return 0
 
 
+def _add_run_budget_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--max-new-tokens", type=int, default=1024, help=_MAX_NEW_TOKENS_HELP)
+    parser.add_argument("--max-context", type=int, default=None, help=_MAX_CONTEXT_HELP)
+    parser.add_argument("--prompt-budget", type=int, default=DEFAULT_PROMPT_BUDGET, help=_PROMPT_BUDGET_HELP)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="llm-eval-dow", description="Department of War bench tools")
     parser.add_argument("--stub", action="store_true", help="Dry-run dow_bench with the stub model")
@@ -158,7 +230,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--runs-dir", default="runs")
     parser.add_argument("--model", default="OLMo 2 1B Instruct")
     parser.add_argument("--precision", default="fp16")
-    parser.add_argument("--max-new-tokens", type=int, default=1024, help=_MAX_NEW_TOKENS_HELP)
+    _add_run_budget_args(parser)
     parser.add_argument("--dataset", default="")
     parser.add_argument("--folder", default="")
     parser.add_argument("--judge-model", default=DEFAULT_JUDGE)
@@ -170,7 +242,7 @@ def build_parser() -> argparse.ArgumentParser:
     dry.add_argument("--runs-dir", default="runs")
     dry.add_argument("--model", default="OLMo 2 1B Instruct")
     dry.add_argument("--precision", default="fp16")
-    dry.add_argument("--max-new-tokens", type=int, default=1024, help=_MAX_NEW_TOKENS_HELP)
+    _add_run_budget_args(dry)
     dry.add_argument("--dataset", default="")
     dry.add_argument("--folder", default="")
     dry.add_argument("--judge-model", default=DEFAULT_JUDGE)
@@ -182,7 +254,7 @@ def build_parser() -> argparse.ArgumentParser:
     live.add_argument("--runs-dir", default="runs")
     live.add_argument("--model", default="OLMo 2 1B Instruct")
     live.add_argument("--precision", default="fp16")
-    live.add_argument("--max-new-tokens", type=int, default=1024, help=_MAX_NEW_TOKENS_HELP)
+    _add_run_budget_args(live)
     live.add_argument("--dataset", default="")
     live.add_argument("--folder", default="")
     live.add_argument("--judge-model", default=DEFAULT_JUDGE)
@@ -219,6 +291,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_JUDGE_MAX_CONTEXT,
         help=(
             "Maximum tokens in the judge prompt. Default 2048. "
+            "The judge context window is this budget plus the judge thinking budget plus the reply cap. "
             "A longer prompt is stored as judge_status over_budget and is not truncated."
         ),
     )
