@@ -257,6 +257,33 @@ def test_evalplus_rewrite_drops_numpy():
     assert "def assertion(" in rewritten
 
 
+def test_evalplus_rewrite_keeps_helpers_before_check():
+    source = (
+        "import numpy as np\n"
+        "def is_floats(x):\n"
+        "    return isinstance(x, np.ndarray)\n"
+        "def assertion(out, exp, atol):\n"
+        "    assert np.allclose(out, exp, rtol=1e-07, atol=atol)\n"
+        "import math\n"
+        "def _poly(xs, x):\n"
+        "    return sum(coeff * math.pow(x, i) for i, coeff in enumerate(xs))\n"
+        "def ref_func(n):\n"
+        "    return n + 1\n"
+        "def check(candidate):\n"
+        "    assertion(candidate(1), ref_func(1), 0)\n"
+        "    assert _poly(*candidate(1), 1) <= 0.0001\n"
+    )
+    rewritten = rewrite_evalplus_test(source)
+    assert "import numpy" not in rewritten
+    assert "np.ndarray" not in rewritten
+    assert "np.allclose" not in rewritten
+    assert "def ref_func(n):" in rewritten
+    assert "def _poly(xs, x):" in rewritten
+    assert "import math" in rewritten
+    assert rewritten.index("def ref_func") < rewritten.index("def check(")
+    assert "def check(" in rewritten
+
+
 def test_fixture_manifest_matches_and_hash_mismatch_refuses(tmp_path: Path):
     for name in SUITES:
         entry = verify_suite(FIXTURES, name)
@@ -302,6 +329,8 @@ def test_fixture_smoke_scores_and_redacts_gpqa(tmp_path: Path):
     assert results["ifeval"]["metrics"]["prompt_strict"] == 0.5
     assert results["humaneval_plus"]["metrics"]["pass_at_1_plus"] == 1.0
     assert results["mbpp_plus"]["metrics"]["pass_at_1_plus"] == 1.0
+    assert results["humaneval_plus"]["metrics"]["reference_exclusions"][0]["task_id"] == "HumanEval/32"
+    assert results["mbpp_plus"]["metrics"]["reference_exclusions"][0]["task_id"] == "255"
     assert results["gpqa_diamond"]["counts_toward_dow_score"] is False
     gpqa_items = results["gpqa_diamond"]["items"]
     assert gpqa_items
@@ -477,7 +506,9 @@ def test_run_plan_matches_plan_py():
 
 
 def _read_jsonl(path: Path) -> list[dict]:
-    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    from standard_bench.load import jsonl_lines
+
+    return [json.loads(line) for line in jsonl_lines(path.read_text(encoding="utf-8"))]
 
 
 def test_mbpp_plus_keeps_the_plus_inputs():
@@ -513,6 +544,7 @@ def test_humaneval_raw_rows_keep_plus_inputs():
     assert weak["plus_pass"] is False
     good = score_code_task(normalized[0], "def add(a, b):\n    return a + b\n", suite="humaneval_plus")
     assert good["plus_pass"] is True
+    assert "return a + b" in normalized[0]["canonical_solution"]
 
 
 def test_code_extraction_keeps_imports_and_helpers():
@@ -707,6 +739,167 @@ def test_customer_docs_do_not_ask_for_an_hf_token():
     assert "HF_TOKEN" in inhouse
     assert "in-house" in inhouse.lower()
     assert "standard_capability_gpqa" in inhouse
+
+
+def test_jsonl_keeps_unicode_line_separators():
+    from standard_bench.export import _read_items
+    from standard_bench.load import read_jsonl
+
+    path = FIXTURES / "unicode_line.jsonl"
+    text = path.read_text(encoding="utf-8")
+    assert "\u0085" in text
+    assert "\u2028" in text
+    assert "\u2029" in text
+    broken = False
+    try:
+        for line in text.splitlines():
+            if line.strip():
+                json.loads(line)
+    except json.JSONDecodeError:
+        broken = True
+    assert broken is True
+    rows = read_jsonl(path)
+    assert len(rows) == 1
+    question = rows[0]["question"]
+    assert "\u0085" in question
+    assert "\u2028" in question
+    assert "\u2029" in question
+    exported = _read_items(path)
+    assert exported == rows
+
+
+def test_mbpp_imports_and_check_name_do_not_fail_the_reference():
+    imported = {
+        "task_id": 98,
+        "prompt": "Average the product.",
+        "code": "def multiply_num(numbers):\n    return -67.2\n",
+        "test_list": ["assert math.isclose(multiply_num((8, 2)), -67.2, rel_tol=0.001)"],
+        "test_imports": ["import math"],
+        "test": (
+            "import numpy as np\n"
+            "from math import inf\n"
+            "def assertion(out, exp, atol):\n"
+            "    assert out == exp\n"
+            "inputs = [((1, 2),)]\n"
+            "results = [inf]\n"
+            "for i, (inp, exp) in enumerate(zip(inputs, results)):\n"
+            "    assertion(multiply_num(*inp), exp, 0)\n"
+        ),
+    }
+    # The reference returns 1, so the plus comparison against inf fails.
+    # The base assert is what needs math. A missing import is a NameError.
+    row = normalize_mbpp([imported])[0]
+    assert row["test_imports"] == ["import math"]
+    scored = score_code_task(row, imported["code"], suite="mbpp_plus")
+    assert scored["base_pass"] is True
+    assert "math" not in scored["error"]
+    colliding = {
+        "task_id": 56,
+        "prompt": "Check the number.",
+        "code": "def check(n):\n    return n == 1\n",
+        "test_list": ["assert check(1) == True", "assert check(2) == False"],
+        "test_imports": [],
+        "test": (
+            "def assertion(out, exp, atol):\n"
+            "    assert out == exp\n"
+            "inputs = [[1], [2]]\n"
+            "results = [True, False]\n"
+            "for i, (inp, exp) in enumerate(zip(inputs, results)):\n"
+            "    assertion(check(*inp), exp, 0)\n"
+        ),
+    }
+    row = normalize_mbpp([colliding])[0]
+    scored = score_code_task(row, colliding["code"], suite="mbpp_plus")
+    assert scored["base_pass"] is True
+    assert scored["plus_pass"] is True
+    assert "not callable" not in scored["error"]
+
+
+def test_documented_reference_exclusions_are_skipped():
+    from standard_bench.reference import EXCLUSIONS, verify_rows
+
+    assert "HumanEval/32" in EXCLUSIONS["humaneval_plus"]
+    assert "255" in EXCLUSIONS["mbpp_plus"]
+    broken = {
+        "task_id": "HumanEval/32",
+        "canonical_solution": "",
+        "entry_point": "find_zero",
+        "prompt": "",
+        "base_test": "",
+        "plus_test": "",
+    }
+    report = verify_rows([broken], "humaneval_plus", workers=1)
+    assert report["ok"] is True
+    assert report["checked"] == 0
+    assert report["excluded"][0]["task_id"] == "HumanEval/32"
+
+
+def test_verify_reference_on_fixture_rows():
+    from standard_bench.cli import main
+    from standard_bench.reference import verify_reference
+
+    report = verify_reference(FIXTURES, workers=1)
+    assert report["ok"] is True
+    assert report["suites"]["humaneval_plus"]["passed"] == 1
+    assert report["suites"]["mbpp_plus"]["passed"] == 1
+    assert report["suites"]["humaneval_plus"]["failures"] == []
+    with pytest.raises(SystemExit) as caught:
+        main(["verify-reference", "--fixtures"])
+    assert caught.value.code == 0
+
+
+def test_fetch_retries_429_and_5xx(monkeypatch: pytest.MonkeyPatch):
+    import urllib.error
+    import urllib.request
+
+    from standard_bench.fetch import _request
+
+    calls = {"n": 0}
+
+    class _Body:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return b"ok"
+
+    def urlopen(request, timeout=60):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise urllib.error.HTTPError(request.full_url, 429, "rate", {"Retry-After": "0"}, None)
+        return _Body()
+
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    slept = []
+    monkeypatch.setattr("standard_bench.fetch.time.sleep", lambda seconds: slept.append(seconds))
+    assert _request("https://example.test/file", "") == b"ok"
+    assert calls["n"] == 3
+    assert slept == [0.0, 0.0]
+
+    calls["n"] = 0
+
+    def urlopen_500(request, timeout=60):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise urllib.error.HTTPError(request.full_url, 503, "down", {}, None)
+        return _Body()
+
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen_500)
+    assert _request("https://example.test/file", "") == b"ok"
+    assert calls["n"] == 2
+
+    def urlopen_403(request, timeout=60):
+        calls["n"] += 1
+        raise urllib.error.HTTPError(request.full_url, 403, "no", {}, None)
+
+    calls["n"] = 0
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen_403)
+    with pytest.raises(FetchError, match="403"):
+        _request("https://example.test/gated", "")
+    assert calls["n"] == 1
 
 
 def test_cli_smoke(tmp_path: Path):

@@ -17,7 +17,7 @@ Full sizes, with no `--limit` and no subset:
 | humaneval_plus | 164 |
 | mbpp_plus | 378 |
 
-The total is 14934. The quick check is 300 items, 50 from each suite. `--limit N` keeps the first N of each suite after an optional `--seed` shuffle. `--limits mmlu_pro=200,gsm8k=200` sets per-suite caps. `--subset short` is the screen in the run plan. `--subset quick50` is the 50-item sample. Over-budget prompts are not passes. Accuracy uses `n_scored`, the items that were generated.
+The total is 14934. HumanEval/32 and MBPP+ task 255 are in that count and are not scored. The quick check is 300 items, 50 from each suite. `--limit N` keeps the first N of each suite after an optional `--seed` shuffle. `--limits mmlu_pro=200,gsm8k=200` sets per-suite caps. `--subset short` is the screen in the run plan. `--subset quick50` is the 50-item sample. Over-budget prompts are not passes. Accuracy uses `n_scored`, the items that were generated.
 
 Build the offline kit on a connected machine:
 
@@ -25,7 +25,7 @@ Build the offline kit on a connected machine:
 python -m standard_bench bundle --output dist/standard-capability-kit.zip
 ```
 
-The command prints the zip size. A kit built from the pinned revisions on 11 October 2026 is 5.05 MB. The kit is the test kit code plus the six pinned suites, with a SHA-256 manifest. Model weights are not in the zip. On the closed network, unzip it and point `--data` at `datasets/standard`. The runner checks the hashes before it scores. Details are in [AIRGAP_INSTALL.md](AIRGAP_INSTALL.md) and [STANDARD_BENCH_RUN_PLAN.md](STANDARD_BENCH_RUN_PLAN.md).
+The command prints the zip size. A kit built from the pinned revisions on 11 October 2026 is 5.09 MB. The kit is the test kit code plus the six pinned suites, with a SHA-256 manifest. Model weights are not in the zip. On the closed network, unzip it and point `--data` at `datasets/standard`. The runner checks the hashes before it scores. Details are in [AIRGAP_INSTALL.md](AIRGAP_INSTALL.md) and [STANDARD_BENCH_RUN_PLAN.md](STANDARD_BENCH_RUN_PLAN.md).
 
 ## MMLU-Pro
 
@@ -77,13 +77,20 @@ Reference: Chen et al., arXiv:2107.03374, Austin et al., arXiv:2108.07732, and L
 
 HumanEval base tests come from openai/openai_humaneval at `7dce6050a7d6d172f3cc5c32aa97f52fa1a2e544`. Plus tests come from evalplus/humanevalplus. The chat wrapper is `Complete the following Python function. Reply with the code only.` A fenced reply is unwrapped. If it defines the entry point, imports and helpers before that function stay, and helpers after it stay. Stop strings apply only after the entry function, and a following `def` or `class` is kept. Other stops still drop a trailing `print` or assert. A reply that does not define the entry point is the indented body. The official prompt is prepended, and every stop applies to that body, including a newline plus `class`, `def`, `#`, `if`, or `print`.
 
-MBPP+ uses the EvalPlus task line, the statement, and the three base asserts. The same completion rule applies. Stop strings on a bare body are a newline plus a triple quote, `assert`, `class`, or `def`. The function header from the dataset is the prefix when the completion does not define the entry point. The upstream plus `test` field is module-level and has no `def check`. Fetch indents that body into `def check(candidate)` and renames `entry(` to `candidate(`, so the inputs, results, and assert loop are the plus test.
+MBPP+ uses the EvalPlus task line, the statement, and the three base asserts. The same completion rule applies. Stop strings on a bare body are a newline plus a triple quote, `assert`, `class`, or `def`. The function header from the dataset is the prefix when the completion does not define the entry point. The upstream plus `test` field is module-level and has no `def check`. Fetch indents that body into `def check(candidate)` and renames `entry(` to `candidate(`, so the inputs, results, and assert loop are the plus test. The test function is renamed to `_standard_bench_check` when it runs, because MBPP+ task 56 defines a solution named `check`. The row's `test_imports` are prepended at module level, so a base assert that calls `math.isclose` can see `math`.
 
-Deviation: the EvalPlus harness imports numpy. Fetch rewrites that helper to `math.isclose` with atol 1e-6 and rtol 1e-7. A set-comparison variant is kept when the original assertion does `out = set(out)`. The run does not import numpy or evalplus. Canonical solutions are not stored.
+Deviation: the EvalPlus harness imports numpy. Fetch rewrites that helper to a stdlib `assertion` with atol 1e-6 and rtol 1e-7. A set-comparison variant is kept when the original assertion does `out = set(out)`. Helpers other than `is_floats` and `assertion` stay, including `ref_func` and `_poly`. The run does not import numpy or evalplus. The pinned rows store the canonical solution: the HumanEval+ prompt plus `canonical_solution`, and the MBPP+ `code` field. `python -m standard_bench verify-reference --data datasets/standard` runs those solutions offline and requires every one to pass. `--fixtures` checks the packaged rows the same way.
 
 ## Code sandbox
 
-Each test runs in `python -I` with a JSON payload on stdin. The parent enforces a wall-clock timeout. The child blocks `socket.socket`, `create_connection`, and `getaddrinfo` before the program runs.
+Each test runs in `python -I` with a JSON payload on stdin. The parent enforces a wall-clock timeout. The default ceiling is 20 seconds, 20 seconds of CPU, and 1 GB of address space. Five seconds is not enough for MBPP+ task 599, which sums ranges past 1e8. The child blocks `socket.socket`, `create_connection`, and `getaddrinfo` before the program runs.
+
+Two tasks are excluded from scoring. The rows stay in the pinned files. `verify-reference` does not require them to pass, and a run does not send them to the model. The suite metrics list them under `reference_exclusions`.
+
+| Suite | Task | Reason |
+| --- | --- | --- |
+| HumanEval+ | HumanEval/32 | The plus test calls `_poly(*candidate(*inp), inp)`. `find_zero` returns a float, so the star raises TypeError. The reference solution passes the base tests. |
+| MBPP+ | 255 | The plus test builds `combinations_with_replacement` for a length-77 sequence. The reference solution does the same and raises MemoryError at the 1 GB ceiling. The base tests pass. |
 
 On Linux the child also sets `RLIMIT_AS`, `RLIMIT_CPU`, `RLIMIT_FSIZE`, and `RLIMIT_NOFILE`. It does not create a network namespace.
 

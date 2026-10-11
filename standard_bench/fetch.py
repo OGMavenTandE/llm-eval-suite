@@ -11,14 +11,19 @@ import io
 import json
 import os
 import re
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
 
 from standard_bench.catalog import SUITES, SuiteSpec
+from standard_bench.load import jsonl_lines
 from standard_bench.manifest import file_record, write_manifest
 from standard_bench.scorers.code import rewrite_evalplus_test
+
+_RETRY_STATUS = frozenset({429, 500, 502, 503, 504})
+_MAX_ATTEMPTS = 5
 
 USER_AGENT = "llm-eval-suite-standard-bench"
 _TOKEN_ENV = ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN")
@@ -44,20 +49,35 @@ def auth_headers(token: str | None = None) -> dict[str, str]:
     return headers
 
 
+def _retry_delay(attempt: int, exc: urllib.error.HTTPError) -> float:
+    header = ""
+    if exc.headers is not None:
+        header = str(exc.headers.get("Retry-After") or "").strip()
+    if header.isdigit():
+        return min(float(header), 30.0)
+    return min(30.0, 0.5 * (2**attempt))
+
+
 def _request(url: str, token: str, timeout: int = 60) -> bytes:
     request = urllib.request.Request(url, headers=auth_headers(token))
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            return response.read()
-    except urllib.error.HTTPError as exc:
-        if exc.code in {401, 403}:
-            raise FetchError(
-                f"Hugging Face refused {url.split('?')[0]} ({exc.code}). "
-                "GPQA is gated. Set HF_TOKEN in the environment. The token is not stored."
-            ) from exc
-        raise FetchError(f"Download failed ({exc.code}) for {url.split('?')[0]}.") from exc
-    except urllib.error.URLError as exc:
-        raise FetchError(f"Download failed for {url.split('?')[0]}: {exc.reason}.") from exc
+    host = url.split("?")[0]
+    for attempt in range(_MAX_ATTEMPTS):
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                return response.read()
+        except urllib.error.HTTPError as exc:
+            if exc.code in {401, 403}:
+                raise FetchError(
+                    f"Hugging Face refused {host} ({exc.code}). "
+                    "GPQA is gated. Set HF_TOKEN in the environment. The token is not stored."
+                ) from exc
+            if exc.code in _RETRY_STATUS and attempt + 1 < _MAX_ATTEMPTS:
+                time.sleep(_retry_delay(attempt, exc))
+                continue
+            raise FetchError(f"Download failed ({exc.code}) for {host}.") from exc
+        except urllib.error.URLError as exc:
+            raise FetchError(f"Download failed for {host}: {exc.reason}.") from exc
+    raise FetchError(f"Download failed for {host}.")
 
 
 def live_revision(spec: SuiteSpec, token: str) -> str:
@@ -123,6 +143,19 @@ def _function_header(code: str) -> str:
     return match.group(0) + "\n"
 
 
+def _test_imports(row: dict) -> list[str]:
+    raw = row.get("test_imports") or []
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, list):
+        return []
+    return [str(item) for item in raw if str(item).strip()]
+
+
+def _loads_jsonl(text: str) -> list:
+    return [json.loads(line) for line in jsonl_lines(text)]
+
+
 def normalize_humaneval(base_rows: list[dict], plus_rows: list[dict]) -> list[dict]:
     plus_by_id = {str(row.get("task_id")): row for row in plus_rows}
     normalized = []
@@ -130,11 +163,14 @@ def normalize_humaneval(base_rows: list[dict], plus_rows: list[dict]) -> list[di
         task_id = str(row.get("task_id") or "")
         plus = plus_by_id.get(task_id) or {}
         plus_test = str(plus.get("test") or "")
+        plus_prompt = str(plus.get("prompt") or row.get("prompt") or "")
+        solution = str(plus.get("canonical_solution") or "")
         normalized.append(
             {
                 "task_id": task_id,
                 "prompt": row.get("prompt") or "",
                 "entry_point": row.get("entry_point") or "",
+                "canonical_solution": plus_prompt + solution if solution else "",
                 "base_test": row.get("test") or "",
                 "plus_test": rewrite_evalplus_test(plus_test) if plus_test else "",
             }
@@ -187,7 +223,9 @@ def normalize_mbpp(rows: list[dict]) -> list[dict]:
                 "task_id": str(row.get("task_id")),
                 "prompt": row.get("prompt") or "",
                 "entry_point": entry,
+                "canonical_solution": code,
                 "function_header": _function_header(code),
+                "test_imports": _test_imports(row),
                 "test_list": tests,
                 "base_test": base_test,
                 "plus_test": plus_test,
@@ -266,19 +304,19 @@ def fetch_suite(spec: SuiteSpec, dest: Path, token: str, *, allow_moved: bool) -
         count = len(rows)
     elif spec.name == "math500":
         text = download_text(spec.repo, revision, spec.direct_file, token)
-        rows = [json.loads(line) for line in text.splitlines() if line.strip()]
+        rows = _loads_jsonl(text)
         _write_jsonl(target, rows)
         files = [file_record(dest, relative)]
         count = len(rows)
     elif spec.name == "ifeval":
         text = download_text(spec.repo, revision, spec.direct_file, token)
-        rows = [json.loads(line) for line in text.splitlines() if line.strip()]
+        rows = _loads_jsonl(text)
         _write_jsonl(target, rows)
         files = [file_record(dest, relative)]
         count = len(rows)
     elif spec.name == "humaneval_plus":
         plus_text = download_text(spec.repo, revision, "test.jsonl", token)
-        plus_rows = [json.loads(line) for line in plus_text.splitlines() if line.strip()]
+        plus_rows = _loads_jsonl(plus_text)
         base_rows = download_rows(
             "openai/openai_humaneval",
             "openai_humaneval",

@@ -19,11 +19,20 @@ from pathlib import Path
 CHILD = Path(__file__).with_name("sandbox_child.py")
 
 
+# Plus tests include a long range sum and a combinations listing. 5 seconds
+# and 512 MB are not enough for those reference solutions. The ceiling is
+# 20 seconds and 1 GB. cpu_s matches the wall clock so RLIMIT_CPU does not
+# stop a run the parent would still allow.
+DEFAULT_TIMEOUT_S = 20.0
+DEFAULT_MEMORY_MB = 1024
+DEFAULT_CPU_S = 20
+
+
 @dataclass(frozen=True)
 class RunLimits:
-    timeout_s: float = 5.0
-    memory_mb: int = 512
-    cpu_s: int = 5
+    timeout_s: float = DEFAULT_TIMEOUT_S
+    memory_mb: int = DEFAULT_MEMORY_MB
+    cpu_s: int = DEFAULT_CPU_S
 
 
 @dataclass(frozen=True)

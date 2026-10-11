@@ -53,16 +53,49 @@ _SET_HEADER = _STDLIB_HEADER.replace(
 )
 
 
+def _drop_numpy_helpers(prefix: str) -> str:
+    """Drop the numpy import and the ``is_floats`` / ``assertion`` helpers.
+
+    Other prefix code stays. HumanEval/14, 15, 32, 83, 100, 130, and 139
+    define ``ref_func`` or ``_poly`` before ``def check``, and the plus
+    tests call those names.
+    """
+    lines = (prefix or "").replace("\r\n", "\n").split("\n")
+    kept: list[str] = []
+    skipping = False
+    skip_indent = 0
+    for line in lines:
+        if skipping:
+            if not line.strip():
+                continue
+            indent = len(line[: len(line) - len(line.lstrip(" \t"))])
+            if indent > skip_indent:
+                continue
+            skipping = False
+        stripped = line.strip()
+        if re.match(r"^(?:import|from)\s+numpy\b", stripped):
+            continue
+        if re.match(r"^def\s+(?:is_floats|assertion)\b", line):
+            skipping = True
+            skip_indent = len(line[: len(line) - len(line.lstrip(" \t"))])
+            continue
+        kept.append(line)
+    return "\n".join(kept).strip("\n")
+
+
 def rewrite_evalplus_test(source: str) -> str:
-    """Replace the numpy assertion helper. Inputs and expected values stay."""
+    """Replace the numpy assertion helper. Inputs, expected values, and other helpers stay."""
     text = source or ""
     marker = "def check("
     index = text.find(marker)
     if index < 0:
         raise ValueError("EvalPlus test has no def check.")
-    body = text[index:]
     header = _SET_HEADER if "out = set(out)" in text[:index] else _STDLIB_HEADER
-    rewritten = header + "\n" + body
+    kept = _drop_numpy_helpers(text[:index])
+    rewritten = header.strip() + "\n\n"
+    if kept:
+        rewritten += kept + "\n\n"
+    rewritten += text[index:].strip() + "\n"
     rewritten = re.sub(r"(?m)^[ \t]*import numpy(?:\s+as\s+\w+)?\s*$", "", rewritten)
     rewritten = re.sub(r"(?m)^[ \t]*from numpy\s+import\s+.+$", "", rewritten)
     rewritten = rewritten.replace("np.allclose", "_close")
@@ -145,8 +178,29 @@ def assemble_program(prompt: str, completion: str, entry_point: str, stops: tupl
     return prefix + function + suffix
 
 
+# MBPP+ task 56 defines ``check``. A test function of the same name replaces
+# that solution, and the call then fails with ``'int' object is not callable``.
+TEST_FUNCTION = "_standard_bench_check"
+
+
+def test_imports_block(row: dict) -> str:
+    """Module-level imports from the row. Base asserts such as ``math.isclose`` need these."""
+    raw = row.get("test_imports") or []
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, list):
+        return ""
+    lines = [str(item).strip() for item in raw if str(item).strip()]
+    return "\n".join(lines)
+
+
+def _bind_test(test: str) -> str:
+    return re.sub(r"(?m)^def check\(", f"def {TEST_FUNCTION}(", test, count=1)
+
+
 def _program(code: str, test: str, entry_point: str) -> str:
-    return code.rstrip() + "\n\n" + test.rstrip() + f"\n\ncheck({entry_point})\n"
+    body = _bind_test(test.rstrip())
+    return code.rstrip() + "\n\n" + body + f"\n\n{TEST_FUNCTION}({entry_point})\n"
 
 
 def run_tests(program: str, test: str, entry_point: str, limits: RunLimits | None = None) -> dict:
@@ -189,6 +243,9 @@ def score_code_task(row: dict, completion: str, *, suite: str, limits: RunLimits
         program = assemble_program(header, completion, entry, stops)
     else:
         program = assemble_program(prompt, completion, entry, stops)
+    imports = test_imports_block(row)
+    if imports:
+        program = imports + "\n" + program
     base = run_tests(program, str(row.get("base_test") or ""), entry, limits)
     if base["ok"]:
         plus = run_tests(program, str(row.get("plus_test") or ""), entry, limits)

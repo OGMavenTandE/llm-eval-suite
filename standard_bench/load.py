@@ -8,11 +8,27 @@ from pathlib import Path
 from standard_bench.manifest import verify_suite
 
 
+def jsonl_lines(text: str) -> list[str]:
+    """Split JSONL on ``\\n`` only.
+
+    ``str.splitlines()`` also splits on U+0085, U+2028, and U+2029. MMLU-Pro
+    question text contains U+0085, and that split raises ``Unterminated string``.
+    A trailing ``\\r`` is stripped so ``\\r\\n`` files still parse.
+    """
+    if text.startswith("\ufeff"):
+        text = text[1:]
+    lines = []
+    for line in text.split("\n"):
+        if line.endswith("\r"):
+            line = line[:-1]
+        if line.strip():
+            lines.append(line)
+    return lines
+
+
 def read_jsonl(path: Path) -> list[dict]:
     rows = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
+    for line in jsonl_lines(path.read_text(encoding="utf-8")):
         payload = json.loads(line)
         if isinstance(payload, dict):
             rows.append(payload)

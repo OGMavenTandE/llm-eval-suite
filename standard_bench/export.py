@@ -12,6 +12,7 @@ from io import StringIO
 from pathlib import Path
 
 from standard_bench import SUITE_NAMES, SUITE_VERSION
+from standard_bench.load import jsonl_lines
 from standard_bench.runner import _aggregate
 
 CSV_COLUMNS = (
@@ -72,9 +73,7 @@ def _read_items(path: Path) -> list[dict]:
     if not path.is_file():
         return []
     rows = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
+    for line in jsonl_lines(path.read_text(encoding="utf-8")):
         try:
             row = json.loads(line)
         except json.JSONDecodeError:

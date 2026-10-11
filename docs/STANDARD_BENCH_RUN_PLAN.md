@@ -35,7 +35,7 @@ Tokens per item are prompt plus answer. Thinking models add 2048 to the answer s
 | humaneval_plus | 164 | 280 | 180 | 460 | 2508 |
 | mbpp_plus | 378 | 220 | 160 | 380 | 2428 |
 
-Full size is 14934 items. These token budgets live in `standard_bench/plan.py`.
+Full size is 14934 items. HumanEval/32 and MBPP+ task 255 stay in the files and are not scored, so a full run grades 14932. These token budgets live in `standard_bench/plan.py`.
 
 ## Full run, hours
 
@@ -108,7 +108,7 @@ A full reasoning-model run at the 2048 cap is 287.81 hours. The quick check is t
 
 ## Commands
 
-Build the kit once on a connected machine. The command fetches the six public suites, packs the test kit code and those files, and prints the zip size. A kit built from the pinned revisions on 11 October 2026 is 5.05 MB. Copy the zip. Do not copy model weights in that zip. On the closed network, unzip it and run. The runner checks every SHA-256 before it scores.
+Build the kit once on a connected machine. The command fetches the six public suites, packs the test kit code and those files, and prints the zip size. A kit built from the pinned revisions on 11 October 2026 is 5.09 MB. Copy the zip. Do not copy model weights in that zip. On the closed network, unzip it and run. The runner checks every SHA-256 before it scores.
 
 ```bash
 python -m standard_bench bundle --output dist/standard-capability-kit.zip

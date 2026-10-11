@@ -197,6 +197,38 @@ def _verify_kit(args: argparse.Namespace) -> int:
     return 0
 
 
+def _verify_reference(args: argparse.Namespace) -> int:
+    from llm_eval.offline import activate_run_offline
+
+    from standard_bench.reference import verify_reference
+
+    activate_run_offline(preset={"offline": True})
+    if args.fixtures:
+        dest = Path(__file__).resolve().parent / "fixtures"
+    else:
+        if not args.data:
+            print("Pass --data, the directory from fetch, or pass --fixtures.", file=sys.stderr)
+            return 2
+        dest = Path(args.data)
+    try:
+        report = verify_reference(dest)
+    except (HashMismatch, ManifestError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    for name, suite in report["suites"].items():
+        excluded = len(suite["excluded"])
+        print(f"{name}: {suite['passed']}/{suite['checked']} passed, {excluded} excluded")
+        for item in suite["excluded"]:
+            print(f"  excluded {item['task_id']}: {item['reason']}")
+        for item in suite["failures"]:
+            error = str(item.get("error") or "").replace("\n", " ")
+            print(f"  FAIL {item['task_id']} base={item['base_pass']} plus={item['plus_pass']} {error[:200]}")
+    if report["ok"]:
+        print("reference ok")
+        return 0
+    return 1
+
+
 def _smoke(args: argparse.Namespace) -> int:
     args.fixtures = True
     args.stub = True
@@ -265,6 +297,14 @@ def build_parser() -> argparse.ArgumentParser:
     checked = sub.add_parser("verify-kit", help="Check the SHA-256 manifest in a kit zip or unpacked directory")
     checked.add_argument("--root", required=True)
     checked.set_defaults(func=_verify_kit)
+
+    reference = sub.add_parser(
+        "verify-reference",
+        help="Run each stored canonical solution. Offline. No model and no network.",
+    )
+    reference.add_argument("--data", default="", help="Dataset directory from fetch or an unpacked kit")
+    reference.add_argument("--fixtures", action="store_true", help="Use the packaged synthetic fixtures")
+    reference.set_defaults(func=_verify_reference)
 
     exported = sub.add_parser("export", help="Write public benchmark CSV and JSON from finished runs")
     exported.add_argument("--runs-dir", required=True)

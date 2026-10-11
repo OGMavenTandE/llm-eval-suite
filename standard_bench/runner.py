@@ -18,7 +18,14 @@ from standard_bench.catalog import suite_spec
 from standard_bench.load import load_file, load_suite, select_rows
 from standard_bench.manifest import HashMismatch, ManifestError
 from standard_bench.protocol import GPQA_SUITE, QUICK_SEED, protocol_name, subset_limits
-from standard_bench.sandbox import RunLimits, describe_isolation
+from standard_bench.reference import exclusions_for
+from standard_bench.sandbox import (
+    DEFAULT_CPU_S,
+    DEFAULT_MEMORY_MB,
+    DEFAULT_TIMEOUT_S,
+    RunLimits,
+    describe_isolation,
+)
 from standard_bench.scorers.code import humaneval_prompt, mbpp_prompt, score_code_task
 from standard_bench.scorers.gpqa import build_prompt as gpqa_prompt
 from standard_bench.scorers.gpqa import score_gpqa, shuffle_options
@@ -327,6 +334,9 @@ def run_standard_suite(ctx, config: dict, suite: str) -> dict:
             "GPQA Diamond was not run. The customer kit does not include it.",
         )
     rows, entry = loaded
+    dropped = exclusions_for(suite)
+    if dropped:
+        rows = [row for row in rows if str(row.get("task_id")) not in dropped]
     validation = load_file(dest, suite, "validation.jsonl") if suite == "mmlu_pro" else []
     limit = resolve_limit(config, suite)
     seed = resolve_seed(config)
@@ -339,9 +349,9 @@ def run_standard_suite(ctx, config: dict, suite: str) -> dict:
     ctx.connection["thinking_max_tokens"] = applied_think
     _prepare_context(ctx, prompt_budget, answer_cap)
     code_limits = RunLimits(
-        timeout_s=float(config.get("sandbox_timeout") or 5.0),
-        memory_mb=int(config.get("sandbox_memory_mb") or 512),
-        cpu_s=int(config.get("sandbox_cpu_s") or 5),
+        timeout_s=float(config.get("sandbox_timeout") or DEFAULT_TIMEOUT_S),
+        memory_mb=int(config.get("sandbox_memory_mb") or DEFAULT_MEMORY_MB),
+        cpu_s=int(config.get("sandbox_cpu_s") or DEFAULT_CPU_S),
     )
     items = []
     done = 0
@@ -444,6 +454,12 @@ def run_standard_suite(ctx, config: dict, suite: str) -> dict:
     metrics.update(fields)
     if suite in {"humaneval_plus", "mbpp_plus"}:
         metrics["sandbox"] = describe_isolation()
+        metrics["sandbox_timeout_s"] = code_limits.timeout_s
+        metrics["sandbox_memory_mb"] = code_limits.memory_mb
+        metrics["sandbox_cpu_s"] = code_limits.cpu_s
+        metrics["reference_exclusions"] = [
+            {"task_id": task_id, "reason": reason} for task_id, reason in sorted(dropped.items())
+        ]
     notes = (
         f"{LABELS[suite]} ({SUITE_VERSION}). "
         f"Full size {spec.full_size}. "
@@ -454,6 +470,8 @@ def run_standard_suite(ctx, config: dict, suite: str) -> dict:
     )
     if limit is not None:
         notes += f" Limit {limit}."
+    if dropped:
+        notes += " Reference exclusions: " + ", ".join(sorted(dropped)) + "."
     return {
         "name": suite,
         "source": "live",

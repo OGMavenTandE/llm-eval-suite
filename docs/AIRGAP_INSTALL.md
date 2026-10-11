@@ -53,7 +53,7 @@ On a connected machine, with the repo installed:
 python -m standard_bench bundle --output dist/standard-capability-kit.zip
 ```
 
-That writes one zip: the test kit code, the six pinned suites, and `kit-manifest.json` with a SHA-256 for each file. The command prints the zip size. A kit built from the pinned revisions on 11 October 2026 is 5.05 MB. Copy that zip to the closed network with the wheelhouse. Do not copy `.venv` or `runs/`.
+That writes one zip: the test kit code, the six pinned suites, and `kit-manifest.json` with a SHA-256 for each file. The command prints the zip size. A kit built from the pinned revisions on 11 October 2026 is 5.09 MB. Copy that zip to the closed network with the wheelhouse. Do not copy `.venv` or `runs/`.
 
 If the live Hub revision differs from the pin in `standard_bench/catalog.py`, the download inside `bundle` stops. `--allow-moved` is the only override, and it records the revision it actually downloaded.
 
@@ -61,8 +61,11 @@ On the closed network, set the offline variables above, unzip the kit, and check
 
 ```bash
 python -m standard_bench verify-kit --root dist\standard-capability-kit.zip
+python -m standard_bench verify-reference --data datasets\standard
 python -m standard_bench run --preset standard_capability_quick --data datasets\standard --model "OLMo 2 1B Instruct" --folder path\to\model --output runs\public.csv
 ```
+
+`verify-reference` runs the stored HumanEval+ and MBPP+ reference solutions. It does not call a model and it does not use the network. A failure means the kit or the scorer is not the pinned set. `--fixtures` runs the same check on the small packaged rows.
 
 Point `--data` at `datasets/standard` inside the unpacked kit, or set `LLM_EVAL_STANDARD_DATA`. The runner checks the dataset hashes before it scores, and it checks `kit-manifest.json` when that file sits above the data directory. A mismatch stops the suite. Nothing is downloaded to repair it. A quick run is stamped `quick-check` in the scorecard and the CSV, with the preset name, the subset, the per-suite counts, and the caps. Licenses are in [LICENSES.md](LICENSES.md). The suite notes are in [STANDARD_BENCH.md](STANDARD_BENCH.md). The 4070 Super plan is in [STANDARD_BENCH_RUN_PLAN.md](STANDARD_BENCH_RUN_PLAN.md).
 

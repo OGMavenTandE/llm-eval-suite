@@ -15,3 +15,7 @@ GPQA Diamond is in-house only. It is not in the customer presets or the customer
 | MBPP+ | evalplus/mbppplus | b2d74c91837c3f2a20c1299ae98133cbe7cfa077 | apache-2.0 | EvalPlus packaging is Apache-2.0. The underlying MBPP problems are CC BY 4.0. |
 
 SWE-bench is out of scope and is not fetched.
+
+The HumanEval+ and MBPP+ files in the kit include the reference solution for each task, under the same license as that suite. `python -m standard_bench verify-reference` runs those solutions on the pinned tests and requires every one to pass, except two tasks. HumanEval/32 is excluded because its plus test star-unpacks the float returned by `find_zero` (`_poly(*candidate(*inp), inp)`), which raises TypeError. The reference solution passes the base tests. MBPP+ task 255 is excluded because the plus test and the reference solution both build `combinations_with_replacement` for a length-77 sequence, which exceeds the 1 GB address space. The base tests pass. Those two rows stay in the files. Suite metrics record them in `reference_exclusions`.
+
+JSONL readers split on newline only. `str.splitlines()` also splits on U+0085, and MMLU-Pro question 5215 contains that character.
