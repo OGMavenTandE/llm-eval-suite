@@ -6,6 +6,9 @@ A plus pass requires the base tests and the plus tests.
 
 from __future__ import annotations
 
+import cmath
+import inspect
+import math
 import re
 
 from standard_bench.sandbox import RunLimits, run_code
@@ -13,37 +16,64 @@ from standard_bench.sandbox import RunLimits, run_code
 HUMANEVAL_STOPS = ("\nclass", "\ndef", "\n#", "\nif", "\nprint")
 MBPP_STOPS = ('\n"""', "\nassert", "\nclass", "\ndef")
 
-_STDLIB_HEADER = '''
-import math
+# EvalPlus uses atol 1e-6 and rtol 1e-7. The same pair applies to every
+# float and complex, including ones nested in tuples, lists, and dicts.
+FLOAT_ABS_TOL = 1e-6
+FLOAT_REL_TOL = 1e-7
 
-def is_floats(x):
-    if isinstance(x, float) and not isinstance(x, bool):
-        return True
-    if isinstance(x, (list, tuple)):
-        return all(isinstance(i, float) and not isinstance(i, bool) for i in x)
-    return False
 
-def _close(out, exp, rtol, atol):
-    if isinstance(out, (set, frozenset)) or isinstance(exp, (set, frozenset)):
+def values_close(out, exp, rel_tol, abs_tol):
+    """Recursive compare. Floats and complexes are close. Everything else is exact.
+
+    Bool is not a float. ``True`` compared with ``1.0000001`` stays exact, so a
+    tolerance cannot turn that pair into a pass. Integers stay exact, so a
+    platform-specific ``sys.getsizeof`` pair such as 88 and 96 does not pass.
+    A list does not match a tuple. Sets stay exact.
+    """
+    if isinstance(out, bool) or isinstance(exp, bool):
         return out == exp
-    if isinstance(out, (list, tuple)) and isinstance(exp, (list, tuple)):
+    if isinstance(out, complex) or isinstance(exp, complex):
+        if isinstance(out, (int, float, complex)) and isinstance(exp, (int, float, complex)):
+            return cmath.isclose(complex(out), complex(exp), rel_tol=rel_tol, abs_tol=abs_tol)
+        return False
+    if isinstance(out, float) or isinstance(exp, float):
+        if isinstance(out, (int, float)) and isinstance(exp, (int, float)):
+            return math.isclose(float(out), float(exp), rel_tol=rel_tol, abs_tol=abs_tol)
+        return False
+    if isinstance(out, dict) and isinstance(exp, dict):
+        if set(out) != set(exp):
+            return False
+        return all(values_close(out[key], exp[key], rel_tol, abs_tol) for key in out)
+    if isinstance(out, list) and isinstance(exp, list):
         if len(out) != len(exp):
             return False
-        return all(_close(a, b, rtol, atol) for a, b in zip(out, exp))
-    try:
-        return abs(float(out) - float(exp)) <= (atol + rtol * abs(float(exp)))
-    except (TypeError, ValueError):
-        return False
+        return all(values_close(left, right, rel_tol, abs_tol) for left, right in zip(out, exp))
+    if isinstance(out, tuple) and isinstance(exp, tuple):
+        if len(out) != len(exp):
+            return False
+        return all(values_close(left, right, rel_tol, abs_tol) for left, right in zip(out, exp))
+    return out == exp
 
-def assertion(out, exp, atol):
-    exact = out == exp
-    if atol == 0 and is_floats(exp):
-        atol = 1e-6
-    if not exact and atol != 0:
-        assert _close(out, exp, 1e-07, atol)
-    else:
-        assert exact
-'''
+
+def _assertion_header() -> str:
+    """Stdlib assertion injected into a plus test. The sandbox does not import this module."""
+    # One implementation. The child process gets this source, not the module object.
+    body = inspect.getsource(values_close)
+    return (
+        "import math\n"
+        "import cmath\n"
+        "\n"
+        f"{body}\n"
+        "def _close(out, exp, rtol, atol):\n"
+        "    return values_close(out, exp, rtol, atol)\n"
+        "\n"
+        "def assertion(out, exp, atol):\n"
+        f"    abs_tol = {FLOAT_ABS_TOL!r} if atol == 0 else float(atol)\n"
+        f"    assert values_close(out, exp, {FLOAT_REL_TOL!r}, abs_tol)\n"
+    )
+
+
+_STDLIB_HEADER = "\n" + _assertion_header()
 
 _SET_HEADER = _STDLIB_HEADER.replace(
     "def assertion(out, exp, atol):",
@@ -75,12 +105,27 @@ def _drop_numpy_helpers(prefix: str) -> str:
         stripped = line.strip()
         if re.match(r"^(?:import|from)\s+numpy\b", stripped):
             continue
-        if re.match(r"^def\s+(?:is_floats|assertion)\b", line):
+        if re.match(r"^def\s+(?:is_floats|assertion|_close|values_close)\b", line):
             skipping = True
             skip_indent = len(line[: len(line) - len(line.lstrip(" \t"))])
             continue
         kept.append(line)
     return "\n".join(kept).strip("\n")
+
+
+def prepare_plus_test(source: str) -> str:
+    """Install the current assertion helper before a plus test runs.
+
+    Pinned rows already contain whatever helper fetch wrote. Scoring rewrites
+    that helper so a kit fetched earlier uses the tolerant compare.
+    """
+    text = str(source or "")
+    if "def check(" not in text:
+        return text
+    try:
+        return rewrite_evalplus_test(text)
+    except ValueError:
+        return text
 
 
 def rewrite_evalplus_test(source: str) -> str:
@@ -248,7 +293,7 @@ def score_code_task(row: dict, completion: str, *, suite: str, limits: RunLimits
         program = imports + "\n" + program
     base = run_tests(program, str(row.get("base_test") or ""), entry, limits)
     if base["ok"]:
-        plus = run_tests(program, str(row.get("plus_test") or ""), entry, limits)
+        plus = run_tests(program, prepare_plus_test(str(row.get("plus_test") or "")), entry, limits)
     else:
         plus = {"ok": False, "error": "base failed", "timed_out": False, "isolation": base.get("isolation", "")}
     base_pass = bool(base["ok"])

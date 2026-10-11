@@ -36,6 +36,8 @@ CSV_COLUMNS = (
     "protocol",
     "gpqa_status",
     "counts_toward_dow_score",
+    "scorer_version",
+    "scorer_commit",
 )
 
 METRIC_KEYS = {
@@ -141,6 +143,8 @@ def rows_for_run(run_dir: Path) -> list[dict]:
                     "protocol": _blank(metrics.get("protocol") or suite_rows.get(suite, {}).get("protocol")),
                     "gpqa_status": gpqa_status,
                     "counts_toward_dow_score": "false",
+                    "scorer_version": _blank(record.get("scorer_version")),
+                    "scorer_commit": _blank(record.get("scorer_commit")),
                 }
             )
     return rows
@@ -161,6 +165,9 @@ def render_json(rows: list[dict]) -> str:
         "counts_toward_dow_score": False,
         "rows": rows,
     }
+    if rows and rows[0].get("scorer_version"):
+        payload["scorer_version"] = rows[0].get("scorer_version") or ""
+        payload["scorer_commit"] = rows[0].get("scorer_commit") or ""
     return json.dumps(payload, indent=2) + "\n"
 
 

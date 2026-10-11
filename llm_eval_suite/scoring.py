@@ -234,7 +234,7 @@ def public_benchmark_stamp(items: list[dict]) -> dict | None:
     ]
     cap_values = [item.get("thinking_cap") for item in public if item.get("thinking_cap") not in (None, "")]
     gpqa = "scored" if any(item.get("suite") == "gpqa_diamond" for item in public) else "not_run"
-    return {
+    stamp = {
         "preset": first("preset"),
         "subset": first("subset"),
         "protocol": first("protocol"),
@@ -245,6 +245,13 @@ def public_benchmark_stamp(items: list[dict]) -> dict | None:
         "thinking_budget": thinking_values[0] if thinking_values else None,
         "thinking_cap": cap_values[0] if cap_values else None,
     }
+    scorer_version = first("scorer_version")
+    scorer_commit = first("scorer_commit")
+    if scorer_version:
+        stamp["scorer_version"] = scorer_version
+    if scorer_commit:
+        stamp["scorer_commit"] = scorer_commit
+    return stamp
 
 
 def failing_items(items: list[dict]) -> list[dict]:

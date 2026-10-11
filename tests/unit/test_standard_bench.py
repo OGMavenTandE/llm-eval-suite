@@ -19,12 +19,14 @@ from standard_bench.fetch import FetchError, manifest_contains_secret, normalize
 from standard_bench.load import select_rows
 from standard_bench.manifest import HashMismatch, ManifestError, verify_suite
 from standard_bench.plan import (
+    MODEL_PRECISION,
     PLAN_SUITES,
     PREFILL_TOK_S,
     QUICK_THINKING_CAP,
     SCREEN_LIMITS,
     THINKING_MODELS,
     THROUGHPUT,
+    command_precision,
     model_seconds,
     quick_limits,
     tokens_per_item,
@@ -40,11 +42,14 @@ from standard_bench.runner import (
 )
 from standard_bench.sandbox import CHILD, RunLimits, describe_isolation, run_code
 from standard_bench.scorers.code import (
+    FLOAT_ABS_TOL,
+    FLOAT_REL_TOL,
     HUMANEVAL_STOPS,
     MBPP_STOPS,
     assemble_program,
     rewrite_evalplus_test,
     score_code_task,
+    values_close,
 )
 from standard_bench.scorers.gpqa import extract_answer as gpqa_extract
 from standard_bench.scorers.gpqa import score_gpqa, shuffle_options
@@ -329,8 +334,13 @@ def test_fixture_smoke_scores_and_redacts_gpqa(tmp_path: Path):
     assert results["ifeval"]["metrics"]["prompt_strict"] == 0.5
     assert results["humaneval_plus"]["metrics"]["pass_at_1_plus"] == 1.0
     assert results["mbpp_plus"]["metrics"]["pass_at_1_plus"] == 1.0
-    assert results["humaneval_plus"]["metrics"]["reference_exclusions"][0]["task_id"] == "HumanEval/32"
-    assert results["mbpp_plus"]["metrics"]["reference_exclusions"][0]["task_id"] == "255"
+    assert [row["task_id"] for row in results["humaneval_plus"]["metrics"]["reference_exclusions"]] == [
+        "HumanEval/32"
+    ]
+    assert [row["task_id"] for row in results["mbpp_plus"]["metrics"]["reference_exclusions"]] == [
+        "255",
+        "596",
+    ]
     assert results["gpqa_diamond"]["counts_toward_dow_score"] is False
     gpqa_items = results["gpqa_diamond"]["items"]
     assert gpqa_items
@@ -502,6 +512,13 @@ def test_run_plan_matches_plan_py():
     ):
         assert display in doc
     assert "--precision 8bit" in doc
+    assert "--precision fp16" not in doc
+    assert "fp16" not in doc
+    assert doc.count("--precision bf16") == 8
+    assert "14931" in doc
+    for key, precision in MODEL_PRECISION.items():
+        assert command_precision(key) == precision
+        assert f"--precision {precision}" in doc
     assert "mmlu_pro=200" in doc
 
 
@@ -819,7 +836,12 @@ def test_documented_reference_exclusions_are_skipped():
     from standard_bench.reference import EXCLUSIONS, verify_rows
 
     assert "HumanEval/32" in EXCLUSIONS["humaneval_plus"]
-    assert "255" in EXCLUSIONS["mbpp_plus"]
+    assert set(EXCLUSIONS["mbpp_plus"]) == {"255", "596"}
+    licenses = (ROOT / "docs" / "LICENSES.md").read_text(encoding="utf-8")
+    bench = (ROOT / "docs" / "STANDARD_BENCH.md").read_text(encoding="utf-8")
+    assert "596" in licenses and "getsizeof" in licenses
+    assert "596" in bench and "getsizeof" in bench
+    assert "HumanEval/39" in bench
     broken = {
         "task_id": "HumanEval/32",
         "canonical_solution": "",
@@ -916,3 +938,209 @@ def test_cli_smoke(tmp_path: Path):
     assert "counts_toward_dow_score" in text
     assert "not_run" in text
     assert "gpqa_diamond" not in text
+
+
+# MBPP+ 590 shape: last-digit float, nested tuple, and a tiny complex residual.
+_EXPECTED_590 = ((42.32632433025415, -2.359036256570777), (-2 + 2.4492935982947064e-16j))
+_OUTPUT_590 = ((42.326324330254145, -2.359036256570777), (-2 + 0j))
+
+
+def test_values_close_accepts_the_590_shape_and_rejects_wrong_answers():
+    kwargs = {"rel_tol": FLOAT_REL_TOL, "abs_tol": FLOAT_ABS_TOL}
+    assert values_close(_OUTPUT_590, _EXPECTED_590, **kwargs) is True
+    assert values_close({"polar": [_OUTPUT_590]}, {"polar": [_EXPECTED_590]}, **kwargs) is True
+    assert values_close([42.326324330254145], [42.32632433025415], **kwargs) is True
+    assert values_close(88, 88, **kwargs) is True
+    assert values_close("same", "same", **kwargs) is True
+    wrong_complex = ((42.32632433025415, -2.359036256570777), (-2 + 1j))
+    wrong_float = ((42.0, -2.359036256570777), (-2 + 0j))
+    assert values_close(wrong_complex, _EXPECTED_590, **kwargs) is False
+    assert values_close(wrong_float, _EXPECTED_590, **kwargs) is False
+    assert values_close((_OUTPUT_590, 1), (_EXPECTED_590,), **kwargs) is False
+    assert values_close([1.0, 2.0], (1.0, 2.0), **kwargs) is False
+    assert values_close({"polar": _OUTPUT_590}, {"other": _OUTPUT_590}, **kwargs) is False
+    assert values_close(88, 96, **kwargs) is False
+    assert values_close("42.326324330254145", "42.32632433025415", **kwargs) is False
+    assert values_close(True, 1.0000001, **kwargs) is False
+    assert values_close(True, False, **kwargs) is False
+    assert values_close({1.0}, {1.0 + 1e-7}, **kwargs) is False
+    assert values_close(None, 0, **kwargs) is False
+
+
+def test_plus_assertion_uses_the_tolerant_compare():
+    expected = "((42.32632433025415, -2.359036256570777), (-2+2.4492935982947064e-16j))"
+    plus = (
+        "import numpy as np\n"
+        "def is_floats(x):\n"
+        "    return False\n"
+        "def assertion(out, exp, atol):\n"
+        "    assert out == exp\n"
+        "def check(candidate):\n"
+        f"    assertion(candidate(), {expected}, 0)\n"
+    )
+    row = {
+        "task_id": "590",
+        "entry_point": "polar_rect",
+        "function_header": "def polar_rect():\n",
+        "prompt": "polar",
+        "base_test": "def check(candidate):\n    assert isinstance(candidate(), tuple)\n",
+        "plus_test": plus,
+        "test_imports": [],
+    }
+    close = (
+        "def polar_rect():\n"
+        "    return ((42.326324330254145, -2.359036256570777), (-2+0j))\n"
+    )
+    passed = score_code_task(row, close, suite="mbpp_plus")
+    assert passed["base_pass"] is True
+    assert passed["plus_pass"] is True
+    wrong = (
+        "def polar_rect():\n"
+        "    return ((42.326324330254145, -2.359036256570777), (-2+1j))\n"
+    )
+    failed = score_code_task(row, wrong, suite="mbpp_plus")
+    assert failed["base_pass"] is True
+    assert failed["plus_pass"] is False
+    sizes = dict(row)
+    sizes["plus_test"] = (
+        "def assertion(out, exp, atol):\n"
+        "    assert out == exp\n"
+        "def check(candidate):\n"
+        "    assertion(candidate(), 88, 0)\n"
+    )
+    size_row = score_code_task(
+        sizes,
+        "def polar_rect():\n    return 96\n",
+        suite="mbpp_plus",
+    )
+    assert size_row["plus_pass"] is False
+    rewritten = rewrite_evalplus_test(plus)
+    assert "values_close" in rewritten
+    assert "cmath" in rewritten
+    assert "np.allclose" not in rewritten
+    assert "out = set(out)" not in rewritten
+
+
+def test_rescore_rewrites_saved_responses_without_a_model(tmp_path: Path):
+    from standard_bench import SCORER_VERSION
+    from standard_bench.cli import main
+    from standard_bench.load import load_suite
+    from standard_bench.rescore import scorer_commit
+    from standard_bench.runner import _row_id
+
+    gsm_rows, _entry = load_suite(FIXTURES, "gsm8k")
+    ife_rows, _entry = load_suite(FIXTURES, "ifeval")
+    mbpp_rows, _entry = load_suite(FIXTURES, "mbpp_plus")
+    code = mbpp_rows[0]["canonical_solution"]
+    items = [
+        {
+            "id": _row_id("gsm8k", 0, gsm_rows[0]),
+            "suite": "gsm8k",
+            "category": "public_benchmark",
+            "counts_toward_score": False,
+            "counts_toward_dow_score": False,
+            "raw_response": "The answer is 4",
+            "response": "The answer is 4",
+            "passed": False,
+            "score": 0.0,
+            "source": "live",
+            "preset": "standard_capability",
+            "subset": "full",
+            "protocol": "full",
+        },
+        {
+            "id": _row_id("ifeval", 0, ife_rows[0]),
+            "suite": "ifeval",
+            "category": "public_benchmark",
+            "counts_toward_score": False,
+            "counts_toward_dow_score": False,
+            "raw_response": "one short line",
+            "response": "one short line",
+            "passed": False,
+            "score": 0.0,
+            "source": "live",
+            "preset": "standard_capability",
+            "subset": "full",
+            "protocol": "full",
+        },
+        {
+            "id": _row_id("mbpp_plus", 0, mbpp_rows[0]),
+            "suite": "mbpp_plus",
+            "category": "public_benchmark",
+            "counts_toward_score": False,
+            "counts_toward_dow_score": False,
+            "raw_response": code,
+            "response": code,
+            "passed": False,
+            "score": 0.0,
+            "base_pass": False,
+            "plus_pass": False,
+            "source": "live",
+            "preset": "standard_capability",
+            "subset": "full",
+            "protocol": "full",
+        },
+        {
+            "id": "mbpp_plus:596",
+            "suite": "mbpp_plus",
+            "category": "public_benchmark",
+            "counts_toward_score": False,
+            "counts_toward_dow_score": False,
+            "raw_response": "def tuple_size(value):\n    return 96\n",
+            "response": "def tuple_size(value):\n    return 96\n",
+            "passed": True,
+            "score": 1.0,
+            "source": "live",
+            "preset": "standard_capability",
+            "subset": "full",
+            "protocol": "full",
+        },
+    ]
+    run = tmp_path / "run"
+    run.mkdir()
+    (run / "items.jsonl").write_text(
+        "".join(json.dumps(item) + "\n" for item in items),
+        encoding="utf-8",
+    )
+    (run / "run.json").write_text(
+        json.dumps(
+            {
+                "run_id": "rescore-me",
+                "connection": {"model": "OLMo 2 1B Instruct", "precision": "bf16"},
+                "suites": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    loaded = set(sys.modules)
+    with pytest.raises(SystemExit) as caught:
+        main(["rescore", "--run-dir", str(run), "--fixtures"])
+    assert caught.value.code == 0
+    added = set(sys.modules) - loaded
+    assert not any(name == "torch" or name.startswith("torch.") or name.startswith("transformers") for name in added)
+    saved = [json.loads(line) for line in (run / "items.jsonl").read_text(encoding="utf-8").splitlines()]
+    by_id = {item["id"]: item for item in saved}
+    assert by_id[_row_id("gsm8k", 0, gsm_rows[0])]["passed"] is True
+    assert by_id[_row_id("ifeval", 0, ife_rows[0])]["prompt_strict"] is True
+    assert by_id[_row_id("mbpp_plus", 0, mbpp_rows[0])]["plus_pass"] is True
+    assert by_id["mbpp_plus:596"]["reference_excluded"] is True
+    assert by_id["mbpp_plus:596"]["score"] is None
+    record = json.loads((run / "run.json").read_text(encoding="utf-8"))
+    commit = scorer_commit()
+    assert record["scorer_version"] == SCORER_VERSION
+    assert record["scorer_commit"] == commit
+    assert record["scorecard"]["scorer_version"] == SCORER_VERSION
+    assert record["scorecard"]["scorer_commit"] == commit
+    assert record["scorecard"]["public_benchmarks"]["scorer_version"] == SCORER_VERSION
+    assert record["scorecard"]["public_benchmarks"]["scorer_commit"] == commit
+    mbpp = next(row for row in record["suites"] if row["name"] == "mbpp_plus")
+    assert mbpp["metrics"]["pass_at_1_plus"] == 1.0
+    assert mbpp["metrics"]["n_scored"] == 1
+    csv_text = (run / "public_benchmarks.csv").read_text(encoding="utf-8")
+    assert "scorer_version" in csv_text.splitlines()[0]
+    assert "scorer_commit" in csv_text.splitlines()[0]
+    assert SCORER_VERSION in csv_text
+    assert commit in csv_text
+    payload = json.loads((run / "public_benchmarks.json").read_text(encoding="utf-8"))
+    assert payload["scorer_version"] == SCORER_VERSION
+    assert payload["scorer_commit"] == commit

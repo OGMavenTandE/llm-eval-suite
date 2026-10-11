@@ -25,3 +25,6 @@ jobs:
         run: python -m playwright install --with-deps chromium
       - name: Pytest
         run: python -m pytest
+      - name: Verify reference fixtures
+        if: runner.os == 'Windows'
+        run: python -m standard_bench verify-reference --fixtures

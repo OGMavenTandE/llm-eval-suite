@@ -54,6 +54,25 @@ THINKING_MODELS = {
     "nemotron-3-nano-4b",
 }
 
+# Precision on the run-plan commands. Gemma 4 E2B is 8-bit. Every other
+# stage-1 model matches the dow_bench runs, which load bf16.
+MODEL_PRECISION = {
+    "olmo-2-1b": "bf16",
+    "lfm-1.2b": "bf16",
+    "granite-1b": "bf16",
+    "phi-4-mini-instruct": "bf16",
+    "gemma-4-e2b-8bit": "8bit",
+    "lfm-2.6b": "bf16",
+    "granite-4.2-3b": "bf16",
+    "phi-4-mini-reasoning": "bf16",
+    "nemotron-3-nano-4b": "bf16",
+}
+
+
+def command_precision(model_key: str) -> str:
+    """``--precision`` value for one run-plan command."""
+    return MODEL_PRECISION[model_key]
+
 # Customer short subset. GPQA is not in this map.
 SCREEN_LIMITS = dict(CUSTOMER_SHORT_LIMITS)
 

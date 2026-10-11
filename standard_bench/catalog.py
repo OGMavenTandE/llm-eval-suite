@@ -188,9 +188,10 @@ SUITES: dict[str, SuiteSpec] = {
         deviation=(
             "Chat models get a one-line completion instruction around the official "
             "HumanEval prompt. Stop strings are applied after generation. "
-            "The EvalPlus plus harness imports numpy. Fetch rewrites the assertion "
-            "helper to math.isclose with the same atol 1e-6 and rtol 1e-7. "
-            "The run does not import numpy or evalplus."
+            "The EvalPlus plus harness imports numpy. The plus assertion is a stdlib "
+            "compare: math.isclose and cmath.isclose for floats and complexes inside "
+            "tuples, lists, and dicts, with abs_tol 1e-6 and rel_tol 1e-7. Other "
+            "values stay exact. The run does not import numpy or evalplus."
         ),
         direct_file="test.jsonl",
         answer_cap=512,
@@ -217,8 +218,9 @@ SUITES: dict[str, SuiteSpec] = {
         deviation=(
             "The prompt is the EvalPlus chat task: the natural-language statement "
             "plus the three base asserts. Stop strings are applied after generation. "
-            "The numpy assertion helper is rewritten at fetch time to the same "
-            "stdlib comparison used for HumanEval+."
+            "The numpy assertion helper is rewritten to the same stdlib comparison "
+            "used for HumanEval+. Scoring rewrites it again so an older pin uses "
+            "the current helper."
         ),
         rows_config="default",
         rows_split="test",

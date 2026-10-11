@@ -247,7 +247,11 @@ def _row_id(suite: str, index: int, row: dict) -> str:
 
 
 def _aggregate(suite: str, items: list[dict]) -> dict:
-    scored = [item for item in items if not item.get("prompt_over_budget")]
+    scored = [
+        item
+        for item in items
+        if not item.get("prompt_over_budget") and not item.get("reference_excluded")
+    ]
     n_scored = len(scored)
     over = sum(1 for item in items if item.get("prompt_over_budget"))
 

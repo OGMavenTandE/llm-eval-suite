@@ -17,7 +17,7 @@ Full sizes, with no `--limit` and no subset:
 | humaneval_plus | 164 |
 | mbpp_plus | 378 |
 
-The total is 14934. HumanEval/32 and MBPP+ task 255 are in that count and are not scored. The quick check is 300 items, 50 from each suite. `--limit N` keeps the first N of each suite after an optional `--seed` shuffle. `--limits mmlu_pro=200,gsm8k=200` sets per-suite caps. `--subset short` is the screen in the run plan. `--subset quick50` is the 50-item sample. Over-budget prompts are not passes. Accuracy uses `n_scored`, the items that were generated.
+The total is 14934. HumanEval/32, MBPP+ task 255, and MBPP+ task 596 are in that count and are not scored. The quick check is 300 items, 50 from each suite. `--limit N` keeps the first N of each suite after an optional `--seed` shuffle. `--limits mmlu_pro=200,gsm8k=200` sets per-suite caps. `--subset short` is the screen in the run plan. `--subset quick50` is the 50-item sample. Over-budget prompts are not passes. Accuracy uses `n_scored`, the items that were generated.
 
 Build the offline kit on a connected machine:
 
@@ -79,21 +79,32 @@ HumanEval base tests come from openai/openai_humaneval at `7dce6050a7d6d172f3cc5
 
 MBPP+ uses the EvalPlus task line, the statement, and the three base asserts. The same completion rule applies. Stop strings on a bare body are a newline plus a triple quote, `assert`, `class`, or `def`. The function header from the dataset is the prefix when the completion does not define the entry point. The upstream plus `test` field is module-level and has no `def check`. Fetch indents that body into `def check(candidate)` and renames `entry(` to `candidate(`, so the inputs, results, and assert loop are the plus test. The test function is renamed to `_standard_bench_check` when it runs, because MBPP+ task 56 defines a solution named `check`. The row's `test_imports` are prepended at module level, so a base assert that calls `math.isclose` can see `math`.
 
-Deviation: the EvalPlus harness imports numpy. Fetch rewrites that helper to a stdlib `assertion` with atol 1e-6 and rtol 1e-7. A set-comparison variant is kept when the original assertion does `out = set(out)`. Helpers other than `is_floats` and `assertion` stay, including `ref_func` and `_poly`. The run does not import numpy or evalplus. The pinned rows store the canonical solution: the HumanEval+ prompt plus `canonical_solution`, and the MBPP+ `code` field. `python -m standard_bench verify-reference --data datasets/standard` runs those solutions offline and requires every one to pass. `--fixtures` checks the packaged rows the same way.
+Deviation: the EvalPlus harness imports numpy. The plus-test assertion helper is replaced with a stdlib compare. Floats use `math.isclose` and complexes use `cmath.isclose`, including inside tuples, lists, and dicts, with abs_tol 1e-6 and rel_tol 1e-7. Integers, strings, bools, and other values stay exact. A set-comparison variant is kept when the original assertion does `out = set(out)`, and sets stay exact. Helpers other than `is_floats` and `assertion` stay, including `ref_func` and `_poly`. Scoring rewrites the helper again, so a kit fetched earlier uses the current compare. The run does not import numpy or evalplus. The pinned rows store the canonical solution: the HumanEval+ prompt plus `canonical_solution`, and the MBPP+ `code` field. `python -m standard_bench verify-reference --data datasets/standard` runs those solutions offline and requires every checked one to pass. `--fixtures` checks the packaged rows the same way.
 
 ## Code sandbox
 
 Each test runs in `python -I` with a JSON payload on stdin. The parent enforces a wall-clock timeout. The default ceiling is 20 seconds, 20 seconds of CPU, and 1 GB of address space. Five seconds is not enough for MBPP+ task 599, which sums ranges past 1e8. The child blocks `socket.socket`, `create_connection`, and `getaddrinfo` before the program runs.
 
-Two tasks are excluded from scoring. The rows stay in the pinned files. `verify-reference` does not require them to pass, and a run does not send them to the model. The suite metrics list them under `reference_exclusions`.
+Three tasks are excluded from scoring. The rows stay in the pinned files. `verify-reference` does not require them to pass, and a run does not send them to the model. The suite metrics list them under `reference_exclusions`.
 
 | Suite | Task | Reason |
 | --- | --- | --- |
 | HumanEval+ | HumanEval/32 | The plus test calls `_poly(*candidate(*inp), inp)`. `find_zero` returns a float, so the star raises TypeError. The reference solution passes the base tests. |
 | MBPP+ | 255 | The plus test builds `combinations_with_replacement` for a length-77 sequence. The reference solution does the same and raises MemoryError at the 1 GB ceiling. The base tests pass. |
+| MBPP+ | 596 | The plus results are frozen `sys.getsizeof` integers. The same object is 88 bytes on Linux and 96 bytes on Windows. The base tests call `sys.getsizeof` on both sides, so they match. |
+
+A scan of the pinned HumanEval+ and MBPP+ rows for `sys.getsizeof`, `id(`, `hash(`, and memory-address expectations found no other task to exclude. HumanEval/39 calls `random` inside its reference primality test. Its expected values are fixed integers, so it stays scored.
 
 On Linux the child also sets `RLIMIT_AS`, `RLIMIT_CPU`, `RLIMIT_FSIZE`, and `RLIMIT_NOFILE`. It does not create a network namespace.
 
 On Windows the child creates a job object when the process can: process and job memory caps, an active-process cap, and kill-on-close. If the job cannot be assigned, which happens when the process is already in a job, isolation falls back to the wall-clock timeout and the socket block. That is a process boundary, not a hypervisor and not a network namespace.
+
+`verify-reference` is expected to pass every checked HumanEval+ and MBPP+ task on Linux and on Windows. The Windows report was Python 3.12, offline: MBPP+ was 375/377 before this scorer. Task 590 returns a tuple of a float pair and a complex. The last float digit and the tiny imaginary part differ across libm builds. That task stays scored. The plus assertion uses the tolerant compare above, so those differences pass and a wrong value still fails. Task 596 is the `sys.getsizeof` exclusion, on every platform, so the checked count is 376 and the pass count is 376. Re-score a finished run without loading a model:
+
+```bash
+python -m standard_bench rescore --run-dir runs/<id> --data datasets/standard
+```
+
+The scorecard and the CSV record `scorer_version` and `scorer_commit`.
 
 `describe_isolation()` returns the text for the current platform. The suite summary stores it on code-eval runs.

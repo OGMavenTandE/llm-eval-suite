@@ -35,7 +35,7 @@ Tokens per item are prompt plus answer. Thinking models add 2048 to the answer s
 | humaneval_plus | 164 | 280 | 180 | 460 | 2508 |
 | mbpp_plus | 378 | 220 | 160 | 380 | 2428 |
 
-Full size is 14934 items. HumanEval/32 and MBPP+ task 255 stay in the files and are not scored, so a full run grades 14932. These token budgets live in `standard_bench/plan.py`.
+Full size is 14934 items. HumanEval/32, MBPP+ task 255, and MBPP+ task 596 stay in the files and are not scored, so a full run grades 14931. These token budgets live in `standard_bench/plan.py`. Precision for the commands below lives in `standard_bench/plan.py` (`command_precision`). Gemma 4 E2B is 8-bit. Every other model is bf16, matching the dow_bench runs.
 
 ## Full run, hours
 
@@ -120,23 +120,23 @@ If the six suites are already in a directory, pack that directory and skip the d
 python -m standard_bench bundle --data datasets/standard --output dist/standard-capability-kit.zip
 ```
 
-Stage 1 is the short subset. `--model` is the display name in `dow_bench/models.json`. Thinking caps come from that file unless the quick preset or `--thinking-budget` sets another cap. Gemma is 8-bit. The others are fp16. Replace `$MODEL_DIR` with the local folder that already contains `config.json` and the weights. `$DATA` is `datasets/standard` inside the unpacked kit.
+Stage 1 is the short subset. `--model` is the display name in `dow_bench/models.json`. Thinking caps come from that file unless the quick preset or `--thinking-budget` sets another cap. Gemma is 8-bit. The others are bf16. Replace `$MODEL_DIR` with the local folder that already contains `config.json` and the weights. `$DATA` is `datasets/standard` inside the unpacked kit.
 
 ```bash
-python -m standard_bench run --preset standard_capability --subset short --data "$DATA" --model "OLMo 2 1B Instruct" --folder "$MODEL_DIR/OLMo-2-0425-1B-Instruct" --precision fp16 --output runs/olmo-public.csv --runs-dir runs/olmo-public
-python -m standard_bench run --preset standard_capability --subset short --data "$DATA" --model "LFM2.5-1.2B Instruct" --folder "$MODEL_DIR/LFM2.5-1.2B-Instruct" --precision fp16 --output runs/lfm12-public.csv --runs-dir runs/lfm12-public
-python -m standard_bench run --preset standard_capability --subset short --data "$DATA" --model "Granite 4.0 H 1B" --folder "$MODEL_DIR/granite-4.0-h-1b" --precision fp16 --output runs/granite1b-public.csv --runs-dir runs/granite1b-public
-python -m standard_bench run --preset standard_capability --subset short --data "$DATA" --model "Phi-4-mini-instruct" --folder "$MODEL_DIR/Phi-4-mini-instruct" --precision fp16 --output runs/phi-instruct-public.csv --runs-dir runs/phi-instruct-public
+python -m standard_bench run --preset standard_capability --subset short --data "$DATA" --model "OLMo 2 1B Instruct" --folder "$MODEL_DIR/OLMo-2-0425-1B-Instruct" --precision bf16 --output runs/olmo-public.csv --runs-dir runs/olmo-public
+python -m standard_bench run --preset standard_capability --subset short --data "$DATA" --model "LFM2.5-1.2B Instruct" --folder "$MODEL_DIR/LFM2.5-1.2B-Instruct" --precision bf16 --output runs/lfm12-public.csv --runs-dir runs/lfm12-public
+python -m standard_bench run --preset standard_capability --subset short --data "$DATA" --model "Granite 4.0 H 1B" --folder "$MODEL_DIR/granite-4.0-h-1b" --precision bf16 --output runs/granite1b-public.csv --runs-dir runs/granite1b-public
+python -m standard_bench run --preset standard_capability --subset short --data "$DATA" --model "Phi-4-mini-instruct" --folder "$MODEL_DIR/Phi-4-mini-instruct" --precision bf16 --output runs/phi-instruct-public.csv --runs-dir runs/phi-instruct-public
 python -m standard_bench run --preset standard_capability --subset short --data "$DATA" --model "Gemma 4 E2B-it" --folder "$MODEL_DIR/gemma-4-E2B-it" --precision 8bit --output runs/gemma-public.csv --runs-dir runs/gemma-public
 ```
 
 Stage 2 is the named quick check. Omit `--subset` and `--thinking-budget` to keep the preset's 50-item sample and 512-token cap. Pass either flag to override it.
 
 ```bash
-python -m standard_bench run --preset standard_capability_quick --data "$DATA" --model "LFM2.5-2.6B" --folder "$MODEL_DIR/LFM2.5-2.6B" --precision fp16 --output runs/lfm26-public.csv --runs-dir runs/lfm26-public
-python -m standard_bench run --preset standard_capability_quick --data "$DATA" --model "Granite 4.2 3B" --folder "$MODEL_DIR/granite-4.2-3b" --precision fp16 --output runs/granite3b-public.csv --runs-dir runs/granite3b-public
-python -m standard_bench run --preset standard_capability_quick --data "$DATA" --model "Phi-4-mini-reasoning" --folder "$MODEL_DIR/Phi-4-mini-reasoning" --precision fp16 --output runs/phi-reason-public.csv --runs-dir runs/phi-reason-public
-python -m standard_bench run --preset standard_capability_quick --data "$DATA" --model "NVIDIA Nemotron 3 Nano 4B" --folder "$MODEL_DIR/NVIDIA-Nemotron-3-Nano-4B-BF16" --precision fp16 --output runs/nemotron-public.csv --runs-dir runs/nemotron-public
+python -m standard_bench run --preset standard_capability_quick --data "$DATA" --model "LFM2.5-2.6B" --folder "$MODEL_DIR/LFM2.5-2.6B" --precision bf16 --output runs/lfm26-public.csv --runs-dir runs/lfm26-public
+python -m standard_bench run --preset standard_capability_quick --data "$DATA" --model "Granite 4.2 3B" --folder "$MODEL_DIR/granite-4.2-3b" --precision bf16 --output runs/granite3b-public.csv --runs-dir runs/granite3b-public
+python -m standard_bench run --preset standard_capability_quick --data "$DATA" --model "Phi-4-mini-reasoning" --folder "$MODEL_DIR/Phi-4-mini-reasoning" --precision bf16 --output runs/phi-reason-public.csv --runs-dir runs/phi-reason-public
+python -m standard_bench run --preset standard_capability_quick --data "$DATA" --model "NVIDIA Nemotron 3 Nano 4B" --folder "$MODEL_DIR/NVIDIA-Nemotron-3-Nano-4B-BF16" --precision bf16 --output runs/nemotron-public.csv --runs-dir runs/nemotron-public
 ```
 
 Omit `--subset` on `standard_capability` for the full six suites. A smoke that does not load a GPU:
