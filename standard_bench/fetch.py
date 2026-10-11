@@ -142,6 +142,27 @@ def normalize_humaneval(base_rows: list[dict], plus_rows: list[dict]) -> list[di
     return normalized
 
 
+def wrap_module_as_check(source: str, entry: str) -> str:
+    """Put a module-level EvalPlus body inside ``def check(candidate)``.
+
+    MBPP+ ``test`` values call the entry point at module level and have no
+    ``def check``. Renaming ``entry(`` to ``candidate(`` and indenting the
+    whole body keeps the inputs, results, and assert loop. A body that already
+    defines ``check`` is only renamed.
+    """
+    text = (source or "").replace("\r\n", "\n")
+    if entry:
+        text = text.replace(f"{entry}(", "candidate(")
+    if re.search(r"(?m)^def check\(", text):
+        return text if text.endswith("\n") else text + "\n"
+    lines = []
+    for line in text.strip("\n").split("\n"):
+        lines.append(("    " + line) if line.strip() else "")
+    if not lines:
+        lines = ["    pass"]
+    return "def check(candidate):\n" + "\n".join(lines) + "\n"
+
+
 def normalize_mbpp(rows: list[dict]) -> list[dict]:
     normalized = []
     for row in rows:
@@ -160,12 +181,7 @@ def normalize_mbpp(rows: list[dict]) -> list[dict]:
         plus_source = str(row.get("test") or "")
         plus_test = ""
         if plus_source.strip():
-            # The MBPP plus body calls the entry point directly. Point it at candidate.
-            if entry:
-                plus_source = plus_source.replace(f"{entry}(", "candidate(")
-            if "def check(" not in plus_source:
-                plus_source = plus_source.rstrip() + "\n\ndef check(candidate):\n    pass\n"
-            plus_test = rewrite_evalplus_test(plus_source)
+            plus_test = rewrite_evalplus_test(wrap_module_as_check(plus_source, entry))
         normalized.append(
             {
                 "task_id": str(row.get("task_id")),

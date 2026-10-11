@@ -28,6 +28,21 @@ def _block_network() -> None:
     if hasattr(socket, "create_server"):
         socket.create_server = _blocked
     socket.getaddrinfo = _blocked
+    # `import socket` is the Python wrapper. `import _socket` is the C module
+    # underneath it, and a program can call that constructor directly.
+    c_socket = sys.modules.get("_socket")
+    if c_socket is None:
+        try:
+            import _socket as c_socket
+        except ImportError:
+            c_socket = None
+    if c_socket is not None:
+        for name in ("socket", "create_connection", "getaddrinfo"):
+            if hasattr(c_socket, name):
+                try:
+                    setattr(c_socket, name, _blocked)
+                except (AttributeError, TypeError):
+                    pass
 
 
 def _linux_limits(memory_mb: int, cpu_s: int) -> str:

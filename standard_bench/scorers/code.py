@@ -63,29 +63,86 @@ def rewrite_evalplus_test(source: str) -> str:
     body = text[index:]
     header = _SET_HEADER if "out = set(out)" in text[:index] else _STDLIB_HEADER
     rewritten = header + "\n" + body
-    rewritten = rewritten.replace("import numpy as np\n", "")
+    rewritten = re.sub(r"(?m)^[ \t]*import numpy(?:\s+as\s+\w+)?\s*$", "", rewritten)
+    rewritten = re.sub(r"(?m)^[ \t]*from numpy\s+import\s+.+$", "", rewritten)
     rewritten = rewritten.replace("np.allclose", "_close")
+    # A copied helper may still mention the numpy array type. The stdlib
+    # header does not, and the run does not import numpy.
+    rewritten = rewritten.replace("isinstance(x, np.ndarray)", "False")
+    rewritten = rewritten.replace("np.float64", "float")
+    rewritten = rewritten.replace("np.float32", "float")
     return rewritten
 
 
-def strip_code(text: str, stops: tuple[str, ...]) -> str:
-    source = text or ""
-    fenced = re.search(r"```(?:python)?\s*\n(.*?)```", source, flags=re.DOTALL | re.IGNORECASE)
+def extract_fenced(text: str) -> str:
+    """The first fenced block, or the raw completion when there is no fence."""
+    fenced = re.search(r"```(?:python)?\s*\n(.*?)```", text or "", flags=re.DOTALL | re.IGNORECASE)
     if fenced:
-        source = fenced.group(1)
+        return fenced.group(1)
+    return text or ""
+
+
+def apply_stops(source: str, stops: tuple[str, ...]) -> str:
+    cut = len(source)
     for stop in stops:
-        if stop in source:
-            source = source.split(stop)[0]
-    return source
+        index = source.find(stop)
+        if index != -1:
+            cut = min(cut, index)
+    return source[:cut]
+
+
+def _entry_match(source: str, entry_point: str) -> re.Match[str] | None:
+    if not entry_point:
+        return None
+    return re.search(
+        rf"^([ \t]*)def\s+{re.escape(entry_point)}\b[^\n]*",
+        source,
+        re.MULTILINE,
+    )
+
+
+def _function_end(source: str, match: re.Match[str]) -> int:
+    """Index just after the entry function. Nested helpers stay inside it."""
+    def_indent = len(match.group(1).expandtabs(4))
+    pos = match.end()
+    end = pos
+    for line in source[pos:].splitlines(keepends=True):
+        if not line.strip():
+            pos += len(line)
+            end = pos
+            continue
+        indent = len(line[: len(line) - len(line.lstrip(" \t"))].expandtabs(4))
+        if indent <= def_indent:
+            break
+        pos += len(line)
+        end = pos
+    return end
 
 
 def assemble_program(prompt: str, completion: str, entry_point: str, stops: tuple[str, ...]) -> str:
-    body = strip_code(completion, stops)
-    pattern = re.compile(rf"^def\s+{re.escape(entry_point)}\b", re.MULTILINE)
-    match = pattern.search(body)
-    if match:
-        return body[match.start() :]
-    return (prompt or "") + body
+    """Build the program that the tests call.
+
+    A fenced reply is unwrapped first. When it defines ``entry_point``, imports
+    and helpers before that function stay, helpers after it stay, and stop
+    strings apply only to the text after the function. ``\\ndef`` and
+    ``\\nclass`` are not cuts there, so a following helper is kept. Other stops
+    still drop a trailing ``print`` or assert.
+
+    A reply with no ``def entry_point`` is a bare body. The prompt (HumanEval)
+    or the function header (MBPP) is the prefix, and every stop applies to the
+    body, which drops a second function the model continued into.
+    """
+    source = extract_fenced(completion)
+    match = _entry_match(source, entry_point)
+    if match is None:
+        return (prompt or "") + apply_stops(source, stops)
+    end = _function_end(source, match)
+    prefix = source[: match.start()]
+    function = source[match.start() : end]
+    # Keep helpers after the entry point. Still cut prose stops such as print.
+    suffix_stops = tuple(stop for stop in stops if stop not in {"\ndef", "\nclass"})
+    suffix = apply_stops(source[end:], suffix_stops)
+    return prefix + function + suffix
 
 
 def _program(code: str, test: str, entry_point: str) -> str:

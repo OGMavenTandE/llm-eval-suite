@@ -15,13 +15,19 @@ from llm_eval_suite.scoring import aieval_dow_bench_score, scorecard
 from llm_eval_suite.suites import SuiteContext
 from standard_bench.catalog import SUITES
 from standard_bench.export import write_export
-from standard_bench.fetch import FetchError, manifest_contains_secret
+from standard_bench.fetch import FetchError, manifest_contains_secret, normalize_humaneval, normalize_mbpp
 from standard_bench.load import select_rows
 from standard_bench.manifest import HashMismatch, ManifestError, verify_suite
-from standard_bench.plan import SCREEN_LIMITS, THROUGHPUT, model_seconds, tokens_per_item
+from standard_bench.plan import PREFILL_TOK_S, SCREEN_LIMITS, THROUGHPUT, model_seconds, tokens_per_item
 from standard_bench.runner import _aggregate, planned_count, run_standard_suite
-from standard_bench.sandbox import RunLimits, describe_isolation, run_code
-from standard_bench.scorers.code import rewrite_evalplus_test, score_code_task
+from standard_bench.sandbox import CHILD, RunLimits, describe_isolation, run_code
+from standard_bench.scorers.code import (
+    HUMANEVAL_STOPS,
+    MBPP_STOPS,
+    assemble_program,
+    rewrite_evalplus_test,
+    score_code_task,
+)
 from standard_bench.scorers.gpqa import extract_answer as gpqa_extract
 from standard_bench.scorers.gpqa import score_gpqa, shuffle_options
 from standard_bench.scorers.gsm8k import extract_gold, extract_prediction, score_gsm8k
@@ -209,6 +215,13 @@ def test_sandbox_blocks_network_and_times_out_a_loop():
     assert blocked.ok is False
     assert blocked.blocked_network or "network disabled" in blocked.error
     assert blocked.timed_out is False
+    raw_socket = run_code("import _socket\n_socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)\n")
+    assert raw_socket.ok is False
+    assert raw_socket.blocked_network or "network disabled" in raw_socket.error
+    probe = "sandbox-cwd-probe.txt"
+    wrote = run_code(f"open({probe!r}, 'w').write('x')\n")
+    assert wrote.ok is True
+    assert not (CHILD.parent / probe).exists()
     loop = run_code("while True:\n    pass\n", RunLimits(timeout_s=1.5, memory_mb=1024, cpu_s=30))
     assert loop.ok is False
     assert loop.timed_out or "timed out" in loop.error.lower()
@@ -375,6 +388,8 @@ def test_run_plan_matches_plan_py():
     doc = (ROOT / "docs" / "STANDARD_BENCH_RUN_PLAN.md").read_text(encoding="utf-8")
     assert "assumption" in doc.lower()
     assert "2048" in doc
+    assert str(PREFILL_TOK_S) in doc
+    assert "first run" in doc.lower()
     grand = 0.0
     screen = 0.0
     for key in THROUGHPUT:
@@ -404,6 +419,91 @@ def test_run_plan_matches_plan_py():
         assert display in doc
     assert "--precision 8bit" in doc
     assert "mmlu_pro=200" in doc
+
+
+def _read_jsonl(path: Path) -> list[dict]:
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def test_mbpp_plus_keeps_the_plus_inputs():
+    raw = _read_jsonl(FIXTURES / "raw" / "mbpp_plus.jsonl")
+    assert "def check(" not in raw[0]["test"]
+    normalized = normalize_mbpp(raw)
+    plus = normalized[0]["plus_test"]
+    assert "inputs" in plus
+    assert "results" in plus
+    assert "def check(candidate)" in plus
+    assert "similar_elements(" not in plus
+    assert "import numpy" not in plus
+    base_only = "def similar_elements(a, b):\n    return (2,)\n"
+    scored = score_code_task(normalized[0], base_only, suite="mbpp_plus")
+    assert scored["base_pass"] is True
+    assert scored["plus_pass"] is False
+    good = score_code_task(normalized[0], raw[0]["code"], suite="mbpp_plus")
+    assert good["base_pass"] is True
+    assert good["plus_pass"] is True
+
+
+def test_humaneval_raw_rows_keep_plus_inputs():
+    base = _read_jsonl(FIXTURES / "raw" / "humaneval_base.jsonl")
+    plus_rows = _read_jsonl(FIXTURES / "raw" / "humaneval_plus.jsonl")
+    normalized = normalize_humaneval(base, plus_rows)
+    assert normalized[0]["entry_point"] == "add"
+    assert "def check(" in normalized[0]["base_test"]
+    assert "inputs" in normalized[0]["plus_test"]
+    assert "results" in normalized[0]["plus_test"]
+    assert "import numpy" not in normalized[0]["plus_test"]
+    weak = score_code_task(normalized[0], "def add(a, b):\n    return 3\n", suite="humaneval_plus")
+    assert weak["base_pass"] is True
+    assert weak["plus_pass"] is False
+    good = score_code_task(normalized[0], "def add(a, b):\n    return a + b\n", suite="humaneval_plus")
+    assert good["plus_pass"] is True
+
+
+def test_code_extraction_keeps_imports_and_helpers():
+    fenced = (
+        "```python\n"
+        "from typing import List\n\n"
+        "def before(x):\n"
+        "    return x\n\n"
+        "def add(a, b):\n"
+        "    return before(a) + b\n\n"
+        "def after(x):\n"
+        "    return x + 1\n"
+        "print('done')\n"
+        "```\n"
+    )
+    program = assemble_program("def add(a, b):\n", fenced, "add", HUMANEVAL_STOPS)
+    assert "from typing import List" in program
+    assert "def before" in program
+    assert "def add(a, b):" in program
+    assert "def after" in program
+    assert "print" not in program
+    bare = assemble_program(
+        "def add(a, b):\n",
+        "    return a + b\n\ndef extra(x):\n    return x\n",
+        "add",
+        HUMANEVAL_STOPS,
+    )
+    assert bare.startswith("def add(a, b):\n")
+    assert "return a + b" in bare
+    assert "def extra" not in bare
+    full = assemble_program(
+        "def add(a, b):\n",
+        "def add(a, b):\n    return a + b\n",
+        "add",
+        HUMANEVAL_STOPS,
+    )
+    assert full.strip() == "def add(a, b):\n    return a + b"
+    assert full.count("def add") == 1
+    mbpp = assemble_program(
+        "def shared(left, right):\n",
+        "    return tuple(sorted(set(left) & set(right)))\n\nassert False\n",
+        "shared",
+        MBPP_STOPS,
+    )
+    assert mbpp.startswith("def shared(left, right):\n")
+    assert "assert False" not in mbpp
 
 
 def test_cli_smoke(tmp_path: Path):

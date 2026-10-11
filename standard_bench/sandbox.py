@@ -12,6 +12,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -74,15 +75,18 @@ def run_code(code: str, limits: RunLimits | None = None) -> SandboxResult:
     ).encode("utf-8")
     timeout = max(0.2, float(bounds.timeout_s))
     try:
-        completed = subprocess.run(
-            [sys.executable, "-I", str(CHILD)],
-            input=payload,
-            capture_output=True,
-            timeout=timeout,
-            env=_child_env(),
-            cwd=str(CHILD.parent),
-            check=False,
-        )
+        # A fresh directory, not the package tree. The child cannot read or
+        # write the benchmark sources by relative path.
+        with tempfile.TemporaryDirectory(prefix="standard-bench-") as work:
+            completed = subprocess.run(
+                [sys.executable, "-I", str(CHILD)],
+                input=payload,
+                capture_output=True,
+                timeout=timeout,
+                env=_child_env(),
+                cwd=work,
+                check=False,
+            )
     except subprocess.TimeoutExpired:
         return SandboxResult(
             ok=False,

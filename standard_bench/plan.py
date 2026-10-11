@@ -10,8 +10,9 @@ from __future__ import annotations
 from standard_bench.catalog import SUITES
 
 # prompt tokens, typical generated answer tokens. Thinking models add the
-# 2048 thinking cap on top of the answer tokens. Prefill is charged at the
-# decode rate, which overstates prefill and keeps the plan conservative.
+# 2048 thinking cap on top of the answer tokens. Prompt tokens are charged
+# at PREFILL_TOK_S. Generated tokens are charged at the decode rate.
+# Both rates are assumptions, not measurements.
 TOKEN_BUDGETS = {
     "mmlu_pro": {"prompt": 2800, "answer": 350},
     "gpqa_diamond": {"prompt": 450, "answer": 400},
@@ -23,6 +24,10 @@ TOKEN_BUDGETS = {
 }
 
 THINKING_CAP = 2048
+
+# Assumed prefill tokens per second on an RTX 4070 Super, 12 GB, batch 1.
+# This is not a measurement from this repository.
+PREFILL_TOK_S = 1500
 
 # Assumed decode tokens per second on an RTX 4070 Super, 12 GB, batch 1.
 THROUGHPUT = {
@@ -63,7 +68,10 @@ def tokens_per_item(suite: str, *, thinking: bool) -> int:
 
 def suite_seconds(suite: str, tok_s: float, *, thinking: bool, limit: int | None = None) -> float:
     count = SUITES[suite].full_size if limit is None else min(SUITES[suite].full_size, int(limit))
-    return count * tokens_per_item(suite, thinking=thinking) / float(tok_s)
+    budget = TOKEN_BUDGETS[suite]
+    generated = budget["answer"] + (THINKING_CAP if thinking else 0)
+    per_item = (budget["prompt"] / float(PREFILL_TOK_S)) + (generated / float(tok_s))
+    return count * per_item
 
 
 def model_seconds(model_key: str, limits: dict[str, int] | None = None) -> dict:
