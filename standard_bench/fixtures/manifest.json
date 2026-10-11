@@ -1,0 +1,123 @@
+{
+  "suites": {
+    "gpqa_diamond": {
+      "files": [
+        {
+          "bytes": 128,
+          "path": "gpqa_diamond/test.jsonl",
+          "sha256": "46082e53fa4613db37bce884732b090051afbd7e451d7737555c41afa94c2e10"
+        }
+      ],
+      "full_size": 198,
+      "gated": true,
+      "license": "cc-by-4.0",
+      "repo": "Idavidrein/gpqa",
+      "revision": "fixture",
+      "rows": 1,
+      "synthetic": true
+    },
+    "gsm8k": {
+      "files": [
+        {
+          "bytes": 143,
+          "path": "gsm8k/test.jsonl",
+          "sha256": "2dcd5e30781f7451cc1c99bf9bd44a7176d260b76db040b3aee4c11a918b3472"
+        }
+      ],
+      "full_size": 1319,
+      "gated": false,
+      "license": "mit",
+      "repo": "openai/gsm8k",
+      "revision": "fixture",
+      "rows": 2,
+      "synthetic": true
+    },
+    "humaneval_plus": {
+      "files": [
+        {
+          "bytes": 409,
+          "path": "humaneval_plus/test.jsonl",
+          "sha256": "d985932ec2415e72a43528110bdc72190b40304cdcb222b2f7dd6b2d5fbf0604"
+        }
+      ],
+      "full_size": 164,
+      "gated": false,
+      "license": "apache-2.0",
+      "repo": "evalplus/humanevalplus",
+      "revision": "fixture",
+      "rows": 1,
+      "synthetic": true
+    },
+    "ifeval": {
+      "files": [
+        {
+          "bytes": 289,
+          "path": "ifeval/test.jsonl",
+          "sha256": "080065855a7aafc24f66167f3519ede78901b2f3e8a80ca56a036d698d33ff0c"
+        }
+      ],
+      "full_size": 541,
+      "gated": false,
+      "license": "apache-2.0",
+      "repo": "google/IFEval",
+      "revision": "fixture",
+      "rows": 2,
+      "synthetic": true
+    },
+    "math500": {
+      "files": [
+        {
+          "bytes": 295,
+          "path": "math500/test.jsonl",
+          "sha256": "9204bce2b7f77b000218b37458bb7ad3de151235edae3a16ef65a6ca2fe4f1c6"
+        }
+      ],
+      "full_size": 500,
+      "gated": false,
+      "license": "mit",
+      "repo": "HuggingFaceH4/MATH-500",
+      "revision": "fixture",
+      "rows": 2,
+      "synthetic": true
+    },
+    "mbpp_plus": {
+      "files": [
+        {
+          "bytes": 552,
+          "path": "mbpp_plus/test.jsonl",
+          "sha256": "d3070e4e34d3c39f1055d161616e0a772443a8588d75e48370f23f8024ac713c"
+        }
+      ],
+      "full_size": 378,
+      "gated": false,
+      "license": "apache-2.0",
+      "repo": "evalplus/mbppplus",
+      "revision": "fixture",
+      "rows": 1,
+      "synthetic": true
+    },
+    "mmlu_pro": {
+      "files": [
+        {
+          "bytes": 432,
+          "path": "mmlu_pro/test.jsonl",
+          "sha256": "0ee284dc6823db065ed020e1b6a104f8f73f745658f1fb94b02eea0e59ab8571"
+        },
+        {
+          "bytes": 1449,
+          "path": "mmlu_pro/validation.jsonl",
+          "sha256": "92a95005ad3b87baa82339983f88d5e559a852932a20063503975ca191aea277"
+        }
+      ],
+      "full_size": 12032,
+      "gated": false,
+      "license": "mit",
+      "repo": "TIGER-Lab/MMLU-Pro",
+      "revision": "fixture",
+      "rows": 2,
+      "synthetic": true
+    }
+  },
+  "synthetic": true,
+  "version": 1
+}

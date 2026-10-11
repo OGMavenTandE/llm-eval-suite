@@ -156,6 +156,20 @@ def render_report(run: dict, items: list[dict]) -> str:
             "<div class='banner banner-fail'>INVALID run. "
             f"{escape(validity_reason or 'Too many empty generations.')}</div>"
         )
+    pub = card.get("public_benchmarks") or {}
+    protocol_rows = ""
+    if pub:
+        counts = pub.get("item_counts") or {}
+        count_text = ", ".join(f"{name} {counts[name]}" for name in counts)
+        gpqa_text = "Not run" if pub.get("gpqa_diamond") == "not_run" else str(pub.get("gpqa_diamond") or "")
+        protocol_rows = (
+            f"<tr><th>Protocol</th><td>{escape(str(pub.get('protocol') or ''))}</td></tr>"
+            f"<tr><th>Subset</th><td>{escape(str(pub.get('subset') or ''))}</td></tr>"
+            f"<tr><th>GPQA</th><td>{escape(gpqa_text)}</td></tr>"
+            f"<tr><th>Suite items</th><td>{escape(count_text)}</td></tr>"
+            f"<tr><th>Thinking cap</th><td>{escape(str(pub.get('thinking_cap') if pub.get('thinking_cap') is not None else ''))}</td></tr>"
+            f"<tr><th>Thinking budget applied</th><td>{escape(str(pub.get('thinking_budget') if pub.get('thinking_budget') is not None else ''))}</td></tr>"
+        )
 
     return f"""<!DOCTYPE html>
 <html lang="en" class="report-doc">
@@ -182,6 +196,7 @@ def render_report(run: dict, items: list[dict]) -> str:
 <tr><th>Model</th><td>{escape(str(connection.get('model') or ''))}</td></tr>
 <tr><th>Connection</th><td>{escape(str(connection.get('type') or ''))} {escape(str(connection.get('base_url') or connection.get('folder') or ''))}</td></tr>
 <tr><th>Preset</th><td>{escape(str(run.get('preset') or ''))}</td></tr>
+{protocol_rows}
 <tr><th>Dataset</th><td>{escape(str(dataset.get('path') or ''))}</td></tr>
 <tr><th>Dataset SHA-256</th><td>{escape(str(dataset.get('sha256') or ''))}</td></tr>
 <tr><th>Rows</th><td>{escape(str(dataset.get('row_count') or ''))}</td></tr>

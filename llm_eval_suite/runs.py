@@ -130,6 +130,14 @@ SUITE_FIELDS = (
     "garak_runs_dir",
     "report_dir",
     "log_path",
+    "metrics",
+    "counts_toward_dow_score",
+    "suite_version",
+    "preset",
+    "subset",
+    "protocol",
+    "seed",
+    "not_run",
 )
 
 
@@ -526,7 +534,12 @@ class RunManager:
                 elapsed = None
                 if state.get("started") is not None or state.get("frozen_elapsed") is not None:
                     elapsed = displayed_elapsed(state, time.perf_counter())
-                progress["status"] = "cancelled" if result.get("cancelled") or cancel.is_set() else "completed"
+                if result.get("not_run"):
+                    progress["status"] = "not_run"
+                elif result.get("cancelled") or cancel.is_set():
+                    progress["status"] = "cancelled"
+                else:
+                    progress["status"] = "completed"
                 progress["done"] = result.get("done", progress["done"])
                 progress["total"] = result.get("total", progress["done"])
                 progress["source"] = result.get("source")
@@ -588,6 +601,25 @@ class RunManager:
         record["completed_at"] = _now()
         record["suites"] = suites
         record["scorecard"] = scorecard(items)
+        public = (record.get("scorecard") or {}).get("public_benchmarks")
+        gpqa_suite = next((row for row in suites if row.get("name") == "gpqa_diamond"), None)
+        if gpqa_suite is not None and gpqa_suite.get("status") == "not_run" and not public:
+            public = {
+                "preset": gpqa_suite.get("preset") or "",
+                "subset": gpqa_suite.get("subset") or "",
+                "protocol": gpqa_suite.get("protocol") or "",
+                "gpqa_diamond": "not_run",
+                "item_counts": {},
+                "subset_limits": {},
+                "answer_caps": {},
+                "thinking_budget": None,
+                "thinking_cap": None,
+            }
+            record["scorecard"]["public_benchmarks"] = public
+        elif public is not None and (gpqa_suite is None or gpqa_suite.get("status") == "not_run"):
+            public["gpqa_diamond"] = "not_run"
+        if public:
+            record["standard_protocol"] = public
         record["error"] = error
         record["items_completed"] = len(items)
         record["hit_token_cap_count"] = sum(1 for item in items if item.get("hit_token_cap") is True)

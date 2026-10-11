@@ -8,18 +8,21 @@ _THINK_CLOSED = re.compile(r"<think\b[^>]*>.*?</think>", re.IGNORECASE | re.DOTA
 _THINK_OPEN = re.compile(r"<think\b[^>]*>.*", re.IGNORECASE | re.DOTALL)
 
 
-def strip_think_blocks(text: str | None) -> str:
+def strip_think_blocks(text: str | None, *, strip_edges: bool = True) -> str:
     """Drop model thinking traces so the scored text is the answer.
 
     A closed ``<think>`` block is removed. An unclosed block, which is what
     remains when thinking tokens use up ``max_tokens``, is removed through
-    the end of the string.
+    the end of the string. Code completions pass ``strip_edges=False`` so a
+    leading indent on the function body is kept.
     """
     if not text:
         return ""
     cleaned = _THINK_CLOSED.sub("", text)
     cleaned = _THINK_OPEN.sub("", cleaned)
-    return cleaned.strip()
+    if strip_edges:
+        return cleaned.strip()
+    return cleaned
 
 
 def clamp_prompt_and_new_tokens(prompt: str, max_new_tokens: int, max_context: int) -> tuple[str, int]:

@@ -51,7 +51,7 @@ The engine runs YAML configs against local or API-backed models, writes timestam
 - Model connectors: Ollama, OpenAI-compatible, and a local Hugging Face folder
 - nanoGPT `ckpt.pt` to a Hugging Face GPT-2 folder, with a logits check
 - Five built-in evaluators: correctness, latency, robustness, consistency, cost
-- Presets: Quick, Standard, Full, and Government T&E
+- Presets: Quick, Standard, Full, Government T&E, Standard capability, and Standard capability quick check
 - Model comparison, a category scorecard, and an HTML report for browser print
 - Council summary from local judge models. The model under test is not a judge
 - Live garak when installed. A missing install shows a labeled fixture. A failed live scan is INVALID, not a fixture
@@ -82,6 +82,24 @@ A category meets the pass bar only when its own live rate is at or above 80%. Th
 A Hugging Face folder uses CUDA when the installed torch can see a GPU, in float16, and the run record stores that device. The keyword scorer treats number words as the digits they name, from a single word such as "Eight" through a compound such as "one hundred and fifty-six", up to 9999. An uploaded fact-check file may use `expected` or `answer` in place of `expected_answer`. Export HTML report opens the page. Download HTML report saves a file with the fonts embedded. Council judges wait 90 seconds by default and may write up to 1200 tokens. The Judges screen can change both. The Run screen ETA uses the current suite's item count. After the suite finishes, that row shows done and the elapsed time.
 
 The Run screen can run the Quick preset on an editable local Hugging Face folder and on a local `gpt2-medium` folder (`models/gpt2-medium`, or `LLM_EVAL_DEMO_BASE_FOLDER`), then open Compare on that pair. The demo does not download weights. See [docs/AIRGAP_INSTALL.md](docs/AIRGAP_INSTALL.md) for a closed-network install.
+
+## Standard capability
+
+Two offline presets score MMLU-Pro, GSM8K, MATH-500, IFEval, HumanEval+, and MBPP+. `standard_capability` is the full six suites, 14934 items. HumanEval/32 and MBPP+ task 255 are in that count and are not scored. `standard_capability_quick` is the same suites at 50 items each, chosen with seed 20261011, so every site scores the same items. Reasoning models on the quick preset use a 512-token thinking cap. Non-reasoning models run those same 50 items, and the cap does not bind. `--subset` and `--thinking-budget` override either preset.
+
+Use the quick check to see whether a model is worth a full run. On the planning rates in [docs/STANDARD_BENCH_RUN_PLAN.md](docs/STANDARD_BENCH_RUN_PLAN.md), a 1B non-thinking model is about 0.30 hours for the quick check and about 23.39 hours for the full six suites. A reasoning model is about 1.85 hours for the quick check and about 287.81 hours for the full six suites at a 2048 thinking cap. Those hours assume 1500 prefill tok/s and are not measurements.
+
+The customer kit is one zip. It holds the test kit code and the six pinned suites, plus a SHA-256 manifest. Model weights are not in it. Build it on a connected machine, copy the zip, and run it offline:
+
+```bash
+python -m standard_bench bundle --output dist/standard-capability-kit.zip
+python -m standard_bench verify-reference --data datasets/standard
+python -m standard_bench run --preset standard_capability_quick --data datasets/standard --model "OLMo 2 1B Instruct" --folder path/to/model --output runs/public.csv
+```
+
+`verify-reference` runs the stored HumanEval+ and MBPP+ reference solutions on the pinned tests. It does not call a model and it does not use the network.
+
+The command prints the zip size. A kit built from the pinned revisions on 11 October 2026 is 5.09 MB. A quick run is stamped `quick-check` on the scorecard, in the HTML report, and in the CSV, with the preset name, the subset, the per-suite item counts, and the caps. A full run is stamped `full`. The two cannot be read as the same result.
 
 Long runs are a background process with a per-run log. Cancel still works. Resume skips completed fact-check cases and completed garak probes. The progress line shows a live ETA.
 

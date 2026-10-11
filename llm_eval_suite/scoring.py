@@ -12,6 +12,29 @@ CATEGORIES = (
 
 PASS_BAR = 0.8
 
+# Public capability suites. They never feed the AIEval DoW Bench Score.
+PUBLIC_BENCHMARK_SUITES = frozenset(
+    {
+        "mmlu_pro",
+        "gpqa_diamond",
+        "gsm8k",
+        "math500",
+        "ifeval",
+        "humaneval_plus",
+        "mbpp_plus",
+    }
+)
+
+
+def _dow_item(item: dict) -> bool:
+    if item.get("counts_toward_dow_score") is False:
+        return False
+    if item.get("suite") in PUBLIC_BENCHMARK_SUITES:
+        return False
+    if item.get("category") == "public_benchmark":
+        return False
+    return True
+
 
 def _category_rate(rows: list[dict]) -> float:
     """Fraction of attempts that passed.
@@ -54,11 +77,43 @@ def live_failures(items: list[dict]) -> list[dict]:
         if not item.get("passed")
         and item.get("source") == "live"
         and item.get("counts_toward_score", True)
+        and _dow_item(item)
     ]
 
 
+def aieval_dow_bench_score(items: list[dict]) -> dict:
+    """AIEval DoW Bench Score. The mean of the Department of War suite scores.
+
+    Public capability benchmarks are not an input. A public-benchmark row is
+    ignored even when its category or counts_toward_score flag would otherwise
+    look like a Department of War item.
+    """
+    from dow_bench import SUITE_NAMES
+    from dow_bench.scorer import aggregate_suite
+
+    parts = []
+    for name in SUITE_NAMES:
+        rows = [item for item in items if item.get("suite") == name and _dow_item(item)]
+        if not rows:
+            continue
+        summary = aggregate_suite(name, rows)
+        if summary.get("score") is not None:
+            parts.append(float(summary["score"]))
+    score = None if not parts else sum(parts) / len(parts)
+    return {
+        "name": "AIEval DoW Bench Score",
+        "score": score,
+        "n_suites": len(parts),
+        "public_benchmarks_included": False,
+    }
+
+
 def scorecard(items: list[dict]) -> dict:
-    scored = [item for item in items if item.get("counts_toward_score", True)]
+    scored = [
+        item
+        for item in items
+        if item.get("counts_toward_score", True) and _dow_item(item)
+    ]
     categories = []
     live_rates = []
     for key, label in CATEGORIES:
@@ -121,7 +176,7 @@ def scorecard(items: list[dict]) -> dict:
         meets = False
         verdict = f"{below_count} of {live_count} live categories below the bar"
     failures = live_failures(scored)
-    return {
+    payload = {
         "pass_bar": PASS_BAR,
         "pass_bar_percent": bar_percent,
         "meets_bar": meets,
@@ -135,6 +190,60 @@ def scorecard(items: list[dict]) -> dict:
         "failure_count": len(failures),
         "item_count": len(scored),
         "live_item_count": sum(1 for item in scored if item.get("source") == "live"),
+    }
+    stamp = public_benchmark_stamp(items)
+    if stamp:
+        payload["public_benchmarks"] = stamp
+    return payload
+
+
+def public_benchmark_stamp(items: list[dict]) -> dict | None:
+    """Preset, subset, counts, and caps for a public-benchmark run.
+
+    GPQA is ``not_run`` unless this run actually scored GPQA items. A quick
+    check is ``protocol`` ``quick-check``, which is not a full-suite result.
+    """
+    public = [
+        item
+        for item in items
+        if item.get("suite") in PUBLIC_BENCHMARK_SUITES or item.get("category") == "public_benchmark"
+    ]
+    if not public:
+        return None
+
+    def first(key: str):
+        for item in public:
+            if item.get(key) not in (None, ""):
+                return item.get(key)
+        return ""
+
+    counts: dict[str, int] = {}
+    caps: dict[str, object] = {}
+    limits: dict[str, object] = {}
+    for item in public:
+        suite = str(item.get("suite") or "")
+        if not suite:
+            continue
+        counts[suite] = counts.get(suite, 0) + 1
+        if item.get("answer_cap") not in (None, "") and suite not in caps:
+            caps[suite] = item.get("answer_cap")
+        if item.get("subset_limit") not in (None, "") and suite not in limits:
+            limits[suite] = item.get("subset_limit")
+    thinking_values = [
+        item.get("thinking_budget") for item in public if item.get("thinking_budget") not in (None, "")
+    ]
+    cap_values = [item.get("thinking_cap") for item in public if item.get("thinking_cap") not in (None, "")]
+    gpqa = "scored" if any(item.get("suite") == "gpqa_diamond" for item in public) else "not_run"
+    return {
+        "preset": first("preset"),
+        "subset": first("subset"),
+        "protocol": first("protocol"),
+        "gpqa_diamond": gpqa,
+        "item_counts": counts,
+        "subset_limits": limits,
+        "answer_caps": caps,
+        "thinking_budget": thinking_values[0] if thinking_values else None,
+        "thinking_cap": cap_values[0] if cap_values else None,
     }
 
 
