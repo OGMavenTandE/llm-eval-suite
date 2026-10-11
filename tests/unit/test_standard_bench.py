@@ -32,6 +32,7 @@ from standard_bench.scorers.ifeval import (
     score_ifeval_item,
     split_into_sentences,
 )
+from standard_bench.scorers.math500 import build_prompt as math_prompt
 from standard_bench.scorers.math500 import extract_boxed, math_equal, score_math
 from standard_bench.scorers.mmlu_pro import extract_answer
 from standard_bench.stub import StubStandardModel
@@ -106,6 +107,9 @@ def test_math500_boxed_and_equivalence():
     missed = score_math("3", "the answer is 3")
     assert missed["passed"] is False
     assert missed["predicted"] == ""
+    built = math_prompt("What is 1/2?")
+    assert r"\boxed{}" in built
+    assert "What is 1/2?" in built
 
 
 def test_ifeval_every_checker_and_tricky_cases():

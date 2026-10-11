@@ -139,6 +139,9 @@ def score_code_task(row: dict, completion: str, *, suite: str, limits: RunLimits
         plus = {"ok": False, "error": "base failed", "timed_out": False, "isolation": base.get("isolation", "")}
     base_pass = bool(base["ok"])
     plus_pass = bool(base_pass and plus["ok"])
+    error = ""
+    if not plus_pass:
+        error = str(base.get("error") or plus.get("error") or "")
     return {
         "predicted": "",
         "expected": entry,
@@ -149,5 +152,5 @@ def score_code_task(row: dict, completion: str, *, suite: str, limits: RunLimits
         "plus_pass": plus_pass,
         "timed_out": bool(base.get("timed_out") or plus.get("timed_out")),
         "isolation": plus.get("isolation") or base.get("isolation") or "",
-        "error": "" if plus_pass else (plus.get("error") or base.get("error") or ""),
+        "error": error,
     }

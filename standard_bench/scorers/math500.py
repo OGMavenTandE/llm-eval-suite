@@ -17,7 +17,7 @@ _RATIO = re.compile(
 
 PROMPT = (
     "Solve the following math problem. Put the answer after the step-by-step "
-    "solution, not before. Please put your final answer within \\boxed{}.\n\n"
+    "solution, not before. Please put your final answer within \\boxed{{}}.\n\n"
     "{problem}"
 )
 

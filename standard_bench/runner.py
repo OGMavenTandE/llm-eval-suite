@@ -267,7 +267,7 @@ def run_standard_suite(ctx, config: dict, suite: str) -> dict:
         raw_response = meta.get("raw_text")
         if raw_response is None:
             raw_response = result.text
-        answer = strip_think_blocks(result.text)
+        answer = strip_think_blocks(result.text, strip_edges=suite not in {"humaneval_plus", "mbpp_plus"})
         over_budget = bool(meta.get("prompt_over_budget"))
         if over_budget:
             scored = {
