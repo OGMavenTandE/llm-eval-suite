@@ -83,9 +83,9 @@
     "mbpp_plus": {
       "files": [
         {
-          "bytes": 13272,
+          "bytes": 21009,
           "path": "mbpp_plus/test.jsonl",
-          "sha256": "dfe2f5e12f621790e9acf1ef7948fd8c2e239eb21df1c65241dbe84280f11078"
+          "sha256": "4c98da04c5f3eaa12a442d60fe0aa1f8e634ea54cf0d2ba8d1956fe247fbb858"
         }
       ],
       "full_size": 378,
@@ -93,7 +93,7 @@
       "license": "apache-2.0",
       "repo": "evalplus/mbppplus",
       "revision": "fixture",
-      "rows": 2,
+      "rows": 3,
       "synthetic": true
     },
     "mmlu_pro": {

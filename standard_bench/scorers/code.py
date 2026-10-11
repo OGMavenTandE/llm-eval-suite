@@ -83,36 +83,89 @@ _SET_HEADER = _STDLIB_HEADER.replace(
 )
 
 
-def _drop_numpy_helpers(prefix: str) -> str:
-    """Drop numpy imports and ``is_floats`` / ``assertion`` helpers at any indent.
+def _leading_indent(line: str) -> int:
+    return len(line[: len(line) - len(line.lstrip(" \t"))])
 
-    Fetch indents an MBPP+ plus body into ``check``, so those helpers are
-    nested there and the inner ``assertion`` would shadow the tolerant one.
-    The same drop runs on the text before ``check`` and on the ``check`` body.
-    Other code stays. HumanEval/14, 15, 32, 83, 100, 130, and 139 define
-    ``ref_func`` or ``_poly`` before ``def check``, and the plus tests call
-    those names.
+
+def _take_function(lines: list[str], start: int) -> tuple[int, list[str]]:
+    """Return the index after ``lines[start]``'s function and the function lines."""
+    indent = _leading_indent(lines[start])
+    block = [lines[start]]
+    index = start + 1
+    while index < len(lines):
+        line = lines[index]
+        if not line.strip():
+            block.append(line)
+            index += 1
+            continue
+        if _leading_indent(line) <= indent:
+            break
+        block.append(line)
+        index += 1
+    while len(block) > 1 and not block[-1].strip():
+        block.pop()
+    return index, block
+
+
+def _is_standard_assertion(block: list[str]) -> bool:
+    """True for the EvalPlus numeric helper and for the helper this module injects.
+
+    Upstream numeric helpers call ``is_floats(exp)`` and ``allclose``. The
+    injected helper calls ``values_close``. MBPP+ 737, 787, and 794 do neither.
+    """
+    body = "\n".join(block)
+    if re.search(r"is_floats\s*\(\s*exp\s*\)", body):
+        return True
+    if "allclose" in body or "values_close" in body:
+        return True
+    return False
+
+
+def _keep_custom_assertion(block: list[str]) -> list[str]:
+    """Keep a non-numeric assertion. Append ``assert exact_match`` when it is missing.
+
+    MBPP+ 737, 787, and 794 set ``exact_match`` and never assert it. A regex
+    match object is success when the expected value is true, because the helper
+    uses ``exp == (out is not None)`` for a non-bool result. A helper that does
+    not set ``exact_match`` stays as written.
+    """
+    body = "\n".join(block)
+    if re.search(r"(?m)^[ \t]*assert exact_match\b", body):
+        return block
+    if not re.search(r"(?m)^[ \t]*exact_match\s*=", body):
+        return block
+    indent = _leading_indent(block[0]) + 4
+    return block + [(" " * indent) + "assert exact_match"]
+
+
+def _drop_numpy_helpers(prefix: str) -> str:
+    """Drop numpy imports and the standard numeric helpers at any indent.
+
+    Fetch indents an MBPP+ plus body into ``check``. A nested standard
+    ``assertion`` would shadow the tolerant one, so that helper is removed
+    before ``check`` and inside it. ``is_floats`` is removed with it.
+    A custom ``assertion`` stays, with ``assert exact_match`` added when the
+    body does not already assert it. Other helpers stay. HumanEval/14, 15, 32,
+    83, 100, 130, and 139 define ``ref_func`` or ``_poly`` before ``def check``,
+    and the plus tests call those names. MBPP+ 630 defines ``adjac``.
     """
     lines = (prefix or "").replace("\r\n", "\n").split("\n")
     kept: list[str] = []
-    skipping = False
-    skip_indent = 0
-    for line in lines:
-        if skipping:
-            if not line.strip():
-                continue
-            indent = len(line[: len(line) - len(line.lstrip(" \t"))])
-            if indent > skip_indent:
-                continue
-            skipping = False
+    index = 0
+    while index < len(lines):
+        line = lines[index]
         stripped = line.strip()
         if re.match(r"^(?:import|from)\s+numpy\b", stripped):
+            index += 1
             continue
-        if re.match(r"^[ \t]*def\s+(?:is_floats|assertion|_close|values_close)\b", line):
-            skipping = True
-            skip_indent = len(line[: len(line) - len(line.lstrip(" \t"))])
+        match = re.match(r"^[ \t]*def\s+(is_floats|_close|values_close|assertion)\b", line)
+        if match:
+            index, block = _take_function(lines, index)
+            if match.group(1) == "assertion" and not _is_standard_assertion(block):
+                kept.extend(_keep_custom_assertion(block))
             continue
         kept.append(line)
+        index += 1
     return "\n".join(kept).strip("\n")
 
 
@@ -120,8 +173,9 @@ def prepare_plus_test(source: str) -> str:
     """Install the current assertion helper before a plus test runs.
 
     Pinned rows already contain whatever helper fetch wrote, including a copy
-    nested inside ``check``. Scoring strips that copy and rewrites the helper
-    so a kit fetched earlier uses the tolerant compare.
+    nested inside ``check``. Scoring strips a standard numeric copy and rewrites
+    the helper so a kit fetched earlier uses the tolerant compare. A custom
+    assertion is kept.
     """
     text = str(source or "")
     if "def check(" not in text:
@@ -135,7 +189,9 @@ def prepare_plus_test(source: str) -> str:
 def rewrite_evalplus_test(source: str) -> str:
     """Replace the numpy assertion helper. Inputs, expected values, and other helpers stay.
 
-    ``is_floats`` and ``assertion`` are removed before ``check`` and inside it.
+    ``is_floats`` and a standard ``assertion`` are removed before ``check`` and
+    inside it. A custom ``assertion`` stays. If it sets ``exact_match`` and
+    does not assert it, ``assert exact_match`` is appended.
     """
     text = source or ""
     marker = "def check("

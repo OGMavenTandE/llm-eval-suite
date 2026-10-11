@@ -864,7 +864,7 @@ def test_verify_reference_on_fixture_rows():
     report = verify_reference(FIXTURES, workers=1)
     assert report["ok"] is True
     assert report["suites"]["humaneval_plus"]["passed"] == 1
-    assert report["suites"]["mbpp_plus"]["passed"] == 2
+    assert report["suites"]["mbpp_plus"]["passed"] == 3
     assert report["suites"]["humaneval_plus"]["failures"] == []
     with pytest.raises(SystemExit) as caught:
         main(["verify-reference", "--fixtures"])
@@ -975,7 +975,12 @@ def test_plus_assertion_uses_the_tolerant_compare():
         "def is_floats(x):\n"
         "    return False\n"
         "def assertion(out, exp, atol):\n"
-        "    assert out == exp\n"
+        "    if atol == 0 and is_floats(exp):\n"
+        "        atol = 1e-6\n"
+        "    if out != exp and atol != 0:\n"
+        "        assert np.allclose(out, exp, rtol=1e-07, atol=atol)\n"
+        "    else:\n"
+        "        assert out == exp\n"
         "def check(candidate):\n"
         f"    assertion(candidate(), {expected}, 0)\n"
     )
@@ -1005,7 +1010,10 @@ def test_plus_assertion_uses_the_tolerant_compare():
     sizes = dict(row)
     sizes["plus_test"] = (
         "def assertion(out, exp, atol):\n"
-        "    assert out == exp\n"
+        "    if atol == 0 and is_floats(exp):\n"
+        "        atol = 1e-6\n"
+        "    else:\n"
+        "        assert out == exp\n"
         "def check(candidate):\n"
         "    assertion(candidate(), 88, 0)\n"
     )
@@ -1030,10 +1038,19 @@ def test_rewrite_strips_helpers_nested_inside_check():
         "    def is_floats(x):\n"
         "        return isinstance(x, np.ndarray)\n"
         "    def assertion(out, exp, atol):\n"
-        "        assert out == exp\n"
+        "        if is_floats(exp):\n"
+        "            assert np.allclose(out, exp)\n"
+        "        else:\n"
+        "            assert out == exp\n"
         "    assertion(candidate(), 1, 0)\n"
     )
-    fetched = "def assertion(out, exp, atol):\n    assert out == exp\n\n" + nested
+    fetched = (
+        "def assertion(out, exp, atol):\n"
+        "    if is_floats(exp):\n"
+        "        atol = 1e-6\n"
+        "    assert out == exp\n"
+        "\n" + nested
+    )
     assert fetched.count("def assertion(") == 2
     rewritten = rewrite_evalplus_test(fetched)
     prepared = prepare_plus_test(fetched)
@@ -1048,9 +1065,14 @@ def test_rewrite_strips_helpers_nested_inside_check():
     inside = (
         "def check(candidate):\n"
         "    def assertion(out, exp, atol):\n"
+        "        if atol == 0 and is_floats(exp):\n"
+        "            atol = 1e-6\n"
         "        out = set(out)\n"
         "        exp = set(exp)\n"
-        "        assert out == exp\n"
+        "        if out != exp and atol != 0:\n"
+        "            assert np.allclose(out, exp, rtol=1e-07, atol=atol)\n"
+        "        else:\n"
+        "            assert out == exp\n"
         "    assertion(candidate(), {1, 2}, 0)\n"
     )
     set_rewritten = rewrite_evalplus_test(inside)
@@ -1139,6 +1161,83 @@ def test_mbpp_590_real_plus_test_accepts_one_ulp_and_rejects_wrong_shapes():
     assert off["plus_pass"] is False
     assert as_list["plus_pass"] is False
     assert nan["plus_pass"] is False
+
+
+def test_mbpp_737_custom_assertion_accepts_a_regex_match():
+    from standard_bench.load import load_suite
+
+    rows, _entry = load_suite(FIXTURES, "mbpp_plus")
+    row = next(item for item in rows if str(item["task_id"]) == "737")
+    plus = str(row["plus_test"])
+    assert "out is not None" in plus
+    assert "assert exact_match" not in plus
+    assert plus.count("def assertion(") == 2
+    prepared = prepare_plus_test(plus)
+    assert "out is not None" in prepared
+    assert prepared.count("assert exact_match") == 1
+    assert prepared.count("def assertion(") == 2
+    assert prepare_plus_test(prepared).count("assert exact_match") == 1
+    canonical = score_code_task(row, str(row["canonical_solution"]), suite="mbpp_plus")
+    assert canonical["base_pass"] is True
+    assert canonical["plus_pass"] is True
+    variant = dict(row)
+    variant["base_test"] = "def check(candidate):\n    assert callable(candidate)\n"
+    missed = score_code_task(
+        variant,
+        "import re\ndef check_str(string):\n    return None\n",
+        suite="mbpp_plus",
+    )
+    assert missed["base_pass"] is True
+    assert missed["plus_pass"] is False
+    always = score_code_task(
+        variant,
+        "def check_str(string):\n    return True\n",
+        suite="mbpp_plus",
+    )
+    assert always["plus_pass"] is False
+
+
+def test_prepared_evalplus_variants_match_reference():
+    """Every distinct upstream helper and assertion variant, minus the exclusions."""
+    from standard_bench.load import load_suite
+    from standard_bench.reference import verify_reference
+
+    root = ROOT / "tests" / "evalplus_prepared"
+    humaneval, _entry = load_suite(root, "humaneval_plus")
+    mbpp, _mbpp_entry = load_suite(root, "mbpp_plus")
+    assert [row["task_id"] for row in humaneval] == [
+        "HumanEval/14",
+        "HumanEval/15",
+        "HumanEval/32",
+        "HumanEval/83",
+        "HumanEval/100",
+        "HumanEval/130",
+        "HumanEval/139",
+    ]
+    assert [row["task_id"] for row in mbpp] == [
+        "88",
+        "232",
+        "255",
+        "590",
+        "596",
+        "630",
+        "737",
+        "787",
+        "794",
+    ]
+    report = verify_reference(root, workers=4)
+    assert report["ok"] is True
+    assert report["suites"]["humaneval_plus"]["passed"] == 6
+    assert report["suites"]["humaneval_plus"]["checked"] == 6
+    assert [item["task_id"] for item in report["suites"]["humaneval_plus"]["excluded"]] == [
+        "HumanEval/32"
+    ]
+    assert report["suites"]["mbpp_plus"]["passed"] == 7
+    assert report["suites"]["mbpp_plus"]["checked"] == 7
+    assert [item["task_id"] for item in report["suites"]["mbpp_plus"]["excluded"]] == [
+        "255",
+        "596",
+    ]
 
 
 def test_rescore_rewrites_saved_responses_without_a_model(tmp_path: Path):

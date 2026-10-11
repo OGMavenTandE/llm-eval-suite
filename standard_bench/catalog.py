@@ -219,8 +219,9 @@ SUITES: dict[str, SuiteSpec] = {
             "The prompt is the EvalPlus chat task: the natural-language statement "
             "plus the three base asserts. Stop strings are applied after generation. "
             "The numpy assertion helper is rewritten to the same stdlib comparison "
-            "used for HumanEval+. Scoring rewrites it again so an older pin uses "
-            "the current helper."
+            "used for HumanEval+. A custom assertion that does not call is_floats "
+            "or allclose is kept, and assert exact_match is added when it is missing. "
+            "Scoring rewrites it again so an older pin uses the current helper."
         ),
         rows_config="default",
         rows_split="test",

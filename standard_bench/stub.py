@@ -53,4 +53,11 @@ def stub_reply(prompt: str) -> str:
             "    cn1 = cmath.rect(2, cmath.pi)\n"
             "    return (cn, cn1)\n"
         )
+    if "check_str(" in text:
+        return (
+            "import re\n"
+            "def check_str(string):\n"
+            "    regex = '^[aeiouAEIOU][A-Za-z0-9_]*'\n"
+            "    return re.search(regex, string)\n"
+        )
     return "I do not know."
