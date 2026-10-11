@@ -18,8 +18,26 @@ from standard_bench.export import write_export
 from standard_bench.fetch import FetchError, manifest_contains_secret, normalize_humaneval, normalize_mbpp
 from standard_bench.load import select_rows
 from standard_bench.manifest import HashMismatch, ManifestError, verify_suite
-from standard_bench.plan import PREFILL_TOK_S, SCREEN_LIMITS, THROUGHPUT, model_seconds, tokens_per_item
-from standard_bench.runner import _aggregate, planned_count, run_standard_suite
+from standard_bench.plan import (
+    PLAN_SUITES,
+    PREFILL_TOK_S,
+    QUICK_THINKING_CAP,
+    SCREEN_LIMITS,
+    THINKING_MODELS,
+    THROUGHPUT,
+    model_seconds,
+    quick_limits,
+    tokens_per_item,
+)
+from standard_bench.protocol import CUSTOMER_SUITES, QUICK_SEED
+from standard_bench.runner import (
+    _aggregate,
+    planned_count,
+    resolve_seed,
+    resolve_subset,
+    resolve_thinking_budget,
+    run_standard_suite,
+)
 from standard_bench.sandbox import CHILD, RunLimits, describe_isolation, run_code
 from standard_bench.scorers.code import (
     HUMANEVAL_STOPS,
@@ -351,12 +369,31 @@ def test_public_scores_stay_out_of_the_dow_composite():
     assert alone_rate == mixed_rate == 1.0
 
 
-def test_preset_lists_the_seven_suites_offline():
+def test_preset_lists_the_six_customer_suites_offline():
+    from llm_eval_suite.presets import list_presets
+
     expanded = expand_preset("standard_capability")
     assert expanded["offline"] is True
-    assert [suite["name"] for suite in expanded["suites"]] == list(SUITES)
+    names = [suite["name"] for suite in expanded["suites"]]
+    assert names == list(CUSTOMER_SUITES)
+    assert "gpqa_diamond" not in names
+    quick = expand_preset("standard_capability_quick")
+    assert [suite["name"] for suite in quick["suites"]] == list(CUSTOMER_SUITES)
+    gsm = next(suite for suite in quick["suites"] if suite["name"] == "gsm8k")
+    assert gsm["preset"] == "standard_capability_quick"
+    assert gsm["subset"] == "quick50"
+    assert gsm["thinking_budget"] == 512
+    assert planned_count("gsm8k", gsm) == 50
     assert planned_count("gsm8k", {}) == 1319
     assert planned_count("gsm8k", {"limit": 10}) == 10
+    listed = [row["id"] for row in list_presets()]
+    assert "standard_capability" in listed
+    assert "standard_capability_quick" in listed
+    assert "standard_capability_gpqa" not in listed
+    assert next(row["prompt_count"] for row in list_presets() if row["id"] == "standard_capability") == 14934
+    assert next(row["prompt_count"] for row in list_presets() if row["id"] == "standard_capability_quick") == 300
+    inhouse = expand_preset("standard_capability_gpqa")
+    assert [suite["name"] for suite in inhouse["suites"]] == ["gpqa_diamond"]
     rows = select_rows([{"id": 1}, {"id": 2}, {"id": 3}], 2, 7)
     assert rows == select_rows([{"id": 1}, {"id": 2}, {"id": 3}], 2, 7)
     assert len(rows) == 2
@@ -401,10 +438,28 @@ def test_run_plan_matches_plan_py():
         assert f"{short['total_hours']:.2f}" in doc
     assert f"{grand:.2f}" in doc
     assert f"{screen:.2f}" in doc
-    for name, spec in SUITES.items():
+    for name in PLAN_SUITES:
+        spec = SUITES[name]
         assert str(spec.full_size) in doc
         assert str(tokens_per_item(name, thinking=False)) in doc
         assert str(tokens_per_item(name, thinking=True)) in doc
+    limits = quick_limits()
+    stage1 = 0.0
+    stage2 = 0.0
+    for key in THROUGHPUT:
+        if key in THINKING_MODELS:
+            quick = model_seconds(key, limits, thinking_tokens=QUICK_THINKING_CAP)
+            stage2 += quick["total_hours"]
+        else:
+            quick = model_seconds(key, limits)
+            stage1 += model_seconds(key, SCREEN_LIMITS)["total_hours"]
+        assert f"{quick['total_hours']:.2f}" in doc
+    assert f"{stage1:.2f}" in doc
+    assert f"{stage2:.2f}" in doc
+    assert "standard_capability_quick" in doc
+    assert "512" in doc
+    assert "14934" in doc
+    assert "HF_TOKEN" not in doc
     for display in (
         "OLMo 2 1B Instruct",
         "LFM2.5-1.2B Instruct",
@@ -506,6 +561,154 @@ def test_code_extraction_keeps_imports_and_helpers():
     assert "assert False" not in mbpp
 
 
+def test_quick50_selection_is_stable_and_stamped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("LLM_EVAL_STANDARD_SUBSET", raising=False)
+    monkeypatch.delenv("LLM_EVAL_STANDARD_SEED", raising=False)
+    monkeypatch.delenv("LLM_EVAL_STANDARD_THINKING_BUDGET", raising=False)
+    monkeypatch.delenv("LLM_EVAL_INCLUDE_GPQA", raising=False)
+    pool = [{"id": str(i)} for i in range(80)]
+    first = select_rows(pool, 50, QUICK_SEED)
+    second = select_rows(pool, 50, QUICK_SEED)
+    assert first == second
+    assert len(first) == 50
+    assert [row["id"] for row in first] != [str(i) for i in range(50)]
+    config = {
+        "fixtures": True,
+        "subset": "quick50",
+        "thinking_budget": 512,
+        "preset": "standard_capability_quick",
+    }
+    assert resolve_seed(config) == QUICK_SEED
+    result = run_standard_suite(_ctx(StubStandardModel(), tmp_path), config, "gsm8k")
+    assert result["protocol"] == "quick-check"
+    assert result["subset"] == "quick50"
+    assert result["preset"] == "standard_capability_quick"
+    assert result["metrics"]["n_items"] == 2
+    assert result["metrics"]["limit"] == 50
+    assert result["metrics"]["thinking_budget"] == 0
+    assert result["metrics"]["thinking_cap"] == 512
+    assert result["metrics"]["answer_cap"] == 512
+    card = scorecard(result["items"])
+    stamp = card["public_benchmarks"]
+    assert stamp["protocol"] == "quick-check"
+    assert stamp["preset"] == "standard_capability_quick"
+    assert stamp["subset"] == "quick50"
+    assert stamp["gpqa_diamond"] == "not_run"
+    assert stamp["item_counts"]["gsm8k"] == 2
+    assert stamp["subset_limits"]["gsm8k"] == 50
+    assert stamp["thinking_cap"] == 512
+    assert stamp["answer_caps"]["gsm8k"] == 512
+    thinking = _ctx(StubStandardModel(), tmp_path)
+    thinking.connection["model"] = "Phi-4-mini-reasoning"
+    thinking.connection["name"] = "Phi-4-mini-reasoning"
+    reasoned = run_standard_suite(thinking, config, "gsm8k")
+    assert reasoned["metrics"]["thinking_budget"] == 512
+    assert reasoned["metrics"]["thinking_cap"] == 512
+    applied, configured = resolve_thinking_budget("OLMo 2 1B Instruct", {"thinking_budget": 512})
+    assert applied == 0
+    assert configured == 512
+    monkeypatch.setenv("LLM_EVAL_STANDARD_SUBSET", "short")
+    assert resolve_subset({"subset": "quick50"}) == "short"
+    assert planned_count("gsm8k", {"subset": "quick50"}) == 200
+    monkeypatch.setenv("LLM_EVAL_STANDARD_THINKING_BUDGET", "100")
+    applied, configured = resolve_thinking_budget("Phi-4-mini-reasoning", {"thinking_budget": 512})
+    assert (applied, configured) == (100, 100)
+    applied, configured = resolve_thinking_budget("OLMo 2 1B Instruct", {"thinking_budget": 512})
+    assert applied == 0
+
+
+def test_missing_gpqa_is_not_run(tmp_path: Path):
+    data = tmp_path / "data"
+    shutil.copytree(FIXTURES, data)
+    manifest = json.loads((data / "manifest.json").read_text(encoding="utf-8"))
+    manifest["suites"].pop("gpqa_diamond")
+    (data / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    shutil.rmtree(data / "gpqa_diamond")
+    model = _CountingModel()
+    result = run_standard_suite(
+        _ctx(model, tmp_path),
+        {"fixtures": False, "data_dir": str(data), "preset": "standard_capability"},
+        "gpqa_diamond",
+    )
+    assert result["not_run"] is True
+    assert result["status"] == "not_run"
+    assert result["items"] == []
+    assert model.calls == 0
+    gsm = run_standard_suite(
+        _ctx(StubStandardModel(), tmp_path),
+        {"fixtures": False, "data_dir": str(data)},
+        "gsm8k",
+    )
+    assert gsm["metrics"]["n_items"] == 2
+
+
+def test_bundle_has_no_gpqa_and_loads_offline(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    import zipfile
+
+    from llm_eval.offline import activate_run_offline
+
+    from standard_bench.bundle import build_bundle, verify_kit
+    from standard_bench.manifest import HashMismatch
+
+    monkeypatch.delenv("LLM_EVAL_STANDARD_SUBSET", raising=False)
+    activate_run_offline(preset={"offline": True})
+    info = build_bundle(tmp_path / "kit.zip", FIXTURES, repo_root=ROOT)
+    assert info["bytes"] < 35 * 1024 * 1024
+    verify_kit(info["path"])
+    with zipfile.ZipFile(info["path"]) as archive:
+        names = [item.filename.replace("\\", "/") for item in archive.infolist()]
+        assert not any("gpqa_diamond" in name for name in names)
+        assert "docs/GPQA_INHOUSE.md" not in names
+        assert "datasets/standard/gsm8k/test.jsonl" in names
+        assert "kit-manifest.json" in names
+        for name in names:
+            if name.endswith(".jsonl") or name.endswith("manifest.json"):
+                blob = archive.read(name)
+                assert b"GPQA_SENTINEL_QUESTION" not in blob
+                assert b"gpqa_diamond" not in blob
+        data_manifest = json.loads(archive.read("datasets/standard/manifest.json"))
+        assert set(data_manifest["suites"]) == set(CUSTOMER_SUITES)
+    unpacked = tmp_path / "unpacked"
+    unpacked.mkdir()
+    with zipfile.ZipFile(info["path"]) as archive:
+        archive.extractall(unpacked)
+    verify_kit(unpacked)
+    target = unpacked / "datasets" / "standard" / "gsm8k" / "test.jsonl"
+    target.write_bytes(target.read_bytes() + b" ")
+    with pytest.raises(HashMismatch):
+        verify_kit(unpacked)
+    result = run_standard_suite(
+        _ctx(StubStandardModel(), tmp_path),
+        {
+            "fixtures": False,
+            "data_dir": str(FIXTURES),
+            "subset": "quick50",
+            "preset": "standard_capability_quick",
+            "thinking_budget": 512,
+        },
+        "math500",
+    )
+    assert result["protocol"] == "quick-check"
+    assert scorecard(result["items"])["public_benchmarks"]["gpqa_diamond"] == "not_run"
+
+
+def test_customer_docs_do_not_ask_for_an_hf_token():
+    for relative in (
+        "README.md",
+        "docs/AIRGAP_INSTALL.md",
+        "docs/STANDARD_BENCH.md",
+        "docs/STANDARD_BENCH_RUN_PLAN.md",
+        "docs/LICENSES.md",
+    ):
+        text = (ROOT / relative).read_text(encoding="utf-8")
+        assert "HF_TOKEN" not in text
+        assert "HUGGING_FACE_HUB_TOKEN" not in text
+    inhouse = (ROOT / "docs" / "GPQA_INHOUSE.md").read_text(encoding="utf-8")
+    assert "HF_TOKEN" in inhouse
+    assert "in-house" in inhouse.lower()
+    assert "standard_capability_gpqa" in inhouse
+
+
 def test_cli_smoke(tmp_path: Path):
     from standard_bench.cli import main
 
@@ -518,3 +721,5 @@ def test_cli_smoke(tmp_path: Path):
     assert SENTINEL not in text
     assert "mmlu_pro" in text
     assert "counts_toward_dow_score" in text
+    assert "not_run" in text
+    assert "gpqa_diamond" not in text

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from dow_bench.items import count_items as count_dow_items
+from standard_bench.protocol import GPQA_SUITE, PROTOCOL_KEYS
 from standard_bench.runner import planned_count as count_standard_items
 from llm_eval.garak.live import garak_is_installed, planned_garak_attempts
 from llm_eval.offline import demo_base_folder, demo_base_warning, offline_preset_note
@@ -57,6 +59,10 @@ DEMO_MODEL_A_FOLDER = r"C:\AI Eval\LLMs\nanoGPT-master\nanoGPT-master\hf-dow-new
 DEMO_MODEL_B = "gpt2-medium"
 
 
+def _include_gpqa() -> bool:
+    return os.environ.get("LLM_EVAL_INCLUDE_GPQA") == "1"
+
+
 def load_presets(path: str | Path | None = None) -> dict:
     preset_path = Path(path) if path is not None else PRESET_PATH
     return json.loads(preset_path.read_text(encoding="utf-8"))
@@ -86,6 +92,8 @@ def list_presets(
             warning = demo_base_warning(demo_base_folder(model_b.get("folder")))
         if body.get("offline") and offline_preset_note() not in warning:
             warning = (warning + " " + offline_preset_note()).strip()
+        if body.get("in_house"):
+            continue
         rows.append(
             {
                 "id": preset_id,
@@ -171,11 +179,13 @@ def estimate_preset(
         dow_counts[dow_name] = count_dow_items(dow_name, dow_config)
     dow_prompts = sum(dow_counts.values())
     standard_counts = {}
+    protocol = {key: body[key] for key in PROTOCOL_KEYS if key in body}
     for standard_name in STANDARD_SUITE_NAMES:
         standard_config = body.get(standard_name)
         if not standard_config:
             continue
-        standard_counts[standard_name] = count_standard_items(standard_name, standard_config)
+        merged = {**protocol, **standard_config}
+        standard_counts[standard_name] = count_standard_items(standard_name, merged)
     standard_prompts = sum(standard_counts.values())
     consistency = body.get("consistency") or {}
     consistency_prompts = 0
@@ -277,11 +287,16 @@ def expand_preset(preset_id: str, path: str | Path | None = None) -> dict:
         raise KeyError(f"Unknown preset '{preset_id}'. Known presets: {known}.")
     body = presets[preset_id]
     suites = []
+    protocol = {key: body[key] for key in PROTOCOL_KEYS if key in body}
     for name in SUITE_KEYS:
         config = body.get(name)
         if not config:
             continue
-        suites.append({"name": name, **config})
+        suites.append({"name": name, "preset": preset_id, **protocol, **config})
+    if _include_gpqa() and not any(row["name"] == GPQA_SUITE for row in suites):
+        gpqa_body = presets.get("standard_capability_gpqa") or {}
+        gpqa_config = gpqa_body.get(GPQA_SUITE) or {"max_new_tokens": 1024, "prompt_budget": 4096}
+        suites.append({"name": GPQA_SUITE, "preset": preset_id, **protocol, **gpqa_config})
     warning = body.get("warning") or ""
     if body.get("demo"):
         model_b = (body.get("demo") or {}).get("model_b") or {}

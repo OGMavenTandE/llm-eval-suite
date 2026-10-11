@@ -1,8 +1,8 @@
 # Benchmark licenses
 
-These rows are the datasets behind the `standard_capability` preset. The suite does not vendor the files. `python -m standard_bench fetch` downloads them on a connected machine and writes SHA-256 hashes. Revisions are the Hub commits recorded on 2026-10-10.
+These rows are the datasets behind the capability presets. The customer kit vendors the six public suites and a SHA-256 manifest. Revisions are the Hub commits recorded on 2026-10-10.
 
-GPQA questions are not in this repository. Do not put them in fixtures, logs, or exports. The authors ask that the questions not be republished in plain text. The Hub dataset is gated. Fetch uses `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN` from the environment and does not store the token.
+GPQA Diamond is in-house only. It is not in the customer presets or the customer zip. Do not republish the questions in plain text. The authors ask that the questions not be republished. The Hub dataset is gated.
 
 | Suite | Repository | Revision | License | Terms |
 | --- | --- | --- | --- | --- |

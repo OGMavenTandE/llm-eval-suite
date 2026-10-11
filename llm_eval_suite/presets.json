@@ -119,15 +119,40 @@
   },
   "standard_capability": {
     "label": "Standard capability",
-    "description": "Public capability suites: MMLU-Pro, GPQA Diamond, GSM8K, MATH-500, IFEval, HumanEval+, and MBPP+. These scores are not part of the Department of War bench composite.",
-    "warning": "Needs a local dataset directory from python -m standard_bench fetch. GPQA questions are not stored in this repo. SWE-bench is not included.",
+    "description": "Six public capability suites: MMLU-Pro, GSM8K, MATH-500, IFEval, HumanEval+, and MBPP+. These scores are not part of the Department of War bench composite.",
+    "warning": "Use the offline kit from python -m standard_bench bundle, or a local copy of those six suites. SWE-bench is not included.",
     "offline": true,
+    "subset": "full",
+    "protocol": "full",
     "mmlu_pro": {"max_new_tokens": 1024, "prompt_budget": 4096},
-    "gpqa_diamond": {"max_new_tokens": 1024, "prompt_budget": 4096},
     "gsm8k": {"max_new_tokens": 512, "prompt_budget": 2048},
     "math500": {"max_new_tokens": 1024, "prompt_budget": 2048},
     "ifeval": {"max_new_tokens": 1024, "prompt_budget": 2048},
     "humaneval_plus": {"max_new_tokens": 512, "prompt_budget": 2048},
     "mbpp_plus": {"max_new_tokens": 512, "prompt_budget": 2048}
+  },
+  "standard_capability_quick": {
+    "label": "Standard capability quick check",
+    "description": "The same six suites, 50 items each, chosen with a fixed seed so every site scores the same items. Reasoning models use a 512-token thinking cap. Non-reasoning models run the same 50 items.",
+    "warning": "Quick check, not a full run. The result record says quick-check. Override with --subset or --thinking-budget.",
+    "offline": true,
+    "subset": "quick50",
+    "seed": 20261011,
+    "thinking_budget": 512,
+    "protocol": "quick-check",
+    "mmlu_pro": {"max_new_tokens": 1024, "prompt_budget": 4096},
+    "gsm8k": {"max_new_tokens": 512, "prompt_budget": 2048},
+    "math500": {"max_new_tokens": 1024, "prompt_budget": 2048},
+    "ifeval": {"max_new_tokens": 1024, "prompt_budget": 2048},
+    "humaneval_plus": {"max_new_tokens": 512, "prompt_budget": 2048},
+    "mbpp_plus": {"max_new_tokens": 512, "prompt_budget": 2048}
+  },
+  "standard_capability_gpqa": {
+    "label": "GPQA Diamond (in-house)",
+    "description": "In-house only. Not part of the customer kit or the customer presets.",
+    "warning": "In-house add-on. The customer zip does not include this suite. A missing file is recorded as not run.",
+    "offline": true,
+    "in_house": true,
+    "gpqa_diamond": {"max_new_tokens": 1024, "prompt_budget": 4096}
   }
 }

@@ -8,6 +8,11 @@ below are planning assumptions, stated as such.
 from __future__ import annotations
 
 from standard_bench.catalog import SUITES
+from standard_bench.protocol import (
+    CUSTOMER_SHORT_LIMITS,
+    CUSTOMER_SUITES,
+    QUICK_THINKING_BUDGET,
+)
 
 # prompt tokens, typical generated answer tokens. Thinking models add the
 # 2048 thinking cap on top of the answer tokens. Prompt tokens are charged
@@ -49,46 +54,86 @@ THINKING_MODELS = {
     "nemotron-3-nano-4b",
 }
 
-SCREEN_LIMITS = {
-    "mmlu_pro": 200,
-    "gpqa_diamond": 198,
-    "gsm8k": 200,
-    "math500": 100,
-    "ifeval": 100,
-    "humaneval_plus": 164,
-    "mbpp_plus": 50,
-}
+# Customer short subset. GPQA is not in this map.
+SCREEN_LIMITS = dict(CUSTOMER_SHORT_LIMITS)
+
+# Display order for the customer run plan. GPQA is not included.
+PLAN_SUITES = CUSTOMER_SUITES
 
 
-def tokens_per_item(suite: str, *, thinking: bool) -> int:
+def tokens_per_item(suite: str, *, thinking: bool, thinking_tokens: int | None = None) -> int:
     budget = TOKEN_BUDGETS[suite]
-    generated = budget["answer"] + (THINKING_CAP if thinking else 0)
+    cap = 0
+    if thinking:
+        cap = THINKING_CAP if thinking_tokens is None else int(thinking_tokens)
+    generated = budget["answer"] + cap
     return budget["prompt"] + generated
 
 
-def suite_seconds(suite: str, tok_s: float, *, thinking: bool, limit: int | None = None) -> float:
+def suite_seconds(
+    suite: str,
+    tok_s: float,
+    *,
+    thinking: bool,
+    limit: int | None = None,
+    thinking_tokens: int | None = None,
+) -> float:
     count = SUITES[suite].full_size if limit is None else min(SUITES[suite].full_size, int(limit))
     budget = TOKEN_BUDGETS[suite]
-    generated = budget["answer"] + (THINKING_CAP if thinking else 0)
+    cap = 0
+    if thinking:
+        cap = THINKING_CAP if thinking_tokens is None else int(thinking_tokens)
+    generated = budget["answer"] + cap
     per_item = (budget["prompt"] / float(PREFILL_TOK_S)) + (generated / float(tok_s))
     return count * per_item
 
 
-def model_seconds(model_key: str, limits: dict[str, int] | None = None) -> dict:
+def model_seconds(
+    model_key: str,
+    limits: dict[str, int] | None = None,
+    *,
+    suites: tuple[str, ...] | None = None,
+    thinking_tokens: int | None = None,
+) -> dict:
+    """Hours for the customer suites. GPQA is omitted unless ``suites`` lists it.
+
+    ``thinking_tokens`` replaces the 2048 planning cap for thinking models.
+    Non-thinking models still generate answer tokens only.
+    """
     tok_s = THROUGHPUT[model_key]
     thinking = model_key in THINKING_MODELS
+    names = tuple(suites) if suites is not None else PLAN_SUITES
     per_suite = {}
     total = 0.0
-    for name in SUITES:
+    for name in names:
+        if limits is not None and name not in limits:
+            continue
         limit = None if limits is None else limits.get(name)
-        seconds = suite_seconds(name, tok_s, thinking=thinking, limit=limit)
+        seconds = suite_seconds(
+            name,
+            tok_s,
+            thinking=thinking,
+            limit=limit,
+            thinking_tokens=thinking_tokens,
+        )
         per_suite[name] = seconds
         total += seconds
+    applied = thinking_tokens if thinking and thinking_tokens is not None else (THINKING_CAP if thinking else 0)
     return {
         "model": model_key,
         "tok_s": tok_s,
         "thinking": thinking,
+        "thinking_tokens": applied,
         "per_suite_seconds": per_suite,
         "total_seconds": total,
         "total_hours": total / 3600.0,
     }
+
+
+def quick_limits(suites: tuple[str, ...] | None = None) -> dict[str, int]:
+    names = tuple(suites) if suites is not None else PLAN_SUITES
+    return {name: min(50, SUITES[name].full_size) for name in names}
+
+
+# Re-export so the run plan and tests share one cap.
+QUICK_THINKING_CAP = QUICK_THINKING_BUDGET

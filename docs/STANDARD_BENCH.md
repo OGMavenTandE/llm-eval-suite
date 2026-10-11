@@ -1,22 +1,31 @@
 # Standard capability benchmarks
 
-`standard_capability` is a native preset. It does not install lm-evaluation-harness, EvalPlus, or another eval framework. Prompting and scoring live in `standard_bench/`. A stage run is offline. The only network path is `python -m standard_bench fetch` on a connected machine.
+`standard_capability` is a native preset. It does not install lm-evaluation-harness, EvalPlus, or another eval framework. Prompting and scoring live in `standard_bench/`. A stage run is offline. It reads the six suites packed in the customer kit.
 
-Scores are deterministic. There is no LLM judge. Public items use `category` `public_benchmark` and `counts_toward_dow_score` false. `aieval_dow_bench_score` ignores these suites even if those flags are wrong. They do not enter the AIEval DoW Bench Score.
+`standard_capability_quick` scores the same six suites, 50 items each, with seed 20261011. Reasoning models use a 512-token thinking cap. Non-reasoning models run the same 50 items, and that cap does not bind. `--subset` and `--thinking-budget` override the preset. A quick run records `protocol` `quick-check`, the subset, the item counts, and the caps. It is not a full-suite result.
 
-Full sizes, with no `--limit`:
+Scores are deterministic. There is no LLM judge. Public items use `category` `public_benchmark` and `counts_toward_dow_score` false. `aieval_dow_bench_score` ignores these suites even if those flags are wrong. They do not enter the AIEval DoW Bench Score. GPQA Diamond is not in either customer preset. A customer run records it as not run.
+
+Full sizes, with no `--limit` and no subset:
 
 | Suite | Items |
 | --- | --- |
 | mmlu_pro | 12032 |
-| gpqa_diamond | 198 |
 | gsm8k | 1319 |
 | math500 | 500 |
 | ifeval | 541 |
 | humaneval_plus | 164 |
 | mbpp_plus | 378 |
 
-The total is 15132. `--limit N` keeps the first N of each suite after an optional `--seed` shuffle. `--limits mmlu_pro=200,gsm8k=200` sets per-suite caps. Over-budget prompts are not passes. Accuracy uses `n_scored`, the items that were generated.
+The total is 14934. The quick check is 300 items, 50 from each suite. `--limit N` keeps the first N of each suite after an optional `--seed` shuffle. `--limits mmlu_pro=200,gsm8k=200` sets per-suite caps. `--subset short` is the screen in the run plan. `--subset quick50` is the 50-item sample. Over-budget prompts are not passes. Accuracy uses `n_scored`, the items that were generated.
+
+Build the offline kit on a connected machine:
+
+```bash
+python -m standard_bench bundle --output dist/standard-capability-kit.zip
+```
+
+The command prints the zip size. A kit built from the pinned revisions on 11 October 2026 is 5.05 MB. The kit is the test kit code plus the six pinned suites, with a SHA-256 manifest. Model weights are not in the zip. On the closed network, unzip it and point `--data` at `datasets/standard`. The runner checks the hashes before it scores. Details are in [AIRGAP_INSTALL.md](AIRGAP_INSTALL.md) and [STANDARD_BENCH_RUN_PLAN.md](STANDARD_BENCH_RUN_PLAN.md).
 
 ## MMLU-Pro
 
@@ -28,7 +37,9 @@ Extraction follows the official order. `answer is \(?([A-J])\)?` wins. Then `.*[
 
 Deviation: a failed extraction is incorrect. The official local script draws a random letter. This runner does not. The official script also drops shots until the prompt fits 4096 tokens. This runner keeps 5 shots and records `prompt_over_budget` when the prompt exceeds the budget.
 
-## GPQA Diamond
+## GPQA Diamond, in-house only
+
+GPQA Diamond is not part of `standard_capability`, `standard_capability_quick`, or the customer zip. Staff steps are in [GPQA_INHOUSE.md](GPQA_INHOUSE.md), which is not part of the customer kit. If the files are absent, the run continues and the scorecard says GPQA was not run.
 
 Reference: Rein et al., arXiv:2311.12022. Diamond is the 198-row `gpqa_diamond.csv`. The prompt and the `Answer: $LETTER` line follow the OpenAI simple-evals multiple-choice template.
 

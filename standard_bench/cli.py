@@ -14,6 +14,7 @@ from standard_bench.catalog import SUITES
 from standard_bench.export import write_export
 from standard_bench.fetch import FetchError, fetch
 from standard_bench.manifest import HashMismatch, ManifestError
+from standard_bench.protocol import CUSTOMER_SUITES, KNOWN_SUBSETS
 from standard_bench.runner import parse_limits
 
 DEFAULT_PROMPT_BUDGET = 4096
@@ -75,6 +76,21 @@ def _apply_run_env(args: argparse.Namespace) -> None:
         os.environ.pop("LLM_EVAL_STANDARD_LIMITS", None)
     if args.seed is not None:
         os.environ["LLM_EVAL_STANDARD_SEED"] = str(args.seed)
+    else:
+        os.environ.pop("LLM_EVAL_STANDARD_SEED", None)
+    subset = getattr(args, "subset", "") or ""
+    if subset:
+        os.environ["LLM_EVAL_STANDARD_SUBSET"] = subset
+    else:
+        os.environ.pop("LLM_EVAL_STANDARD_SUBSET", None)
+    if getattr(args, "thinking_budget", None) is not None:
+        os.environ["LLM_EVAL_STANDARD_THINKING_BUDGET"] = str(args.thinking_budget)
+    else:
+        os.environ.pop("LLM_EVAL_STANDARD_THINKING_BUDGET", None)
+    if getattr(args, "include_gpqa", False):
+        os.environ["LLM_EVAL_INCLUDE_GPQA"] = "1"
+    else:
+        os.environ.pop("LLM_EVAL_INCLUDE_GPQA", None)
 
 
 def _run(args: argparse.Namespace) -> int:
@@ -104,7 +120,7 @@ def _run(args: argparse.Namespace) -> int:
     try:
         record = manager.start(
             connection=connection,
-            preset_id="standard_capability",
+            preset_id=getattr(args, "preset", None) or "standard_capability",
             dataset_path=_dataset_path(args.dataset, runs_dir),
             background=False,
         )
@@ -141,6 +157,46 @@ def _export(args: argparse.Namespace) -> int:
     return 0
 
 
+def _bundle(args: argparse.Namespace) -> int:
+    from standard_bench.bundle import BundleError, build_bundle
+
+    data = args.data
+    if not data:
+        from tempfile import TemporaryDirectory
+
+        try:
+            with TemporaryDirectory(prefix="standard-kit-") as temp:
+                fetch(temp, list(CUSTOMER_SUITES), allow_moved=bool(args.allow_moved))
+                info = build_bundle(args.output, temp)
+        except (FetchError, BundleError, ManifestError, HashMismatch) as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+    else:
+        try:
+            info = build_bundle(args.output, data)
+        except (BundleError, ManifestError, HashMismatch) as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+    size_mb = info["megabytes"]
+    print(f"{info['path']} {info['bytes']} bytes ({size_mb:.2f} MB)")
+    if info["over_budget"]:
+        print("Kit is not under 35 MB.", file=sys.stderr)
+        return 1
+    return 0
+
+
+def _verify_kit(args: argparse.Namespace) -> int:
+    from standard_bench.bundle import BundleError, verify_kit
+
+    try:
+        verify_kit(args.root)
+    except (BundleError, ManifestError, HashMismatch) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    print("kit ok")
+    return 0
+
+
 def _smoke(args: argparse.Namespace) -> int:
     args.fixtures = True
     args.stub = True
@@ -148,6 +204,10 @@ def _smoke(args: argparse.Namespace) -> int:
     args.limit = None
     args.limits = ""
     args.seed = None
+    args.preset = "standard_capability"
+    args.subset = ""
+    args.thinking_budget = None
+    args.include_gpqa = False
     if not args.output:
         args.output = str(Path(args.runs_dir) / "public_benchmarks.csv")
     return _run(args)
@@ -170,7 +230,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     fetched.set_defaults(func=_fetch)
 
-    live = sub.add_parser("run", help="Score the standard_capability preset")
+    live = sub.add_parser("run", help="Score a standard capability preset")
     live.add_argument("--data", default="")
     live.add_argument("--fixtures", action="store_true", help="Use the packaged synthetic fixtures")
     live.add_argument("--stub", action="store_true")
@@ -183,10 +243,28 @@ def build_parser() -> argparse.ArgumentParser:
     live.add_argument("--max-context", type=int, default=None)
     live.add_argument("--prompt-budget", type=int, default=DEFAULT_PROMPT_BUDGET)
     live.add_argument("--dataset", default="")
+    live.add_argument("--preset", default="standard_capability")
+    live.add_argument("--subset", default="", choices=["", *KNOWN_SUBSETS], help="full, short, or quick50")
+    live.add_argument("--thinking-budget", type=int, default=None, help="Thinking cap for reasoning models")
     live.add_argument("--limit", type=int, default=None, help="First N items of each suite")
     live.add_argument("--limits", default="", help="Per-suite caps, for example mmlu_pro=200,gsm8k=200")
-    live.add_argument("--seed", type=int, default=None, help="Shuffle before --limit")
+    live.add_argument("--seed", type=int, default=None, help="Shuffle before the limit. quick50 has a fixed seed.")
+    live.add_argument(
+        "--include-gpqa",
+        action="store_true",
+        help="In-house only. Not part of the customer kit.",
+    )
     live.set_defaults(func=_run)
+
+    bundled = sub.add_parser("bundle", help="Write one offline zip of the test kit and the six public suites")
+    bundled.add_argument("--output", required=True)
+    bundled.add_argument("--data", default="", help="Dataset directory from fetch. Omit to fetch the six suites first.")
+    bundled.add_argument("--allow-moved", action="store_true")
+    bundled.set_defaults(func=_bundle)
+
+    checked = sub.add_parser("verify-kit", help="Check the SHA-256 manifest in a kit zip or unpacked directory")
+    checked.add_argument("--root", required=True)
+    checked.set_defaults(func=_verify_kit)
 
     exported = sub.add_parser("export", help="Write public benchmark CSV and JSON from finished runs")
     exported.add_argument("--runs-dir", required=True)

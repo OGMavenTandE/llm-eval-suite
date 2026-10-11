@@ -29,6 +29,11 @@ CSV_COLUMNS = (
     "prompt_budget",
     "answer_cap",
     "thinking_budget",
+    "thinking_cap",
+    "preset",
+    "subset",
+    "protocol",
+    "gpqa_status",
     "counts_toward_dow_score",
 )
 
@@ -97,9 +102,17 @@ def rows_for_run(run_dir: Path) -> list[dict]:
     precision = record.get("precision") or connection.get("precision") or ""
     items = _read_items(run_dir / "items.jsonl")
     suite_metrics = {}
+    suite_rows = {}
     for suite_row in record.get("suites") or []:
         if suite_row.get("name") in SUITE_NAMES and isinstance(suite_row.get("metrics"), dict):
             suite_metrics[suite_row["name"]] = suite_row["metrics"]
+            suite_rows[suite_row["name"]] = suite_row
+    gpqa_scored = any(item.get("suite") == "gpqa_diamond" for item in items) or any(
+        row.get("status") == "completed" and int(row.get("done") or 0) > 0
+        for row in suite_rows.values()
+        if row.get("name") == "gpqa_diamond"
+    )
+    gpqa_status = "scored" if gpqa_scored else "not_run"
     rows = []
     for suite in SUITE_NAMES:
         suite_items = [item for item in items if item.get("suite") == suite]
@@ -122,7 +135,12 @@ def rows_for_run(run_dir: Path) -> list[dict]:
                     "limit": _blank(metrics.get("limit")),
                     "prompt_budget": _blank(metrics.get("prompt_budget") or record.get("prompt_budget")),
                     "answer_cap": _blank(metrics.get("answer_cap") or record.get("answer_cap")),
-                    "thinking_budget": _blank(metrics.get("thinking_budget") or record.get("thinking_budget")),
+                    "thinking_budget": _blank(metrics.get("thinking_budget") if metrics.get("thinking_budget") is not None else record.get("thinking_budget")),
+                    "thinking_cap": _blank(metrics.get("thinking_cap")),
+                    "preset": _blank(metrics.get("preset") or suite_rows.get(suite, {}).get("preset") or record.get("preset")),
+                    "subset": _blank(metrics.get("subset") or suite_rows.get(suite, {}).get("subset")),
+                    "protocol": _blank(metrics.get("protocol") or suite_rows.get(suite, {}).get("protocol")),
+                    "gpqa_status": gpqa_status,
                     "counts_toward_dow_score": "false",
                 }
             )

@@ -614,6 +614,15 @@ function renderReadout(run, card) {
     ["Preset", run.preset || "Custom"],
     ["Started", formatDate(run.created_at) || "Unknown"],
   ];
+  const pub = card.public_benchmarks || null;
+  if (pub) {
+    if (pub.protocol === "quick-check") meta.push(["Check", "Quick check, not a full run"]);
+    if (pub.protocol) meta.push(["Protocol", pub.protocol]);
+    if (pub.subset) meta.push(["Subset", pub.subset]);
+    if (pub.thinking_cap != null && pub.thinking_cap !== "") meta.push(["Thinking cap", String(pub.thinking_cap)]);
+    if (pub.gpqa_diamond === "not_run") meta.push(["GPQA", "Not run"]);
+    else if (pub.gpqa_diamond) meta.push(["GPQA", String(pub.gpqa_diamond)]);
+  }
   let scoreHtml;
   if (invalid) {
     scoreHtml = '<div class="readout-score"><span class="withheld">Score withheld</span></div>';

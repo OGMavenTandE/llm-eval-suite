@@ -16,7 +16,8 @@ from llm_eval.offline import activate_run_offline
 from standard_bench import COUNTS_TOWARD_DOW_SCORE, SUITE_VERSION
 from standard_bench.catalog import suite_spec
 from standard_bench.load import load_file, load_suite, select_rows
-from standard_bench.manifest import ManifestError
+from standard_bench.manifest import HashMismatch, ManifestError
+from standard_bench.protocol import GPQA_SUITE, QUICK_SEED, protocol_name, subset_limits
 from standard_bench.sandbox import RunLimits, describe_isolation
 from standard_bench.scorers.code import humaneval_prompt, mbpp_prompt, score_code_task
 from standard_bench.scorers.gpqa import build_prompt as gpqa_prompt
@@ -72,6 +73,14 @@ def resolve_dest(config: dict) -> Path:
     return Path(str(raw))
 
 
+def resolve_subset(config: dict) -> str:
+    """CLI ``--subset`` wins. Otherwise the preset's subset, or ``full``."""
+    env = (os.environ.get("LLM_EVAL_STANDARD_SUBSET") or "").strip()
+    name = env or str(config.get("subset") or "full").strip() or "full"
+    subset_limits(name)
+    return name
+
+
 def resolve_limit(config: dict, suite: str) -> int | None:
     raw_limits = config.get("limits")
     if isinstance(raw_limits, str):
@@ -87,16 +96,51 @@ def resolve_limit(config: dict, suite: str) -> int | None:
     env_limit = os.environ.get("LLM_EVAL_STANDARD_LIMIT")
     if env_limit:
         return int(env_limit)
+    named = subset_limits(resolve_subset(config))
+    if named and suite in named:
+        return int(named[suite])
     return None
 
 
 def resolve_seed(config: dict) -> int | None:
-    if config.get("seed") not in (None, ""):
-        return int(config["seed"])
+    """An explicit seed wins. quick50 uses the fixed seed when none was passed."""
     env_seed = os.environ.get("LLM_EVAL_STANDARD_SEED")
-    if env_seed:
+    if env_seed not in (None, ""):
         return int(env_seed)
+    if resolve_subset(config) == "quick50":
+        if config.get("seed") not in (None, ""):
+            return int(config["seed"])
+        return QUICK_SEED
     return None
+
+
+def resolve_thinking_budget(model_name: str | None, config: dict) -> tuple[int, int]:
+    """Return ``(applied, configured)``.
+
+    A non-thinking model applies 0. The configured cap is still recorded so a
+    quick check shows 512 even when that cap does not bind.
+    """
+    native = thinking_cap(model_name)
+    env = os.environ.get("LLM_EVAL_STANDARD_THINKING_BUDGET")
+    if env not in (None, ""):
+        configured = max(0, int(env))
+    elif config.get("thinking_budget") not in (None, ""):
+        configured = max(0, int(config["thinking_budget"]))
+    else:
+        configured = native
+    applied = configured if native > 0 else 0
+    return applied, configured
+
+
+def _protocol_fields(config: dict) -> dict:
+    subset = resolve_subset(config)
+    seed = resolve_seed(config)
+    return {
+        "preset": str(config.get("preset") or ""),
+        "subset": subset,
+        "protocol": protocol_name(subset),
+        "seed": seed,
+    }
 
 
 def _answer_cap(ctx, config: dict, suite: str) -> int:
@@ -225,20 +269,74 @@ def _aggregate(suite: str, items: list[dict]) -> dict:
     return metrics
 
 
+def _not_run(suite: str, config: dict, reason: str) -> dict:
+    fields = _protocol_fields(config)
+    metrics = {
+        "n_items": 0,
+        "n_scored": 0,
+        "status": "not_run",
+        "counts_toward_dow_score": False,
+        "full_size": suite_spec(suite).full_size,
+        **fields,
+    }
+    return {
+        "name": suite,
+        "source": "not_run",
+        "label": "Not run",
+        "notes": reason,
+        "items": [],
+        "done": 0,
+        "total": 0,
+        "not_run": True,
+        "status": "not_run",
+        "suite_version": SUITE_VERSION,
+        "metrics": metrics,
+        "counts_toward_dow_score": False,
+        "pass_rate": None,
+        **fields,
+    }
+
+
+def _load_suite_rows(dest, suite: str):
+    """Load rows. A missing GPQA add-on is not a failed run."""
+    try:
+        return load_suite(dest, suite), None
+    except ManifestError as exc:
+        if suite == GPQA_SUITE:
+            return (None, {}), str(exc)
+        raise
+    except HashMismatch as exc:
+        message = str(exc)
+        if suite == GPQA_SUITE and "file is missing" in message:
+            return (None, {}), message
+        raise
+
+
 def run_standard_suite(ctx, config: dict, suite: str) -> dict:
     activate_run_offline(preset={"offline": True})
     spec = suite_spec(suite)
     dest = resolve_dest(config)
-    rows, entry = load_suite(dest, suite)
+    from standard_bench.bundle import verify_kit_near
+
+    verify_kit_near(dest)
+    loaded, missing = _load_suite_rows(dest, suite)
+    if missing is not None:
+        return _not_run(
+            suite,
+            config,
+            "GPQA Diamond was not run. The customer kit does not include it.",
+        )
+    rows, entry = loaded
     validation = load_file(dest, suite, "validation.jsonl") if suite == "mmlu_pro" else []
     limit = resolve_limit(config, suite)
     seed = resolve_seed(config)
     rows = select_rows(rows, limit, seed)
     answer_cap = _answer_cap(ctx, config, suite)
     prompt_budget = _prompt_budget(ctx, config, suite)
-    think = thinking_cap(ctx.connection.get("model") or ctx.connection.get("name"))
-    if ctx.connection.get("thinking_max_tokens") in (None, ""):
-        ctx.connection["thinking_max_tokens"] = think
+    fields = _protocol_fields(config)
+    model_name = ctx.connection.get("model") or ctx.connection.get("name")
+    applied_think, configured_think = resolve_thinking_budget(model_name, config)
+    ctx.connection["thinking_max_tokens"] = applied_think
     _prepare_context(ctx, prompt_budget, answer_cap)
     code_limits = RunLimits(
         timeout_s=float(config.get("sandbox_timeout") or 5.0),
@@ -313,6 +411,15 @@ def run_standard_suite(ctx, config: dict, suite: str) -> dict:
             "instruction_strict": scored.get("instruction_strict"),
             "instruction_loose": scored.get("instruction_loose"),
             "sandbox_isolation": scored.get("isolation") or "",
+            "preset": fields["preset"],
+            "subset": fields["subset"],
+            "protocol": fields["protocol"],
+            "seed": fields["seed"],
+            "subset_limit": limit,
+            "answer_cap": answer_cap,
+            "prompt_budget": prompt_budget,
+            "thinking_budget": applied_think,
+            "thinking_cap": configured_think,
         }
         if redact:
             # The question must not survive in any string field.
@@ -331,14 +438,19 @@ def run_standard_suite(ctx, config: dict, suite: str) -> dict:
     metrics["limit"] = limit
     metrics["prompt_budget"] = prompt_budget
     metrics["answer_cap"] = answer_cap
-    metrics["thinking_budget"] = int(ctx.connection.get("thinking_max_tokens") or 0)
+    metrics["thinking_budget"] = applied_think
+    metrics["thinking_cap"] = configured_think
     metrics["dataset_revision"] = entry.get("revision") or ""
+    metrics.update(fields)
     if suite in {"humaneval_plus", "mbpp_plus"}:
         metrics["sandbox"] = describe_isolation()
     notes = (
         f"{LABELS[suite]} ({SUITE_VERSION}). "
         f"Full size {spec.full_size}. "
-        "This score is not part of the AIEval DoW Bench Score."
+        "This score is not part of the AIEval DoW Bench Score. "
+        f"Protocol {fields['protocol']}, subset {fields['subset']}, "
+        f"{len(items)} items, answer cap {answer_cap}, "
+        f"thinking budget {applied_think}, thinking cap {configured_think}."
     )
     if limit is not None:
         notes += f" Limit {limit}."
@@ -354,6 +466,7 @@ def run_standard_suite(ctx, config: dict, suite: str) -> dict:
         "metrics": metrics,
         "counts_toward_dow_score": False,
         "pass_rate": metrics.get("score"),
+        **fields,
     }
 
 
