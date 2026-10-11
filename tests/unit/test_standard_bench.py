@@ -47,6 +47,7 @@ from standard_bench.scorers.code import (
     HUMANEVAL_STOPS,
     MBPP_STOPS,
     assemble_program,
+    mbpp_prompt,
     prepare_plus_test,
     rewrite_evalplus_test,
     score_code_task,
@@ -724,6 +725,10 @@ def test_bundle_has_no_gpqa_and_loads_offline(tmp_path: Path, monkeypatch: pytes
         archive.extractall(unpacked)
     verify_kit(unpacked)
     target = unpacked / "datasets" / "standard" / "gsm8k" / "test.jsonl"
+    target.write_bytes(target.read_bytes().replace(b"\n", b"\r\n"))
+    data_manifest = unpacked / "datasets" / "standard" / "manifest.json"
+    data_manifest.write_bytes(data_manifest.read_bytes().replace(b"\n", b"\r\n"))
+    verify_kit(unpacked)
     target.write_bytes(target.read_bytes() + b" ")
     with pytest.raises(HashMismatch):
         verify_kit(unpacked)
@@ -1195,6 +1200,149 @@ def test_mbpp_737_custom_assertion_accepts_a_regex_match():
         suite="mbpp_plus",
     )
     assert always["plus_pass"] is False
+
+
+def test_dataset_hash_ignores_crlf_and_still_rejects_a_changed_row(tmp_path: Path):
+    copied = tmp_path / "data"
+    shutil.copytree(FIXTURES, copied)
+    target = copied / "gsm8k" / "test.jsonl"
+    original = target.read_bytes()
+    assert b"\r\n" not in original
+    target.write_bytes(original.replace(b"\n", b"\r\n"))
+    (copied / "manifest.json").write_bytes(
+        (copied / "manifest.json").read_bytes().replace(b"\n", b"\r\n")
+    )
+    verify_suite(copied, "gsm8k")
+    prepared = tmp_path / "prepared"
+    shutil.copytree(ROOT / "tests" / "evalplus_prepared", prepared)
+    for path in prepared.rglob("*"):
+        if path.suffix == ".jsonl" or path.name == "manifest.json":
+            path.write_bytes(path.read_bytes().replace(b"\n", b"\r\n"))
+    from standard_bench.load import load_suite
+
+    humaneval, _entry = load_suite(prepared, "humaneval_plus")
+    mbpp, _mbpp_entry = load_suite(prepared, "mbpp_plus")
+    assert len(humaneval) == 7
+    assert len(mbpp) == 9
+    target.write_bytes(target.read_bytes() + b" ")
+    with pytest.raises(HashMismatch, match="hash mismatch"):
+        verify_suite(copied, "gsm8k")
+
+
+def _buggy_mbpp_row(raw: dict) -> dict:
+    """Row shape from 71c77776: the entry point is the first def."""
+    import re
+
+    from standard_bench.fetch import wrap_module_as_check
+
+    code = str(raw.get("code") or "")
+    match = re.search(r"(?m)^def\s+([A-Za-z_][A-Za-z0-9_]*)\b[^\n]*", code)
+    helper = match.group(1) if match else ""
+    header = (match.group(0).rstrip() + "\n") if match else ""
+    tests = [str(item) for item in (raw.get("test_list") or [])]
+    base = "def check(candidate):\n    pass\n"
+    if helper:
+        base = (
+            "def check(candidate):\n"
+            + "\n".join("    " + item.replace(f"{helper}(", "candidate(") for item in tests)
+            + "\n"
+        )
+    plus_source = str(raw.get("test") or "")
+    plus = rewrite_evalplus_test(wrap_module_as_check(plus_source, helper)) if plus_source.strip() else ""
+    return {
+        "task_id": str(raw.get("task_id")),
+        "prompt": raw.get("prompt") or "",
+        "entry_point": helper,
+        "canonical_solution": code,
+        "function_header": header,
+        "test_imports": list(raw.get("test_imports") or []),
+        "test_list": tests,
+        "base_test": base,
+        "plus_test": plus,
+    }
+
+
+def test_mbpp_helper_first_tasks_score_the_function_the_tests_call():
+    """Tasks 630 and 6: a correct answer that does not use the helper name passes.
+
+    The prepared 630 row still stores ``adjac`` as the entry point. Scoring
+    derives ``get_coordinates`` from the asserts. Task 6 is the same shape,
+    rebuilt from the EvalPlus row.
+    """
+    raw_rows = json.loads((ROOT / "tests" / "mbpp_helper_rows.json").read_text(encoding="utf-8"))
+    raw = {str(row["task_id"]): row for row in raw_rows}
+    fresh_630 = normalize_mbpp([raw["630"]])[0]
+    fresh_6 = normalize_mbpp([raw["6"]])[0]
+    assert fresh_630["entry_point"] == "get_coordinates"
+    assert fresh_630["function_header"].startswith("def get_coordinates")
+    assert fresh_6["entry_point"] == "differ_At_One_Bit_Pos"
+    assert fresh_6["function_header"].startswith("def differ_At_One_Bit_Pos")
+
+    from standard_bench.load import load_suite
+
+    prepared, _entry = load_suite(ROOT / "tests" / "evalplus_prepared", "mbpp_plus")
+    stored_630 = next(row for row in prepared if str(row["task_id"]) == "630")
+    assert stored_630["entry_point"] == "adjac"
+    assert stored_630["function_header"].startswith("def adjac")
+    old_6 = _buggy_mbpp_row(raw["6"])
+    assert old_6["entry_point"] == "is_Power_Of_Two"
+
+    itertools_630 = (
+        "import itertools\n"
+        "def get_coordinates(test_tup):\n"
+        "    ranges = [range(n - 1, n + 2) for n in test_tup]\n"
+        "    return [list(item) for item in itertools.product(*ranges)]\n"
+    )
+    renamed_630 = (
+        "def neighbors(ele, sub=None):\n"
+        "    if sub is None:\n"
+        "        sub = []\n"
+        "    if not ele:\n"
+        "        yield sub\n"
+        "    else:\n"
+        "        yield from [\n"
+        "            idx\n"
+        "            for j in range(ele[0] - 1, ele[0] + 2)\n"
+        "            for idx in neighbors(ele[1:], sub + [j])\n"
+        "        ]\n"
+        "def get_coordinates(test_tup):\n"
+        "    return list(neighbors(test_tup))\n"
+    )
+    bare_630 = (
+        "    ranges = [range(n - 1, n + 2) for n in test_tup]\n"
+        "    return [list(item) for item in __import__('itertools').product(*ranges)]\n"
+    )
+    renamed_6 = (
+        "def power_of_two(x):\n"
+        "    return x > 0 and (x & (x - 1)) == 0\n"
+        "def differ_At_One_Bit_Pos(a, b):\n"
+        "    return power_of_two(a ^ b)\n"
+    )
+    absent_6 = (
+        "def differ_At_One_Bit_Pos(a, b):\n"
+        "    x = a ^ b\n"
+        "    return x > 0 and (x & (x - 1)) == 0\n"
+    )
+    for row, completion in (
+        (stored_630, itertools_630),
+        (stored_630, renamed_630),
+        (stored_630, bare_630),
+        (fresh_630, itertools_630),
+        (old_6, renamed_6),
+        (old_6, absent_6),
+        (fresh_6, absent_6),
+    ):
+        scored = score_code_task(row, completion, suite="mbpp_plus")
+        assert scored["plus_pass"] is True, (row["task_id"], scored["error"])
+        assert "IndentationError" not in scored["error"]
+
+    prompt = mbpp_prompt(stored_630)
+    assert "def get_coordinates" in prompt
+    assert "def adjac" not in prompt
+    assert "get_coordinates(" in prompt
+    prompt_6 = mbpp_prompt(old_6)
+    assert "def differ_At_One_Bit_Pos" in prompt_6
+    assert "def is_Power_Of_Two" not in prompt_6
 
 
 def test_prepared_evalplus_variants_match_reference():

@@ -20,7 +20,7 @@ from pathlib import Path
 from standard_bench.catalog import SUITES, SuiteSpec
 from standard_bench.load import jsonl_lines
 from standard_bench.manifest import file_record, write_manifest
-from standard_bench.scorers.code import rewrite_evalplus_test
+from standard_bench.scorers.code import mbpp_entry_point, mbpp_function_header, rewrite_evalplus_test
 
 _RETRY_STATUS = frozenset({429, 500, 502, 503, 504})
 _MAX_ATTEMPTS = 5
@@ -131,18 +131,6 @@ def _write_jsonl(path: Path, rows: list[dict]) -> None:
     path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
 
 
-def _entry_point(code: str) -> str:
-    match = re.search(r"^def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(", code or "", re.MULTILINE)
-    return match.group(1) if match else ""
-
-
-def _function_header(code: str) -> str:
-    match = re.search(r"^def\s+.+:\s*$", code or "", re.MULTILINE)
-    if not match:
-        return ""
-    return match.group(0) + "\n"
-
-
 def _test_imports(row: dict) -> list[str]:
     raw = row.get("test_imports") or []
     if isinstance(raw, str):
@@ -204,7 +192,7 @@ def normalize_mbpp(rows: list[dict]) -> list[dict]:
     for row in rows:
         code = str(row.get("code") or "")
         tests = [str(item) for item in (row.get("test_list") or [])]
-        entry = _entry_point(code)
+        entry = mbpp_entry_point(code, tests)
         base_test = "def check(candidate):\n    pass\n"
         if entry:
             base_test = (
@@ -224,7 +212,7 @@ def normalize_mbpp(rows: list[dict]) -> list[dict]:
                 "prompt": row.get("prompt") or "",
                 "entry_point": entry,
                 "canonical_solution": code,
-                "function_header": _function_header(code),
+                "function_header": mbpp_function_header(code, entry),
                 "test_imports": _test_imports(row),
                 "test_list": tests,
                 "base_test": base_test,

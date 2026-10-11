@@ -1,2 +1,4 @@
 standard_bench/fixtures/**/*.jsonl text eol=lf
 standard_bench/fixtures/manifest.json text eol=lf
+tests/evalplus_prepared/**/*.jsonl text eol=lf
+tests/evalplus_prepared/manifest.json text eol=lf

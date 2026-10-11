@@ -216,8 +216,10 @@ SUITES: dict[str, SuiteSpec] = {
             "Metric is pass@1 with greedy decoding."
         ),
         deviation=(
-            "The prompt is the EvalPlus chat task: the natural-language statement "
-            "plus the three base asserts. Stop strings are applied after generation. "
+            "The prompt is the EvalPlus chat task: the natural-language statement, "
+            "the three base asserts, and the header of the function those asserts "
+            "call. The entry point is that function, not an earlier helper. "
+            "Stop strings are applied after generation. "
             "The numpy assertion helper is rewritten to the same stdlib comparison "
             "used for HumanEval+. A custom assertion that does not call is_floats "
             "or allclose is kept, and assert exact_match is added when it is missing. "

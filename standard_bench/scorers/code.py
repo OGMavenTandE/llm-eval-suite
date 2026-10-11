@@ -169,21 +169,150 @@ def _drop_numpy_helpers(prefix: str) -> str:
     return "\n".join(kept).strip("\n")
 
 
-def prepare_plus_test(source: str) -> str:
+_DEF_LINE = re.compile(r"(?m)^(def\s+([A-Za-z_][A-Za-z0-9_]*)\b[^\n]*)")
+_ASSERT_CALL = re.compile(r"assert\s+(?:not\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*\(")
+_ASSERT_PAREN_CALL = re.compile(r"assert\s+\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(")
+
+
+def _def_names(code: str) -> list[str]:
+    return [match.group(2) for match in _DEF_LINE.finditer(code or "")]
+
+
+def mbpp_entry_point(code: str, tests: list | None = None) -> str:
+    """Name the base tests call. Fall back to the last def.
+
+    ``assert set(func(...))`` and ``assert math.isclose(func(...))`` do not
+    name ``func`` directly. A name is accepted only when that def exists, so
+    those wrappers fall through to the last def. The eight tasks whose first
+    def is a helper (6, 123, 301, 580, 592, 630, 751, 797) name the real
+    function in ``assert <name>(``.
+    """
+    names = _def_names(code)
+    defined = set(names)
+    for item in tests or []:
+        text = str(item)
+        match = _ASSERT_CALL.search(text) or _ASSERT_PAREN_CALL.search(text)
+        if match and match.group(1) in defined:
+            return match.group(1)
+    return names[-1] if names else ""
+
+
+def mbpp_function_header(code: str, entry: str) -> str:
+    """The ``def`` line of ``entry``, or the last def when that name is absent."""
+    chosen = ""
+    for match in _DEF_LINE.finditer(code or ""):
+        if entry and match.group(2) == entry:
+            chosen = match.group(1)
+            break
+    if not chosen:
+        matches = list(_DEF_LINE.finditer(code or ""))
+        if not matches:
+            return ""
+        chosen = matches[-1].group(1)
+    return chosen.rstrip() + "\n"
+
+
+def _assert_names(source: str) -> list[str]:
+    found = []
+    for pattern in (_ASSERT_CALL, _ASSERT_PAREN_CALL):
+        for match in pattern.finditer(source or ""):
+            name = match.group(1)
+            if name != "candidate":
+                found.append(f"assert {name}()")
+    return found
+
+
+def resolve_mbpp_entry(row: dict) -> str:
+    """Entry point for a fetched row, including one stored before this fix.
+
+    ``test_list`` is the base asserts. When it is missing, the base test's
+    ``assert <name>(`` calls are used, skipping ``candidate``. The last def
+    in the canonical solution is the fallback, then the stored entry point.
+    """
+    code = str(row.get("canonical_solution") or row.get("code") or "")
+    tests = row.get("test_list") or []
+    if not isinstance(tests, list):
+        tests = []
+    tests = [str(item) for item in tests]
+    if not tests:
+        tests = _assert_names(str(row.get("base_test") or ""))
+    entry = mbpp_entry_point(code, tests)
+    if entry:
+        return entry
+    return str(row.get("entry_point") or "")
+
+
+def resolve_mbpp_header(row: dict, entry: str) -> str:
+    """Header of the real entry point, not the first helper."""
+    code = str(row.get("canonical_solution") or row.get("code") or "")
+    if code:
+        header = mbpp_function_header(code, entry)
+        if header and (not entry or f"def {entry}" in header):
+            return header
+    stored = str(row.get("function_header") or "")
+    if entry and re.search(rf"def\s+{re.escape(entry)}\b", stored):
+        return stored if stored.endswith("\n") else stored + "\n"
+    return stored
+
+
+def _rename_entry_calls(text: str, entry: str) -> str:
+    """Rename ``entry(`` calls to ``candidate(``. Leave the ``def check(`` test in place.
+
+    MBPP+ task 56 defines a solution named ``check``. Replacing every ``check(``
+    would also rename the test function.
+    """
+    if not text or not entry or entry == "candidate":
+        return text
+    if entry == "check":
+        return re.sub(r"(?<!def )check\(", "candidate(", text)
+    return text.replace(f"{entry}(", "candidate(")
+
+
+def _correct_plus_entry(source: str, row: dict) -> str:
+    """Point an already-fetched plus test at the function the base tests call.
+
+    A kit fetched when the entry point was the first def renamed that helper
+    to a nested ``def candidate`` and left the real ``entry(`` calls in place.
+    Restoring the helper name, then renaming the real calls to ``candidate(``,
+    makes ``check(entry)`` run the solution. A nested ``def candidate`` is not
+    retargeted while it still exists, because that def is the helper and the
+    assertion would call it. A plus test that already calls ``candidate(`` is
+    left as written.
+    """
+    entry = resolve_mbpp_entry(row)
+    if not entry or entry == "candidate":
+        return source
+    text = source
+    stored = str(row.get("entry_point") or "")
+    nested = re.search(r"(?m)^[ \t]+def\s+candidate\s*\(", text)
+    if stored and stored not in {entry, "candidate"} and nested and f"{entry}(" in text:
+        text = text.replace("candidate(", f"{stored}(")
+    if f"{entry}(" in text and not re.search(r"(?m)^[ \t]+def\s+candidate\s*\(", text):
+        text = _rename_entry_calls(text, entry)
+    return text
+
+
+def prepare_plus_test(source: str, row: dict | None = None) -> str:
     """Install the current assertion helper before a plus test runs.
 
     Pinned rows already contain whatever helper fetch wrote, including a copy
     nested inside ``check``. Scoring strips a standard numeric copy and rewrites
     the helper so a kit fetched earlier uses the tolerant compare. A custom
-    assertion is kept.
+    assertion is kept. When ``row`` is an MBPP+ row, the entry point is derived
+    again from the base asserts so a kit fetched with the helper as the entry
+    point still tests the function those asserts call.
     """
     text = str(source or "")
     if "def check(" not in text:
-        return _drop_numpy_helpers(text) if text.strip() else text
-    try:
-        return rewrite_evalplus_test(text)
-    except ValueError:
-        return _drop_numpy_helpers(text)
+        rewritten = _drop_numpy_helpers(text) if text.strip() else text
+    else:
+        try:
+            rewritten = rewrite_evalplus_test(text)
+        except ValueError:
+            rewritten = _drop_numpy_helpers(text)
+    if row:
+        rewritten = _correct_plus_entry(rewritten, row)
+    return rewritten
 
 
 def rewrite_evalplus_test(source: str) -> str:
@@ -335,12 +464,22 @@ def humaneval_prompt(row: dict) -> str:
 
 
 def mbpp_prompt(row: dict) -> str:
+    """Statement, base asserts, and the header of the function those asserts call.
+
+    The header is resolved at prompt-build time. A row that stored the helper
+    as ``function_header`` still shows the function the tests call.
+    """
     tests = "\n".join(str(item) for item in (row.get("test_list") or []))
     statement = str(row.get("prompt") or "").strip()
-    return (
+    entry = resolve_mbpp_entry(row)
+    header = resolve_mbpp_header(row, entry).strip()
+    prompt = (
         "You are an expert Python programmer, and here is your task: "
         f"{statement} Your code should pass these tests:\n\n{tests}\n"
     )
+    if header:
+        prompt += "\n" + header + "\n"
+    return prompt
 
 
 def score_code_task(row: dict, completion: str, *, suite: str, limits: RunLimits | None = None) -> dict:
@@ -350,16 +489,29 @@ def score_code_task(row: dict, completion: str, *, suite: str, limits: RunLimits
     # HumanEval stores the function header as the prompt. MBPP stores prose,
     # and the function header is separate when the dataset has one.
     header = str(row.get("function_header") or "")
+    base_test = str(row.get("base_test") or "")
+    plus_row = None
     if suite == "mbpp_plus":
+        # Derive again so a kit fetched with the helper as the entry point
+        # scores the function the base asserts call, without a refetch.
+        entry = resolve_mbpp_entry(row) or entry
+        header = resolve_mbpp_header(row, entry) or header
+        base_test = _rename_entry_calls(base_test, entry)
+        plus_row = row
         program = assemble_program(header, completion, entry, stops)
     else:
         program = assemble_program(prompt, completion, entry, stops)
     imports = test_imports_block(row)
     if imports:
         program = imports + "\n" + program
-    base = run_tests(program, str(row.get("base_test") or ""), entry, limits)
+    base = run_tests(program, base_test, entry, limits)
     if base["ok"]:
-        plus = run_tests(program, prepare_plus_test(str(row.get("plus_test") or "")), entry, limits)
+        plus = run_tests(
+            program,
+            prepare_plus_test(str(row.get("plus_test") or ""), plus_row),
+            entry,
+            limits,
+        )
     else:
         plus = {"ok": False, "error": "base failed", "timed_out": False, "isolation": base.get("isolation", "")}
     base_pass = bool(base["ok"])

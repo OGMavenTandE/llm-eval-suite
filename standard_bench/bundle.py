@@ -10,7 +10,13 @@ import json
 import zipfile
 from pathlib import Path
 
-from standard_bench.manifest import HashMismatch, ManifestError, load_manifest, sha256_bytes, verify_suite
+from standard_bench.manifest import (
+    HashMismatch,
+    ManifestError,
+    load_manifest,
+    payload_sha256,
+    verify_suite,
+)
 from standard_bench.protocol import CUSTOMER_SUITES, GPQA_SUITE
 
 KIT_MANIFEST = "kit-manifest.json"
@@ -150,7 +156,7 @@ def _kit_manifest(entries: list[tuple[str, bytes]]) -> bytes:
         files.append(
             {
                 "path": relative.replace("\\", "/"),
-                "sha256": sha256_bytes(data),
+                "sha256": payload_sha256(data, relative),
                 "bytes": len(data),
             }
         )
@@ -237,7 +243,7 @@ def verify_kit(root: str | Path) -> dict:
         blob = members.get(relative)
         if blob is None:
             raise HashMismatch(f"Kit file is missing: {relative}.")
-        actual = sha256_bytes(blob)
+        actual = payload_sha256(blob, relative)
         if actual != expected:
             raise HashMismatch(
                 f"Kit hash mismatch for {relative}. manifest {expected} local {actual}."

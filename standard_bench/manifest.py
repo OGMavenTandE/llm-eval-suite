@@ -27,6 +27,29 @@ def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def text_hash_path(relative: str) -> bool:
+    """JSONL rows and manifest files. Their hashes ignore CR versus LF."""
+    name = relative.replace("\\", "/").rsplit("/", 1)[-1]
+    return name.endswith(".jsonl") or name == "manifest.json"
+
+
+def normalize_newlines(data: bytes) -> bytes:
+    """Turn CRLF and bare CR into LF. Other bytes stay, including U+2028."""
+    return data.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+
+
+def payload_sha256(data: bytes, relative: str = "") -> str:
+    """SHA-256 of a manifest payload.
+
+    Dataset text is hashed after newline normalization, so a Windows checkout
+    of the same rows matches a manifest written from LF files. A changed row
+    still mismatches. Other files are hashed as stored.
+    """
+    if text_hash_path(relative):
+        data = normalize_newlines(data)
+    return sha256_bytes(data)
+
+
 def manifest_path(dest: str | Path) -> Path:
     return Path(dest) / "manifest.json"
 
@@ -57,9 +80,10 @@ def write_manifest(dest: str | Path, payload: dict) -> Path:
 def file_record(dest: Path, relative: str) -> dict:
     path = dest / relative
     data = path.read_bytes()
+    portable = relative.replace("\\", "/")
     return {
-        "path": relative.replace("\\", "/"),
-        "sha256": sha256_bytes(data),
+        "path": portable,
+        "sha256": payload_sha256(data, portable),
         "bytes": len(data),
     }
 
@@ -86,7 +110,7 @@ def verify_suite(dest: str | Path, suite: str) -> dict:
                 f"{suite} file is missing: {path}. The run will not start. "
                 "Refetch the suite on a connected machine."
             )
-        actual = sha256_file(path)
+        actual = payload_sha256(path.read_bytes(), relative)
         if actual != expected:
             raise HashMismatch(
                 f"{suite} hash mismatch for {relative}. "
