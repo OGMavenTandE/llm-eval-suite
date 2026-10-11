@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 from dow_bench.items import count_items as count_dow_items
+from standard_bench.runner import planned_count as count_standard_items
 from llm_eval.garak.live import garak_is_installed, planned_garak_attempts
 from llm_eval.offline import demo_base_folder, demo_base_warning, offline_preset_note
 from llm_eval_suite.timing import DEFAULT_SECONDS_PER_PROMPT
@@ -33,6 +34,23 @@ SUITE_KEYS = (
     "dow_knowledge",
     "honest_broker",
     "lawful_order",
+    "mmlu_pro",
+    "gpqa_diamond",
+    "gsm8k",
+    "math500",
+    "ifeval",
+    "humaneval_plus",
+    "mbpp_plus",
+)
+
+STANDARD_SUITE_NAMES = (
+    "mmlu_pro",
+    "gpqa_diamond",
+    "gsm8k",
+    "math500",
+    "ifeval",
+    "humaneval_plus",
+    "mbpp_plus",
 )
 
 DEMO_MODEL_A_FOLDER = r"C:\AI Eval\LLMs\nanoGPT-master\nanoGPT-master\hf-dow-news"
@@ -152,6 +170,13 @@ def estimate_preset(
             continue
         dow_counts[dow_name] = count_dow_items(dow_name, dow_config)
     dow_prompts = sum(dow_counts.values())
+    standard_counts = {}
+    for standard_name in STANDARD_SUITE_NAMES:
+        standard_config = body.get(standard_name)
+        if not standard_config:
+            continue
+        standard_counts[standard_name] = count_standard_items(standard_name, standard_config)
+    standard_prompts = sum(standard_counts.values())
     consistency = body.get("consistency") or {}
     consistency_prompts = 0
     if consistency:
@@ -160,7 +185,14 @@ def estimate_preset(
         consistency_prompts = rows * int(consistency.get("num_runs") or 3)
     known = [
         count
-        for count in (garak_prompts, fact_prompts, robust_prompts, consistency_prompts, dow_prompts)
+        for count in (
+            garak_prompts,
+            fact_prompts,
+            robust_prompts,
+            consistency_prompts,
+            dow_prompts,
+            standard_prompts,
+        )
         if count is not None
     ]
     prompt_count = sum(known) if not unbounded else None
@@ -171,6 +203,7 @@ def estimate_preset(
             "robustness": robust_prompts,
             "consistency": consistency_prompts,
             **dow_counts,
+            **standard_counts,
         }
         used = []
         total_seconds = 0.0

@@ -12,6 +12,29 @@ CATEGORIES = (
 
 PASS_BAR = 0.8
 
+# Public capability suites. They never feed the AIEval DoW Bench Score.
+PUBLIC_BENCHMARK_SUITES = frozenset(
+    {
+        "mmlu_pro",
+        "gpqa_diamond",
+        "gsm8k",
+        "math500",
+        "ifeval",
+        "humaneval_plus",
+        "mbpp_plus",
+    }
+)
+
+
+def _dow_item(item: dict) -> bool:
+    if item.get("counts_toward_dow_score") is False:
+        return False
+    if item.get("suite") in PUBLIC_BENCHMARK_SUITES:
+        return False
+    if item.get("category") == "public_benchmark":
+        return False
+    return True
+
 
 def _category_rate(rows: list[dict]) -> float:
     """Fraction of attempts that passed.
@@ -54,11 +77,43 @@ def live_failures(items: list[dict]) -> list[dict]:
         if not item.get("passed")
         and item.get("source") == "live"
         and item.get("counts_toward_score", True)
+        and _dow_item(item)
     ]
 
 
+def aieval_dow_bench_score(items: list[dict]) -> dict:
+    """AIEval DoW Bench Score. The mean of the Department of War suite scores.
+
+    Public capability benchmarks are not an input. A public-benchmark row is
+    ignored even when its category or counts_toward_score flag would otherwise
+    look like a Department of War item.
+    """
+    from dow_bench import SUITE_NAMES
+    from dow_bench.scorer import aggregate_suite
+
+    parts = []
+    for name in SUITE_NAMES:
+        rows = [item for item in items if item.get("suite") == name and _dow_item(item)]
+        if not rows:
+            continue
+        summary = aggregate_suite(name, rows)
+        if summary.get("score") is not None:
+            parts.append(float(summary["score"]))
+    score = None if not parts else sum(parts) / len(parts)
+    return {
+        "name": "AIEval DoW Bench Score",
+        "score": score,
+        "n_suites": len(parts),
+        "public_benchmarks_included": False,
+    }
+
+
 def scorecard(items: list[dict]) -> dict:
-    scored = [item for item in items if item.get("counts_toward_score", True)]
+    scored = [
+        item
+        for item in items
+        if item.get("counts_toward_score", True) and _dow_item(item)
+    ]
     categories = []
     live_rates = []
     for key, label in CATEGORIES:

@@ -116,5 +116,18 @@
     "dow_knowledge": {"max_new_tokens": 1024, "judge": "Phi-4-mini-instruct", "judge_backup": "Granite 4.2 3B"},
     "honest_broker": {"max_new_tokens": 1024, "judge": "Phi-4-mini-instruct", "judge_backup": "Granite 4.2 3B"},
     "lawful_order": {"max_new_tokens": 1024, "judge": "Phi-4-mini-instruct", "judge_backup": "Granite 4.2 3B"}
+  },
+  "standard_capability": {
+    "label": "Standard capability",
+    "description": "Public capability suites: MMLU-Pro, GPQA Diamond, GSM8K, MATH-500, IFEval, HumanEval+, and MBPP+. These scores are not part of the Department of War bench composite.",
+    "warning": "Needs a local dataset directory from python -m standard_bench fetch. GPQA questions are not stored in this repo. SWE-bench is not included.",
+    "offline": true,
+    "mmlu_pro": {"max_new_tokens": 1024, "prompt_budget": 4096},
+    "gpqa_diamond": {"max_new_tokens": 1024, "prompt_budget": 4096},
+    "gsm8k": {"max_new_tokens": 512, "prompt_budget": 2048},
+    "math500": {"max_new_tokens": 1024, "prompt_budget": 2048},
+    "ifeval": {"max_new_tokens": 1024, "prompt_budget": 2048},
+    "humaneval_plus": {"max_new_tokens": 512, "prompt_budget": 2048},
+    "mbpp_plus": {"max_new_tokens": 512, "prompt_budget": 2048}
   }
 }

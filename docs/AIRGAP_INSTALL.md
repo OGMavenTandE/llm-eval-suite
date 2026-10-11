@@ -43,6 +43,28 @@ set HF_HUB_DISABLE_TELEMETRY=1
 
 The app serves its own fonts from `llm_eval_suite/static/fonts/`. It does not load a font CDN.
 
+## Public capability datasets
+
+`standard_capability` scores MMLU-Pro, GPQA Diamond, GSM8K, MATH-500, IFEval, HumanEval+, and MBPP+. A stage run reads only local files. It does not call Hugging Face, the datasets server, or any other host. SWE-bench is not part of this preset.
+
+On a connected machine, with the repo installed:
+
+```bash
+python -m standard_bench fetch --dest datasets/standard
+```
+
+GPQA is gated. Set `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN` in the environment for that fetch. The script sends the token as a bearer header and does not write it into the manifest or the dataset files. Unset the variable before you copy the directory. If the live Hub revision differs from the pin in `standard_bench/catalog.py`, fetch stops. `--allow-moved` is the only override, and it records the revision it actually downloaded.
+
+`fetch` writes JSONL plus `datasets/standard/manifest.json`. Each file has a SHA-256. Copy that directory to the closed network with the wheelhouse. Do not copy the token, `.venv`, or `runs/`.
+
+On the closed network, set the offline variables above, then:
+
+```bash
+python -m standard_bench run --data datasets/standard --model "OLMo 2 1B Instruct" --folder path\to\model --output runs\public.csv
+```
+
+The runner checks every hash before it scores. A mismatch stops the suite. Nothing is downloaded to repair it. Point `--data` at the copied directory, or set `LLM_EVAL_STANDARD_DATA`. Licenses and the non-republication rule for GPQA questions are in [LICENSES.md](LICENSES.md). The suite notes are in [STANDARD_BENCH.md](STANDARD_BENCH.md). The 4070 Super plan is in [STANDARD_BENCH_RUN_PLAN.md](STANDARD_BENCH_RUN_PLAN.md).
+
 ## Model folders
 
 Point every connection at a directory that already contains `config.json` and the weight files. A hub name such as `gpt2-medium` is refused while offline mode or the air-gap build is on.

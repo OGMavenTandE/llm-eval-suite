@@ -1,0 +1,2 @@
+{"question_id": 1, "question": "STUBKEY mmlu-a. What is 2 + 2?", "options": ["4", "5", "6", "7", "8", "9", "0", "1", "2", "3"], "answer": "A", "answer_index": 0, "cot_content": "", "category": "synthetic", "src": "fixture"}
+{"question_id": 2, "question": "What is 3 + 3?", "options": ["5", "6", "7", "8", "9", "0", "1", "2", "3", "4"], "answer": "B", "answer_index": 1, "cot_content": "", "category": "synthetic", "src": "fixture"}

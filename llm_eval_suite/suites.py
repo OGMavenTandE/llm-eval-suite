@@ -24,6 +24,9 @@ from llm_eval.rampart.smoke import run_smoke as rampart_smoke
 from llm_eval.models.context import strip_think_blocks
 from dow_bench.items import count_items as count_dow_items
 from dow_bench.runner import run_dow_suite
+from standard_bench import SUITE_NAMES as STANDARD_SUITE_NAMES
+from standard_bench.runner import planned_count as count_standard_items
+from standard_bench.runner import run_standard_suite
 from llm_eval_suite.matching import match_expected, normalize_answer_text
 from llm_eval_suite.presets import _probe_count
 
@@ -86,6 +89,8 @@ def planned_suite_total(name: str, config: dict, row_count: int) -> int | None:
         return 1
     if name in {"dow_knowledge", "honest_broker", "lawful_order"}:
         return count_dow_items(name, config)
+    if name in STANDARD_SUITE_NAMES:
+        return count_standard_items(name, config)
     return None
 
 
@@ -453,6 +458,14 @@ class LawfulOrderRunner:
         return run_dow_suite(ctx, config, self.name)
 
 
+class StandardSuiteRunner:
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def run(self, ctx: SuiteContext, config: dict) -> dict:
+        return run_standard_suite(ctx, config, self.name)
+
+
 class DioptraRunner:
     name = "dioptra"
 
@@ -533,6 +546,7 @@ RUNNERS: dict[str, SuiteRunner] = {
     "dow_knowledge": DowKnowledgeRunner(),
     "honest_broker": HonestBrokerRunner(),
     "lawful_order": LawfulOrderRunner(),
+    **{name: StandardSuiteRunner(name) for name in STANDARD_SUITE_NAMES},
 }
 
 

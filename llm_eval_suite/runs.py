@@ -130,6 +130,9 @@ SUITE_FIELDS = (
     "garak_runs_dir",
     "report_dir",
     "log_path",
+    "metrics",
+    "counts_toward_dow_score",
+    "suite_version",
 )
 
 
