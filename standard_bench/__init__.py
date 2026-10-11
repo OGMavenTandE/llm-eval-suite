@@ -5,6 +5,9 @@ These suites are not part of the AIEval Department of War bench score.
 
 SUITE_VERSION = "standard-1"
 
+# Bumped when the scorer changes. 2 is the tolerant float and complex compare.
+SCORER_VERSION = "2"
+
 SUITE_NAMES = (
     "mmlu_pro",
     "gpqa_diamond",

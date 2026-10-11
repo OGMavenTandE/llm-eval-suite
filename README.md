@@ -85,7 +85,7 @@ The Run screen can run the Quick preset on an editable local Hugging Face folder
 
 ## Standard capability
 
-Two offline presets score MMLU-Pro, GSM8K, MATH-500, IFEval, HumanEval+, and MBPP+. `standard_capability` is the full six suites, 14934 items. HumanEval/32 and MBPP+ task 255 are in that count and are not scored. `standard_capability_quick` is the same suites at 50 items each, chosen with seed 20261011, so every site scores the same items. Reasoning models on the quick preset use a 512-token thinking cap. Non-reasoning models run those same 50 items, and the cap does not bind. `--subset` and `--thinking-budget` override either preset.
+Two offline presets score MMLU-Pro, GSM8K, MATH-500, IFEval, HumanEval+, and MBPP+. `standard_capability` is the full six suites, 14934 items. HumanEval/32, MBPP+ task 255, and MBPP+ task 596 are in that count and are not scored. `standard_capability_quick` is the same suites at 50 items each, chosen with seed 20261011, so every site scores the same items. Reasoning models on the quick preset use a 512-token thinking cap. Non-reasoning models run those same 50 items, and the cap does not bind. `--subset` and `--thinking-budget` override either preset.
 
 Use the quick check to see whether a model is worth a full run. On the planning rates in [docs/STANDARD_BENCH_RUN_PLAN.md](docs/STANDARD_BENCH_RUN_PLAN.md), a 1B non-thinking model is about 0.30 hours for the quick check and about 23.39 hours for the full six suites. A reasoning model is about 1.85 hours for the quick check and about 287.81 hours for the full six suites at a 2048 thinking cap. Those hours assume 1500 prefill tok/s and are not measurements.
 

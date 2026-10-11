@@ -18,6 +18,11 @@ CODE_SUITES = ("humaneval_plus", "mbpp_plus")
 
 # task_id -> why the reference solution is not required to pass.
 # These still fail after the helper, import, and 20 s / 1 GB fixes.
+# Platform-dependent expected values are excluded on every OS.
+# The pinned HumanEval+ and MBPP+ rows were scanned for sys.getsizeof, id(,
+# hash(, and memory-address expectations. The only match is MBPP+ 596.
+# HumanEval/39 calls random inside its reference primality test. Its expected
+# values are fixed integers, so it stays scored.
 EXCLUSIONS: dict[str, dict[str, str]] = {
     "humaneval_plus": {
         "HumanEval/32": (
@@ -31,6 +36,12 @@ EXCLUSIONS: dict[str, dict[str, str]] = {
             "The plus test builds combinations_with_replacement for a length-77 sequence. "
             "The reference solution does the same and exceeds the 1 GB address space. "
             "The base tests pass."
+        ),
+        "596": (
+            "The plus results are frozen sys.getsizeof integers. "
+            "The same object is 88 bytes on Linux and 96 bytes on Windows. "
+            "The base tests call sys.getsizeof on both sides, so they match. "
+            "The row stays in the file and is not scored."
         ),
     },
 }

@@ -25,3 +25,7 @@ jobs:
         run: python -m playwright install --with-deps chromium
       - name: Pytest
         run: python -m pytest
+      - name: Verify reference fixtures
+        run: python -m standard_bench verify-reference --fixtures
+      - name: Verify reference prepared rows
+        run: python -m standard_bench verify-reference --data tests/evalplus_prepared

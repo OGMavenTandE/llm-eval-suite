@@ -229,6 +229,27 @@ def _verify_reference(args: argparse.Namespace) -> int:
     return 1
 
 
+def _rescore(args: argparse.Namespace) -> int:
+    from llm_eval.offline import activate_run_offline
+
+    from standard_bench.rescore import RescoreError, rescore_run_dir
+
+    activate_run_offline(preset={"offline": True})
+    if args.fixtures:
+        data = Path(__file__).resolve().parent / "fixtures"
+    else:
+        data = args.data or None
+    try:
+        result = rescore_run_dir(args.run_dir, data_dir=data, in_place=bool(args.in_place))
+    except (FileNotFoundError, RescoreError, HashMismatch, ManifestError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    print(result["run_dir"])
+    print(result["csv"])
+    print(f"scorer {result['scorer_version']} {result['scorer_commit']}")
+    return 0
+
+
 def _smoke(args: argparse.Namespace) -> int:
     args.fixtures = True
     args.stub = True
@@ -270,7 +291,7 @@ def build_parser() -> argparse.ArgumentParser:
     live.add_argument("--runs-dir", default="runs")
     live.add_argument("--model", default="OLMo 2 1B Instruct")
     live.add_argument("--folder", default="")
-    live.add_argument("--precision", default="fp16")
+    live.add_argument("--precision", default="bf16")
     live.add_argument("--max-new-tokens", type=int, default=None)
     live.add_argument("--max-context", type=int, default=None)
     live.add_argument("--prompt-budget", type=int, default=DEFAULT_PROMPT_BUDGET)
@@ -306,6 +327,20 @@ def build_parser() -> argparse.ArgumentParser:
     reference.add_argument("--fixtures", action="store_true", help="Use the packaged synthetic fixtures")
     reference.set_defaults(func=_verify_reference)
 
+    rescored = sub.add_parser(
+        "rescore",
+        help="Re-score saved responses with the current scorer. No model is loaded.",
+    )
+    rescored.add_argument("--run-dir", required=True)
+    rescored.add_argument("--data", default="", help="Dataset directory from fetch or an unpacked kit")
+    rescored.add_argument("--fixtures", action="store_true", help="Use the packaged synthetic fixtures")
+    rescored.add_argument(
+        "--in-place",
+        action="store_true",
+        help="Overwrite the run after writing items.jsonl.bak and run.json.bak. Default writes a new folder.",
+    )
+    rescored.set_defaults(func=_rescore)
+
     exported = sub.add_parser("export", help="Write public benchmark CSV and JSON from finished runs")
     exported.add_argument("--runs-dir", required=True)
     exported.add_argument("--output", required=True)
@@ -316,7 +351,7 @@ def build_parser() -> argparse.ArgumentParser:
     smoke.add_argument("--runs-dir", default="runs")
     smoke.add_argument("--model", default="OLMo 2 1B Instruct")
     smoke.add_argument("--folder", default="")
-    smoke.add_argument("--precision", default="fp16")
+    smoke.add_argument("--precision", default="bf16")
     smoke.add_argument("--max-new-tokens", type=int, default=None)
     smoke.add_argument("--max-context", type=int, default=None)
     smoke.add_argument("--prompt-budget", type=int, default=DEFAULT_PROMPT_BUDGET)

@@ -6,6 +6,9 @@ A plus pass requires the base tests and the plus tests.
 
 from __future__ import annotations
 
+import cmath
+import inspect
+import math
 import re
 
 from standard_bench.sandbox import RunLimits, run_code
@@ -13,37 +16,64 @@ from standard_bench.sandbox import RunLimits, run_code
 HUMANEVAL_STOPS = ("\nclass", "\ndef", "\n#", "\nif", "\nprint")
 MBPP_STOPS = ('\n"""', "\nassert", "\nclass", "\ndef")
 
-_STDLIB_HEADER = '''
-import math
+# EvalPlus uses atol 1e-6 and rtol 1e-7. The same pair applies to every
+# float and complex, including ones nested in tuples, lists, and dicts.
+FLOAT_ABS_TOL = 1e-6
+FLOAT_REL_TOL = 1e-7
 
-def is_floats(x):
-    if isinstance(x, float) and not isinstance(x, bool):
-        return True
-    if isinstance(x, (list, tuple)):
-        return all(isinstance(i, float) and not isinstance(i, bool) for i in x)
-    return False
 
-def _close(out, exp, rtol, atol):
-    if isinstance(out, (set, frozenset)) or isinstance(exp, (set, frozenset)):
+def values_close(out, exp, rel_tol, abs_tol):
+    """Recursive compare. Floats and complexes are close. Everything else is exact.
+
+    Bool is not a float. ``True`` compared with ``1.0000001`` stays exact, so a
+    tolerance cannot turn that pair into a pass. Integers stay exact, so a
+    platform-specific ``sys.getsizeof`` pair such as 88 and 96 does not pass.
+    A list does not match a tuple. Sets stay exact.
+    """
+    if isinstance(out, bool) or isinstance(exp, bool):
         return out == exp
-    if isinstance(out, (list, tuple)) and isinstance(exp, (list, tuple)):
+    if isinstance(out, complex) or isinstance(exp, complex):
+        if isinstance(out, (int, float, complex)) and isinstance(exp, (int, float, complex)):
+            return cmath.isclose(complex(out), complex(exp), rel_tol=rel_tol, abs_tol=abs_tol)
+        return False
+    if isinstance(out, float) or isinstance(exp, float):
+        if isinstance(out, (int, float)) and isinstance(exp, (int, float)):
+            return math.isclose(float(out), float(exp), rel_tol=rel_tol, abs_tol=abs_tol)
+        return False
+    if isinstance(out, dict) and isinstance(exp, dict):
+        if set(out) != set(exp):
+            return False
+        return all(values_close(out[key], exp[key], rel_tol, abs_tol) for key in out)
+    if isinstance(out, list) and isinstance(exp, list):
         if len(out) != len(exp):
             return False
-        return all(_close(a, b, rtol, atol) for a, b in zip(out, exp))
-    try:
-        return abs(float(out) - float(exp)) <= (atol + rtol * abs(float(exp)))
-    except (TypeError, ValueError):
-        return False
+        return all(values_close(left, right, rel_tol, abs_tol) for left, right in zip(out, exp))
+    if isinstance(out, tuple) and isinstance(exp, tuple):
+        if len(out) != len(exp):
+            return False
+        return all(values_close(left, right, rel_tol, abs_tol) for left, right in zip(out, exp))
+    return out == exp
 
-def assertion(out, exp, atol):
-    exact = out == exp
-    if atol == 0 and is_floats(exp):
-        atol = 1e-6
-    if not exact and atol != 0:
-        assert _close(out, exp, 1e-07, atol)
-    else:
-        assert exact
-'''
+
+def _assertion_header() -> str:
+    """Stdlib assertion injected into a plus test. The sandbox does not import this module."""
+    # One implementation. The child process gets this source, not the module object.
+    body = inspect.getsource(values_close)
+    return (
+        "import math\n"
+        "import cmath\n"
+        "\n"
+        f"{body}\n"
+        "def _close(out, exp, rtol, atol):\n"
+        "    return values_close(out, exp, rtol, atol)\n"
+        "\n"
+        "def assertion(out, exp, atol):\n"
+        f"    abs_tol = {FLOAT_ABS_TOL!r} if atol == 0 else float(atol)\n"
+        f"    assert values_close(out, exp, {FLOAT_REL_TOL!r}, abs_tol)\n"
+    )
+
+
+_STDLIB_HEADER = "\n" + _assertion_header()
 
 _SET_HEADER = _STDLIB_HEADER.replace(
     "def assertion(out, exp, atol):",
@@ -53,49 +83,259 @@ _SET_HEADER = _STDLIB_HEADER.replace(
 )
 
 
-def _drop_numpy_helpers(prefix: str) -> str:
-    """Drop the numpy import and the ``is_floats`` / ``assertion`` helpers.
+def _leading_indent(line: str) -> int:
+    return len(line[: len(line) - len(line.lstrip(" \t"))])
 
-    Other prefix code stays. HumanEval/14, 15, 32, 83, 100, 130, and 139
-    define ``ref_func`` or ``_poly`` before ``def check``, and the plus
-    tests call those names.
+
+def _take_function(lines: list[str], start: int) -> tuple[int, list[str]]:
+    """Return the index after ``lines[start]``'s function and the function lines."""
+    indent = _leading_indent(lines[start])
+    block = [lines[start]]
+    index = start + 1
+    while index < len(lines):
+        line = lines[index]
+        if not line.strip():
+            block.append(line)
+            index += 1
+            continue
+        if _leading_indent(line) <= indent:
+            break
+        block.append(line)
+        index += 1
+    while len(block) > 1 and not block[-1].strip():
+        block.pop()
+    return index, block
+
+
+def _is_standard_assertion(block: list[str]) -> bool:
+    """True for the EvalPlus numeric helper and for the helper this module injects.
+
+    Upstream numeric helpers call ``is_floats(exp)`` and ``allclose``. The
+    injected helper calls ``values_close``. MBPP+ 737, 787, and 794 do neither.
+    """
+    body = "\n".join(block)
+    if re.search(r"is_floats\s*\(\s*exp\s*\)", body):
+        return True
+    if "allclose" in body or "values_close" in body:
+        return True
+    return False
+
+
+def _keep_custom_assertion(block: list[str]) -> list[str]:
+    """Keep a non-numeric assertion. Append ``assert exact_match`` when it is missing.
+
+    MBPP+ 737, 787, and 794 set ``exact_match`` and never assert it. A regex
+    match object is success when the expected value is true, because the helper
+    uses ``exp == (out is not None)`` for a non-bool result. A helper that does
+    not set ``exact_match`` stays as written.
+    """
+    body = "\n".join(block)
+    if re.search(r"(?m)^[ \t]*assert exact_match\b", body):
+        return block
+    if not re.search(r"(?m)^[ \t]*exact_match\s*=", body):
+        return block
+    indent = _leading_indent(block[0]) + 4
+    return block + [(" " * indent) + "assert exact_match"]
+
+
+def _drop_numpy_helpers(prefix: str) -> str:
+    """Drop numpy imports and the standard numeric helpers at any indent.
+
+    Fetch indents an MBPP+ plus body into ``check``. A nested standard
+    ``assertion`` would shadow the tolerant one, so that helper is removed
+    before ``check`` and inside it. ``is_floats`` is removed with it.
+    A custom ``assertion`` stays, with ``assert exact_match`` added when the
+    body does not already assert it. Other helpers stay. HumanEval/14, 15, 32,
+    83, 100, 130, and 139 define ``ref_func`` or ``_poly`` before ``def check``,
+    and the plus tests call those names. MBPP+ 630 defines ``adjac``.
     """
     lines = (prefix or "").replace("\r\n", "\n").split("\n")
     kept: list[str] = []
-    skipping = False
-    skip_indent = 0
-    for line in lines:
-        if skipping:
-            if not line.strip():
-                continue
-            indent = len(line[: len(line) - len(line.lstrip(" \t"))])
-            if indent > skip_indent:
-                continue
-            skipping = False
+    index = 0
+    while index < len(lines):
+        line = lines[index]
         stripped = line.strip()
         if re.match(r"^(?:import|from)\s+numpy\b", stripped):
+            index += 1
             continue
-        if re.match(r"^def\s+(?:is_floats|assertion)\b", line):
-            skipping = True
-            skip_indent = len(line[: len(line) - len(line.lstrip(" \t"))])
+        match = re.match(r"^[ \t]*def\s+(is_floats|_close|values_close|assertion)\b", line)
+        if match:
+            index, block = _take_function(lines, index)
+            if match.group(1) == "assertion" and not _is_standard_assertion(block):
+                kept.extend(_keep_custom_assertion(block))
             continue
         kept.append(line)
+        index += 1
     return "\n".join(kept).strip("\n")
 
 
+_DEF_LINE = re.compile(r"(?m)^(def\s+([A-Za-z_][A-Za-z0-9_]*)\b[^\n]*)")
+_ASSERT_CALL = re.compile(r"assert\s+(?:not\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*\(")
+_ASSERT_PAREN_CALL = re.compile(r"assert\s+\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(")
+
+
+def _def_names(code: str) -> list[str]:
+    return [match.group(2) for match in _DEF_LINE.finditer(code or "")]
+
+
+def mbpp_entry_point(code: str, tests: list | None = None) -> str:
+    """Name the base tests call. Fall back to the last def.
+
+    ``assert set(func(...))`` and ``assert math.isclose(func(...))`` do not
+    name ``func`` directly. A name is accepted only when that def exists, so
+    those wrappers fall through to the last def. The eight tasks whose first
+    def is a helper (6, 123, 301, 580, 592, 630, 751, 797) name the real
+    function in ``assert <name>(``.
+    """
+    names = _def_names(code)
+    defined = set(names)
+    for item in tests or []:
+        text = str(item)
+        match = _ASSERT_CALL.search(text) or _ASSERT_PAREN_CALL.search(text)
+        if match and match.group(1) in defined:
+            return match.group(1)
+    return names[-1] if names else ""
+
+
+def mbpp_function_header(code: str, entry: str) -> str:
+    """The ``def`` line of ``entry``, or the last def when that name is absent."""
+    chosen = ""
+    for match in _DEF_LINE.finditer(code or ""):
+        if entry and match.group(2) == entry:
+            chosen = match.group(1)
+            break
+    if not chosen:
+        matches = list(_DEF_LINE.finditer(code or ""))
+        if not matches:
+            return ""
+        chosen = matches[-1].group(1)
+    return chosen.rstrip() + "\n"
+
+
+def _assert_names(source: str) -> list[str]:
+    found = []
+    for pattern in (_ASSERT_CALL, _ASSERT_PAREN_CALL):
+        for match in pattern.finditer(source or ""):
+            name = match.group(1)
+            if name != "candidate":
+                found.append(f"assert {name}()")
+    return found
+
+
+def resolve_mbpp_entry(row: dict) -> str:
+    """Entry point for a fetched row, including one stored before this fix.
+
+    ``test_list`` is the base asserts. When it is missing, the base test's
+    ``assert <name>(`` calls are used, skipping ``candidate``. The last def
+    in the canonical solution is the fallback, then the stored entry point.
+    """
+    code = str(row.get("canonical_solution") or row.get("code") or "")
+    tests = row.get("test_list") or []
+    if not isinstance(tests, list):
+        tests = []
+    tests = [str(item) for item in tests]
+    if not tests:
+        tests = _assert_names(str(row.get("base_test") or ""))
+    entry = mbpp_entry_point(code, tests)
+    if entry:
+        return entry
+    return str(row.get("entry_point") or "")
+
+
+def resolve_mbpp_header(row: dict, entry: str) -> str:
+    """Header of the real entry point, not the first helper."""
+    code = str(row.get("canonical_solution") or row.get("code") or "")
+    if code:
+        header = mbpp_function_header(code, entry)
+        if header and (not entry or f"def {entry}" in header):
+            return header
+    stored = str(row.get("function_header") or "")
+    if entry and re.search(rf"def\s+{re.escape(entry)}\b", stored):
+        return stored if stored.endswith("\n") else stored + "\n"
+    return stored
+
+
+def _rename_entry_calls(text: str, entry: str) -> str:
+    """Rename ``entry(`` calls to ``candidate(``. Leave the ``def check(`` test in place.
+
+    MBPP+ task 56 defines a solution named ``check``. Replacing every ``check(``
+    would also rename the test function.
+    """
+    if not text or not entry or entry == "candidate":
+        return text
+    if entry == "check":
+        return re.sub(r"(?<!def )check\(", "candidate(", text)
+    return text.replace(f"{entry}(", "candidate(")
+
+
+def _correct_plus_entry(source: str, row: dict) -> str:
+    """Point an already-fetched plus test at the function the base tests call.
+
+    A kit fetched when the entry point was the first def renamed that helper
+    to a nested ``def candidate`` and left the real ``entry(`` calls in place.
+    Restoring the helper name, then renaming the real calls to ``candidate(``,
+    makes ``check(entry)`` run the solution. A nested ``def candidate`` is not
+    retargeted while it still exists, because that def is the helper and the
+    assertion would call it. A plus test that already calls ``candidate(`` is
+    left as written.
+    """
+    entry = resolve_mbpp_entry(row)
+    if not entry or entry == "candidate":
+        return source
+    text = source
+    stored = str(row.get("entry_point") or "")
+    nested = re.search(r"(?m)^[ \t]+def\s+candidate\s*\(", text)
+    if stored and stored not in {entry, "candidate"} and nested and f"{entry}(" in text:
+        text = text.replace("candidate(", f"{stored}(")
+    if f"{entry}(" in text and not re.search(r"(?m)^[ \t]+def\s+candidate\s*\(", text):
+        text = _rename_entry_calls(text, entry)
+    return text
+
+
+def prepare_plus_test(source: str, row: dict | None = None) -> str:
+    """Install the current assertion helper before a plus test runs.
+
+    Pinned rows already contain whatever helper fetch wrote, including a copy
+    nested inside ``check``. Scoring strips a standard numeric copy and rewrites
+    the helper so a kit fetched earlier uses the tolerant compare. A custom
+    assertion is kept. When ``row`` is an MBPP+ row, the entry point is derived
+    again from the base asserts so a kit fetched with the helper as the entry
+    point still tests the function those asserts call.
+    """
+    text = str(source or "")
+    if "def check(" not in text:
+        rewritten = _drop_numpy_helpers(text) if text.strip() else text
+    else:
+        try:
+            rewritten = rewrite_evalplus_test(text)
+        except ValueError:
+            rewritten = _drop_numpy_helpers(text)
+    if row:
+        rewritten = _correct_plus_entry(rewritten, row)
+    return rewritten
+
+
 def rewrite_evalplus_test(source: str) -> str:
-    """Replace the numpy assertion helper. Inputs, expected values, and other helpers stay."""
+    """Replace the numpy assertion helper. Inputs, expected values, and other helpers stay.
+
+    ``is_floats`` and a standard ``assertion`` are removed before ``check`` and
+    inside it. A custom ``assertion`` stays. If it sets ``exact_match`` and
+    does not assert it, ``assert exact_match`` is appended.
+    """
     text = source or ""
     marker = "def check("
     index = text.find(marker)
     if index < 0:
         raise ValueError("EvalPlus test has no def check.")
-    header = _SET_HEADER if "out = set(out)" in text[:index] else _STDLIB_HEADER
-    kept = _drop_numpy_helpers(text[:index])
+    # The set marker sits in the assertion helper. After fetch that helper is
+    # inside check, so the search covers the whole test.
+    header = _SET_HEADER if "out = set(out)" in text else _STDLIB_HEADER
+    prefix = _drop_numpy_helpers(text[:index])
+    body = _drop_numpy_helpers(text[index:])
     rewritten = header.strip() + "\n\n"
-    if kept:
-        rewritten += kept + "\n\n"
-    rewritten += text[index:].strip() + "\n"
+    if prefix:
+        rewritten += prefix + "\n\n"
+    rewritten += body.strip() + "\n"
     rewritten = re.sub(r"(?m)^[ \t]*import numpy(?:\s+as\s+\w+)?\s*$", "", rewritten)
     rewritten = re.sub(r"(?m)^[ \t]*from numpy\s+import\s+.+$", "", rewritten)
     rewritten = rewritten.replace("np.allclose", "_close")
@@ -224,12 +464,22 @@ def humaneval_prompt(row: dict) -> str:
 
 
 def mbpp_prompt(row: dict) -> str:
+    """Statement, base asserts, and the header of the function those asserts call.
+
+    The header is resolved at prompt-build time. A row that stored the helper
+    as ``function_header`` still shows the function the tests call.
+    """
     tests = "\n".join(str(item) for item in (row.get("test_list") or []))
     statement = str(row.get("prompt") or "").strip()
-    return (
+    entry = resolve_mbpp_entry(row)
+    header = resolve_mbpp_header(row, entry).strip()
+    prompt = (
         "You are an expert Python programmer, and here is your task: "
         f"{statement} Your code should pass these tests:\n\n{tests}\n"
     )
+    if header:
+        prompt += "\n" + header + "\n"
+    return prompt
 
 
 def score_code_task(row: dict, completion: str, *, suite: str, limits: RunLimits | None = None) -> dict:
@@ -239,16 +489,29 @@ def score_code_task(row: dict, completion: str, *, suite: str, limits: RunLimits
     # HumanEval stores the function header as the prompt. MBPP stores prose,
     # and the function header is separate when the dataset has one.
     header = str(row.get("function_header") or "")
+    base_test = str(row.get("base_test") or "")
+    plus_row = None
     if suite == "mbpp_plus":
+        # Derive again so a kit fetched with the helper as the entry point
+        # scores the function the base asserts call, without a refetch.
+        entry = resolve_mbpp_entry(row) or entry
+        header = resolve_mbpp_header(row, entry) or header
+        base_test = _rename_entry_calls(base_test, entry)
+        plus_row = row
         program = assemble_program(header, completion, entry, stops)
     else:
         program = assemble_program(prompt, completion, entry, stops)
     imports = test_imports_block(row)
     if imports:
         program = imports + "\n" + program
-    base = run_tests(program, str(row.get("base_test") or ""), entry, limits)
+    base = run_tests(program, base_test, entry, limits)
     if base["ok"]:
-        plus = run_tests(program, str(row.get("plus_test") or ""), entry, limits)
+        plus = run_tests(
+            program,
+            prepare_plus_test(str(row.get("plus_test") or ""), plus_row),
+            entry,
+            limits,
+        )
     else:
         plus = {"ok": False, "error": "base failed", "timed_out": False, "isolation": base.get("isolation", "")}
     base_pass = bool(base["ok"])
