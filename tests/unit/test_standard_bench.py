@@ -47,6 +47,7 @@ from standard_bench.scorers.code import (
     HUMANEVAL_STOPS,
     MBPP_STOPS,
     assemble_program,
+    prepare_plus_test,
     rewrite_evalplus_test,
     score_code_task,
     values_close,
@@ -863,7 +864,7 @@ def test_verify_reference_on_fixture_rows():
     report = verify_reference(FIXTURES, workers=1)
     assert report["ok"] is True
     assert report["suites"]["humaneval_plus"]["passed"] == 1
-    assert report["suites"]["mbpp_plus"]["passed"] == 1
+    assert report["suites"]["mbpp_plus"]["passed"] == 2
     assert report["suites"]["humaneval_plus"]["failures"] == []
     with pytest.raises(SystemExit) as caught:
         main(["verify-reference", "--fixtures"])
@@ -1019,6 +1020,125 @@ def test_plus_assertion_uses_the_tolerant_compare():
     assert "cmath" in rewritten
     assert "np.allclose" not in rewritten
     assert "out = set(out)" not in rewritten
+    assert rewrite_evalplus_test(rewritten).count("def assertion(") == 1
+
+
+def test_rewrite_strips_helpers_nested_inside_check():
+    nested = (
+        "def check(candidate):\n"
+        "    import numpy as np\n"
+        "    def is_floats(x):\n"
+        "        return isinstance(x, np.ndarray)\n"
+        "    def assertion(out, exp, atol):\n"
+        "        assert out == exp\n"
+        "    assertion(candidate(), 1, 0)\n"
+    )
+    fetched = "def assertion(out, exp, atol):\n    assert out == exp\n\n" + nested
+    assert fetched.count("def assertion(") == 2
+    rewritten = rewrite_evalplus_test(fetched)
+    prepared = prepare_plus_test(fetched)
+    for text in (rewritten, prepared):
+        assert text.count("def assertion(") == 1
+        assert "def is_floats" not in text
+        assert "import numpy" not in text
+        assert "np.ndarray" not in text
+        assert "out = set(out)" not in text
+        assert "assertion(candidate(), 1, 0)" in text
+    assert prepare_plus_test(prepared).count("def assertion(") == 1
+    inside = (
+        "def check(candidate):\n"
+        "    def assertion(out, exp, atol):\n"
+        "        out = set(out)\n"
+        "        exp = set(exp)\n"
+        "        assert out == exp\n"
+        "    assertion(candidate(), {1, 2}, 0)\n"
+    )
+    set_rewritten = rewrite_evalplus_test(inside)
+    assert set_rewritten.count("def assertion(") == 1
+    assert set_rewritten.count("out = set(out)") == 1
+    assert set_rewritten.index("out = set(out)") < set_rewritten.index("def check(")
+    row = {
+        "task_id": "set",
+        "entry_point": "letters",
+        "function_header": "def letters():\n",
+        "base_test": "def check(candidate):\n    assert callable(candidate)\n",
+        "plus_test": inside,
+        "test_imports": [],
+    }
+    passed = score_code_task(row, "def letters():\n    return [2, 1, 1]\n", suite="mbpp_plus")
+    assert passed["plus_pass"] is True
+    missed = score_code_task(row, "def letters():\n    return [1, 3]\n", suite="mbpp_plus")
+    assert missed["plus_pass"] is False
+
+
+def test_mbpp_590_real_plus_test_accepts_one_ulp_and_rejects_wrong_shapes():
+    from standard_bench.load import load_suite
+
+    rows, _entry = load_suite(FIXTURES, "mbpp_plus")
+    row = next(item for item in rows if str(item["task_id"]) == "590")
+    plus = str(row["plus_test"])
+    assert plus.count("def assertion(") == 2
+    assert plus.count("def is_floats") == 1
+    prepared = prepare_plus_test(plus)
+    assert prepared.count("def assertion(") == 1
+    assert "def is_floats" not in prepared
+    assert "import numpy" not in prepared
+    assert "np.allclose" not in prepared
+    assert "from math import inf" in prepared
+    assert prepare_plus_test(prepared).count("def assertion(") == 1
+    canonical = score_code_task(row, str(row["canonical_solution"]), suite="mbpp_plus")
+    assert canonical["base_pass"] is True
+    assert canonical["plus_pass"] is True
+    variant = dict(row)
+    variant["base_test"] = "def check(candidate):\n    assert callable(candidate)\n"
+
+    def run(source: str) -> dict:
+        return score_code_task(variant, source, suite="mbpp_plus")
+
+    ulp = run(
+        "import cmath\n"
+        "import math\n"
+        "def polar_rect(x, y):\n"
+        "    cn = cmath.polar(complex(x, y))\n"
+        "    cn1 = cmath.rect(2, cmath.pi)\n"
+        "    mag = math.nextafter(cn[0], math.inf)\n"
+        "    phase = math.nextafter(cn[1], math.inf)\n"
+        "    real = math.nextafter(cn1.real, math.inf)\n"
+        "    imag = math.nextafter(cn1.imag, math.inf)\n"
+        "    return ((mag, phase), complex(real, imag))\n"
+    )
+    residual = run(
+        "import cmath\n"
+        "def polar_rect(x, y):\n"
+        "    cn = cmath.polar(complex(x, y))\n"
+        "    return (cn, -2+0j)\n"
+    )
+    off = run(
+        "import cmath\n"
+        "def polar_rect(x, y):\n"
+        "    cn = cmath.polar(complex(x, y))\n"
+        "    cn1 = cmath.rect(2, cmath.pi)\n"
+        "    return ((cn[0] * 1.01, cn[1]), cn1)\n"
+    )
+    as_list = run(
+        "import cmath\n"
+        "def polar_rect(x, y):\n"
+        "    cn = cmath.polar(complex(x, y))\n"
+        "    cn1 = cmath.rect(2, cmath.pi)\n"
+        "    return [cn, cn1]\n"
+    )
+    nan = run(
+        "import cmath\n"
+        "def polar_rect(x, y):\n"
+        "    cn = cmath.polar(complex(x, y))\n"
+        "    cn1 = cmath.rect(2, cmath.pi)\n"
+        "    return ((float('nan'), cn[1]), cn1)\n"
+    )
+    assert ulp["plus_pass"] is True
+    assert residual["plus_pass"] is True
+    assert off["plus_pass"] is False
+    assert as_list["plus_pass"] is False
+    assert nan["plus_pass"] is False
 
 
 def test_rescore_rewrites_saved_responses_without_a_model(tmp_path: Path):
@@ -1112,20 +1232,26 @@ def test_rescore_rewrites_saved_responses_without_a_model(tmp_path: Path):
         ),
         encoding="utf-8",
     )
+    original_items = (run / "items.jsonl").read_text(encoding="utf-8")
+    original_run = (run / "run.json").read_text(encoding="utf-8")
     loaded = set(sys.modules)
     with pytest.raises(SystemExit) as caught:
         main(["rescore", "--run-dir", str(run), "--fixtures"])
     assert caught.value.code == 0
     added = set(sys.modules) - loaded
     assert not any(name == "torch" or name.startswith("torch.") or name.startswith("transformers") for name in added)
-    saved = [json.loads(line) for line in (run / "items.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert (run / "items.jsonl").read_text(encoding="utf-8") == original_items
+    assert (run / "run.json").read_text(encoding="utf-8") == original_run
+    assert not (run / "items.jsonl.bak").exists()
+    dest = tmp_path / "run-rescored"
+    saved = [json.loads(line) for line in (dest / "items.jsonl").read_text(encoding="utf-8").splitlines()]
     by_id = {item["id"]: item for item in saved}
     assert by_id[_row_id("gsm8k", 0, gsm_rows[0])]["passed"] is True
     assert by_id[_row_id("ifeval", 0, ife_rows[0])]["prompt_strict"] is True
     assert by_id[_row_id("mbpp_plus", 0, mbpp_rows[0])]["plus_pass"] is True
     assert by_id["mbpp_plus:596"]["reference_excluded"] is True
     assert by_id["mbpp_plus:596"]["score"] is None
-    record = json.loads((run / "run.json").read_text(encoding="utf-8"))
+    record = json.loads((dest / "run.json").read_text(encoding="utf-8"))
     commit = scorer_commit()
     assert record["scorer_version"] == SCORER_VERSION
     assert record["scorer_commit"] == commit
@@ -1136,11 +1262,65 @@ def test_rescore_rewrites_saved_responses_without_a_model(tmp_path: Path):
     mbpp = next(row for row in record["suites"] if row["name"] == "mbpp_plus")
     assert mbpp["metrics"]["pass_at_1_plus"] == 1.0
     assert mbpp["metrics"]["n_scored"] == 1
-    csv_text = (run / "public_benchmarks.csv").read_text(encoding="utf-8")
+    csv_text = (dest / "public_benchmarks.csv").read_text(encoding="utf-8")
     assert "scorer_version" in csv_text.splitlines()[0]
     assert "scorer_commit" in csv_text.splitlines()[0]
     assert SCORER_VERSION in csv_text
     assert commit in csv_text
-    payload = json.loads((run / "public_benchmarks.json").read_text(encoding="utf-8"))
+    payload = json.loads((dest / "public_benchmarks.json").read_text(encoding="utf-8"))
     assert payload["scorer_version"] == SCORER_VERSION
     assert payload["scorer_commit"] == commit
+    assert commit
+
+
+def test_rescore_in_place_writes_backups(tmp_path: Path):
+    from standard_bench.rescore import rescore_run_dir
+
+    run = tmp_path / "run"
+    run.mkdir()
+    (run / "items.jsonl").write_text(
+        json.dumps(
+            {
+                "id": "gsm8k:0",
+                "suite": "gsm8k",
+                "raw_response": "The answer is 4",
+                "response": "The answer is 4",
+                "passed": False,
+                "score": 0.0,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (run / "run.json").write_text(
+        json.dumps({"run_id": "keep-me", "connection": {"model": "stub"}, "suites": []}) + "\n",
+        encoding="utf-8",
+    )
+    taken = tmp_path / "run-rescored"
+    taken.mkdir()
+    result = rescore_run_dir(run, data_dir=FIXTURES)
+    assert Path(result["run_dir"]) == tmp_path / "run-rescored-2"
+    assert json.loads((run / "items.jsonl").read_text(encoding="utf-8"))["passed"] is False
+    placed = rescore_run_dir(run, data_dir=FIXTURES, in_place=True)
+    assert Path(placed["run_dir"]) == run
+    assert json.loads((run / "items.jsonl.bak").read_text(encoding="utf-8"))["passed"] is False
+    assert json.loads((run / "run.json.bak").read_text(encoding="utf-8"))["run_id"] == "keep-me"
+    assert json.loads((run / "items.jsonl").read_text(encoding="utf-8").splitlines()[0])["passed"] is True
+    rescore_run_dir(run, data_dir=FIXTURES, in_place=True)
+    assert (run / "items.jsonl.bak.2").is_file()
+
+
+def test_scorer_commit_falls_back_without_git(monkeypatch: pytest.MonkeyPatch):
+    import subprocess
+
+    from standard_bench import SCORER_VERSION
+    from standard_bench.rescore import _scorer_stamp, scorer_commit
+
+    def boom(*args, **kwargs):
+        raise OSError("git is not available")
+
+    monkeypatch.setattr(subprocess, "check_output", boom)
+    stamp = scorer_commit()
+    assert stamp == _scorer_stamp()
+    assert stamp
+    assert f"+scorer{SCORER_VERSION}" in stamp

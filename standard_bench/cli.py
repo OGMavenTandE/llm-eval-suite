@@ -240,10 +240,11 @@ def _rescore(args: argparse.Namespace) -> int:
     else:
         data = args.data or None
     try:
-        result = rescore_run_dir(args.run_dir, data_dir=data)
+        result = rescore_run_dir(args.run_dir, data_dir=data, in_place=bool(args.in_place))
     except (FileNotFoundError, RescoreError, HashMismatch, ManifestError) as exc:
         print(str(exc), file=sys.stderr)
         return 2
+    print(result["run_dir"])
     print(result["csv"])
     print(f"scorer {result['scorer_version']} {result['scorer_commit']}")
     return 0
@@ -333,6 +334,11 @@ def build_parser() -> argparse.ArgumentParser:
     rescored.add_argument("--run-dir", required=True)
     rescored.add_argument("--data", default="", help="Dataset directory from fetch or an unpacked kit")
     rescored.add_argument("--fixtures", action="store_true", help="Use the packaged synthetic fixtures")
+    rescored.add_argument(
+        "--in-place",
+        action="store_true",
+        help="Overwrite the run after writing items.jsonl.bak and run.json.bak. Default writes a new folder.",
+    )
     rescored.set_defaults(func=_rescore)
 
     exported = sub.add_parser("export", help="Write public benchmark CSV and JSON from finished runs")

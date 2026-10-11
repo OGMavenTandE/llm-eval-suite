@@ -45,4 +45,12 @@ def stub_reply(prompt: str) -> str:
         return "    return a + b\n"
     if "STUBKEY shared" in text:
         return "    return tuple(sorted(set(left) & set(right)))\n"
+    if "polar_rect(" in text:
+        return (
+            "import cmath\n"
+            "def polar_rect(x, y):\n"
+            "    cn = cmath.polar(complex(x, y))\n"
+            "    cn1 = cmath.rect(2, cmath.pi)\n"
+            "    return (cn, cn1)\n"
+        )
     return "I do not know."

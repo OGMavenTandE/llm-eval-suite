@@ -9,7 +9,10 @@ items keep the score they already have.
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as package_version
 from pathlib import Path
 
 from llm_eval.models.context import strip_think_blocks
@@ -27,8 +30,20 @@ class RescoreError(RuntimeError):
     pass
 
 
+def _scorer_stamp() -> str:
+    """Package version plus the scorer version. Used when git cannot answer."""
+    version = "0.1.0"
+    try:
+        found = package_version("llm-eval-suite")
+    except PackageNotFoundError:
+        found = ""
+    if found:
+        version = found
+    return f"{version}+scorer{SCORER_VERSION}"
+
+
 def scorer_commit() -> str:
-    """HEAD of this checkout. Empty when git cannot answer."""
+    """HEAD of this checkout, or the package stamp when git cannot answer."""
     try:
         out = subprocess.check_output(
             ["git", "rev-parse", "HEAD"],
@@ -38,8 +53,9 @@ def scorer_commit() -> str:
             timeout=5,
         )
     except (OSError, subprocess.SubprocessError):
-        return ""
-    return out.strip()
+        return _scorer_stamp()
+    sha = out.strip()
+    return sha or _scorer_stamp()
 
 
 def _read_items(path: Path) -> list[dict]:
@@ -125,13 +141,51 @@ def _apply_score(item: dict, scored: dict, commit: str) -> None:
     item["rescored"] = True
 
 
-def rescore_run_dir(run_dir: str | Path, *, data_dir: str | Path | None = None) -> dict:
-    """Score saved responses with the current scorer. Does not load a model."""
-    directory = Path(run_dir)
-    items_path = directory / "items.jsonl"
-    run_path = directory / "run.json"
+def _backup_file(path: Path) -> Path:
+    """Copy ``path`` to a ``.bak`` beside it. A second backup is numbered."""
+    bak = path.with_name(path.name + ".bak")
+    index = 2
+    while bak.exists():
+        bak = path.with_name(f"{path.name}.bak.{index}")
+        index += 1
+    shutil.copy2(path, bak)
+    return bak
+
+
+def _rescored_dir(source: Path) -> Path:
+    """A new sibling directory. The source run is left as it was."""
+    candidate = source.parent / f"{source.name}-rescored"
+    index = 2
+    while candidate.exists():
+        candidate = source.parent / f"{source.name}-rescored-{index}"
+        index += 1
+    candidate.mkdir(parents=True)
+    return candidate
+
+
+def rescore_run_dir(
+    run_dir: str | Path,
+    *,
+    data_dir: str | Path | None = None,
+    in_place: bool = False,
+) -> dict:
+    """Score saved responses with the current scorer. Does not load a model.
+
+    The default writes a new sibling directory and leaves the source run
+    untouched. ``in_place`` copies ``items.jsonl`` and ``run.json`` to ``.bak``
+    files, then overwrites them.
+    """
+    source = Path(run_dir)
+    items_path = source / "items.jsonl"
+    run_path = source / "run.json"
     if not items_path.is_file() or not run_path.is_file():
         raise FileNotFoundError("rescore needs items.jsonl and run.json in the run directory")
+    if in_place:
+        _backup_file(items_path)
+        _backup_file(run_path)
+        directory = source
+    else:
+        directory = _rescored_dir(source)
     items = _read_items(items_path)
     suites_present = {str(item.get("suite") or "") for item in items if item.get("suite")}
     indexes = _load_indexes(data_dir, suites_present)
@@ -177,7 +231,9 @@ def rescore_run_dir(run_dir: str | Path, *, data_dir: str | Path | None = None) 
         _apply_score(item, scored, commit)
         updated.append(item)
 
-    items_path.write_text(
+    out_items = directory / "items.jsonl"
+    out_run = directory / "run.json"
+    out_items.write_text(
         "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in updated),
         encoding="utf-8",
     )
@@ -219,7 +275,7 @@ def rescore_run_dir(run_dir: str | Path, *, data_dir: str | Path | None = None) 
         public["scorer_version"] = SCORER_VERSION
         public["scorer_commit"] = commit
     record["scorecard"] = card
-    run_path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+    out_run.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
 
     csv_path = directory / "public_benchmarks.csv"
     json_path = directory / "public_benchmarks.json"
@@ -227,6 +283,7 @@ def rescore_run_dir(run_dir: str | Path, *, data_dir: str | Path | None = None) 
     csv_path.write_text(render_csv(exported), encoding="utf-8")
     json_path.write_text(render_json(exported), encoding="utf-8")
     return {
+        "run_dir": str(directory),
         "csv": str(csv_path),
         "json": str(json_path),
         "items": len(updated),

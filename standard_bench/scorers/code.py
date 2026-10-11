@@ -84,11 +84,14 @@ _SET_HEADER = _STDLIB_HEADER.replace(
 
 
 def _drop_numpy_helpers(prefix: str) -> str:
-    """Drop the numpy import and the ``is_floats`` / ``assertion`` helpers.
+    """Drop numpy imports and ``is_floats`` / ``assertion`` helpers at any indent.
 
-    Other prefix code stays. HumanEval/14, 15, 32, 83, 100, 130, and 139
-    define ``ref_func`` or ``_poly`` before ``def check``, and the plus
-    tests call those names.
+    Fetch indents an MBPP+ plus body into ``check``, so those helpers are
+    nested there and the inner ``assertion`` would shadow the tolerant one.
+    The same drop runs on the text before ``check`` and on the ``check`` body.
+    Other code stays. HumanEval/14, 15, 32, 83, 100, 130, and 139 define
+    ``ref_func`` or ``_poly`` before ``def check``, and the plus tests call
+    those names.
     """
     lines = (prefix or "").replace("\r\n", "\n").split("\n")
     kept: list[str] = []
@@ -105,7 +108,7 @@ def _drop_numpy_helpers(prefix: str) -> str:
         stripped = line.strip()
         if re.match(r"^(?:import|from)\s+numpy\b", stripped):
             continue
-        if re.match(r"^def\s+(?:is_floats|assertion|_close|values_close)\b", line):
+        if re.match(r"^[ \t]*def\s+(?:is_floats|assertion|_close|values_close)\b", line):
             skipping = True
             skip_indent = len(line[: len(line) - len(line.lstrip(" \t"))])
             continue
@@ -116,31 +119,38 @@ def _drop_numpy_helpers(prefix: str) -> str:
 def prepare_plus_test(source: str) -> str:
     """Install the current assertion helper before a plus test runs.
 
-    Pinned rows already contain whatever helper fetch wrote. Scoring rewrites
-    that helper so a kit fetched earlier uses the tolerant compare.
+    Pinned rows already contain whatever helper fetch wrote, including a copy
+    nested inside ``check``. Scoring strips that copy and rewrites the helper
+    so a kit fetched earlier uses the tolerant compare.
     """
     text = str(source or "")
     if "def check(" not in text:
-        return text
+        return _drop_numpy_helpers(text) if text.strip() else text
     try:
         return rewrite_evalplus_test(text)
     except ValueError:
-        return text
+        return _drop_numpy_helpers(text)
 
 
 def rewrite_evalplus_test(source: str) -> str:
-    """Replace the numpy assertion helper. Inputs, expected values, and other helpers stay."""
+    """Replace the numpy assertion helper. Inputs, expected values, and other helpers stay.
+
+    ``is_floats`` and ``assertion`` are removed before ``check`` and inside it.
+    """
     text = source or ""
     marker = "def check("
     index = text.find(marker)
     if index < 0:
         raise ValueError("EvalPlus test has no def check.")
-    header = _SET_HEADER if "out = set(out)" in text[:index] else _STDLIB_HEADER
-    kept = _drop_numpy_helpers(text[:index])
+    # The set marker sits in the assertion helper. After fetch that helper is
+    # inside check, so the search covers the whole test.
+    header = _SET_HEADER if "out = set(out)" in text else _STDLIB_HEADER
+    prefix = _drop_numpy_helpers(text[:index])
+    body = _drop_numpy_helpers(text[index:])
     rewritten = header.strip() + "\n\n"
-    if kept:
-        rewritten += kept + "\n\n"
-    rewritten += text[index:].strip() + "\n"
+    if prefix:
+        rewritten += prefix + "\n\n"
+    rewritten += body.strip() + "\n"
     rewritten = re.sub(r"(?m)^[ \t]*import numpy(?:\s+as\s+\w+)?\s*$", "", rewritten)
     rewritten = re.sub(r"(?m)^[ \t]*from numpy\s+import\s+.+$", "", rewritten)
     rewritten = rewritten.replace("np.allclose", "_close")
