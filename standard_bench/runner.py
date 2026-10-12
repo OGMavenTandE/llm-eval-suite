@@ -10,10 +10,10 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from llm_eval.models.context import strip_think_blocks
 from llm_eval.offline import activate_run_offline
 
-from standard_bench import COUNTS_TOWARD_DOW_SCORE, SUITE_VERSION
+from standard_bench import COUNTS_TOWARD_DOW_SCORE, SCORER_VERSION, SUITE_VERSION
+from standard_bench.answers import graded_answer
 from standard_bench.catalog import suite_spec
 from standard_bench.identity import index_rows, stable_row_id
 from standard_bench.load import load_file, load_suite, select_rows
@@ -386,7 +386,14 @@ def run_standard_suite(ctx, config: dict, suite: str) -> dict:
         raw_response = meta.get("raw_text")
         if raw_response is None:
             raw_response = result.text
-        answer = strip_think_blocks(result.text, strip_edges=suite not in {"humaneval_plus", "mbpp_plus"})
+        think_marker = str(meta.get("think_marker") or "")
+        opened_think = bool(meta.get("prompt_opened_think"))
+        answer = graded_answer(
+            str(raw_response or ""),
+            suite=suite,
+            think_marker=think_marker,
+            prompt_opened_think=opened_think,
+        )
         over_budget = bool(meta.get("prompt_over_budget"))
         if over_budget:
             scored = {
@@ -417,7 +424,10 @@ def run_standard_suite(ctx, config: dict, suite: str) -> dict:
             "predicted": scored.get("predicted", ""),
             "hit_token_cap": False if over_budget else _hit_token_cap(result, answer_cap),
             "think_truncated": bool(meta.get("think_truncated")),
+            "think_marker": think_marker,
+            "prompt_opened_think": opened_think,
             "stopped_on_newline_run": bool(meta.get("stopped_on_newline_run")),
+            "scorer_version": SCORER_VERSION,
             "prompt_over_budget": over_budget,
             "prompt_budget_error": "" if redact else (meta.get("prompt_budget_error") or ""),
             "source": "live",
@@ -455,6 +465,13 @@ def run_standard_suite(ctx, config: dict, suite: str) -> dict:
         if ctx.on_progress is not None:
             ctx.on_progress(done)
     metrics = _aggregate(suite, items)
+    markers = {str(item.get("think_marker") or "") for item in items}
+    opened_flags = {bool(item.get("prompt_opened_think")) for item in items}
+    if len(markers) == 1:
+        metrics["think_marker"] = next(iter(markers))
+    if len(opened_flags) == 1:
+        metrics["prompt_opened_think"] = next(iter(opened_flags))
+    metrics["scorer_version"] = SCORER_VERSION
     metrics["full_size"] = spec.full_size
     metrics["limit"] = limit
     metrics["prompt_budget"] = prompt_budget

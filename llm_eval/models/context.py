@@ -25,6 +25,63 @@ def strip_think_blocks(text: str | None, *, strip_edges: bool = True) -> str:
     return cleaned
 
 
+_THINK_CLOSE = re.compile(r"</think>", re.IGNORECASE)
+_THINK_OPEN_TAG = re.compile(r"<think\b", re.IGNORECASE)
+
+
+def prompt_opened_think(prompt: str) -> bool:
+    """True when the chat template left an unclosed ``<think>`` on the prompt."""
+    tail = (prompt or "")[-120:].lower()
+    return "<think>" in tail and "</think>" not in tail
+
+
+def answer_after_think(
+    raw: str,
+    *,
+    prompt_opened_think: bool = False,
+    strip_edges: bool = True,
+) -> str:
+    """Scored text. Drops a closed think block and an unterminated one.
+
+    When the template opened ``<think>`` in the prompt, the completion
+    starts inside that block. Text through ``</think>`` is dropped. If
+    the close tag never arrives, the completion is still thinking.
+    ``strip_edges`` is false for code so a leading indent stays.
+    """
+    text = raw or ""
+    if prompt_opened_think and not _THINK_OPEN_TAG.search(text):
+        close = _THINK_CLOSE.search(text)
+        if close is None:
+            return ""
+        text = text[close.end() :]
+    return strip_think_blocks(text, strip_edges=strip_edges)
+
+
+def think_split(text: str, marker: str) -> tuple[bool, str]:
+    """Whether ``marker`` closed the think block, and the text after it."""
+    if not text or not marker:
+        return False, ""
+    index = text.lower().find(marker.lower())
+    if index < 0:
+        return False, ""
+    return True, text[index + len(marker) :]
+
+
+def scored_after_thinking(raw_text: str, marker: str, *, strip_edges: bool = True) -> str:
+    """Answer text after the think block. The block itself is not scored.
+
+    ``</think>`` uses the template-opened path, because a reasoning
+    completion starts inside the block the chat template opened. Any other
+    marker, including ``<|end_of_thought|>``, is the close tag itself.
+    """
+    if (marker or "").lower() == "</think>":
+        return answer_after_think(raw_text, prompt_opened_think=True, strip_edges=strip_edges)
+    closed, after = think_split(raw_text, marker)
+    if closed:
+        return strip_think_blocks(after, strip_edges=strip_edges)
+    return ""
+
+
 def clamp_prompt_and_new_tokens(prompt: str, max_new_tokens: int, max_context: int) -> tuple[str, int]:
     """Keep ``prompt + max_new_tokens`` inside ``max_context``.
 

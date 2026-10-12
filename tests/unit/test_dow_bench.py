@@ -541,6 +541,8 @@ def test_hf_generate_records_raw_and_strips_think(tmp_path: Path, monkeypatch):
     assert calls["to"] == ("cpu", None)
     assert result.text == "Eight"
     assert result.metadata["raw_text"] == "<think>hidden</think>Eight"
+    assert result.metadata["think_marker"] == ""
+    assert result.metadata["prompt_opened_think"] is False
     assert result.metadata["loader"] == "image-text-to-text"
     assert result.metadata["trust_remote_code"] is False
     assert result.metadata["hit_token_cap"] is False
@@ -1223,6 +1225,8 @@ def test_budget_forcing_closes_think_then_answers(tmp_path: Path, monkeypatch):
     assert calls[1]["ids"][-2:] == [50, 51]
     assert short.metadata["think_truncated"] is True
     assert short.metadata["hit_token_cap"] is False
+    assert short.metadata["think_marker"] == "</think>"
+    assert short.metadata["prompt_opened_think"] is True
     assert short.text == "Answer: B"
 
     calls.clear()
@@ -1265,6 +1269,8 @@ def test_closed_think_does_not_count_as_truncated(tmp_path: Path, monkeypatch):
     assert calls == [4]
     assert result.metadata["think_truncated"] is False
     assert result.metadata["hit_token_cap"] is False
+    assert result.metadata["think_marker"] == "</think>"
+    assert result.metadata["prompt_opened_think"] is True
     assert result.text == "Answer: B"
 
 
@@ -1302,6 +1308,8 @@ def test_non_thinking_model_stays_one_shot(tmp_path: Path, monkeypatch):
     assert calls == [1024]
     assert result.metadata["think_truncated"] is False
     assert result.metadata["thinking_default"] is False
+    assert result.metadata["think_marker"] == ""
+    assert result.metadata["prompt_opened_think"] is False
     assert result.text == "Answer: B"
 
 

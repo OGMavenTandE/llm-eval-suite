@@ -2138,3 +2138,364 @@ def test_rescore_full_preset_and_gpqa_align_by_id(tmp_path: Path, monkeypatch: p
     full_blob = (saved_full / "items.jsonl").read_text(encoding="utf-8")
     assert "INHOUSE_Q" not in full_blob
     assert "gold0" not in full_blob
+
+
+def _write_run(dest: Path, items: list[dict], record: dict) -> Path:
+    dest.mkdir()
+    (dest / "items.jsonl").write_text(
+        "".join(json.dumps(item) + "\n" for item in items),
+        encoding="utf-8",
+    )
+    (dest / "run.json").write_text(json.dumps(record) + "\n", encoding="utf-8")
+    return dest
+
+
+def test_rescore_template_opened_think_and_end_of_thought(tmp_path: Path):
+    from llm_eval.models.context import strip_think_blocks
+
+    from standard_bench.answers import CODE_SUITES, graded_answer
+    from standard_bench.rescore import _answer_text, rescore_run_dir
+    from standard_bench.scorers.gsm8k import score_gsm8k
+
+    opened = "x</think>\nAnswer: 7"
+    assert graded_answer(opened, suite="gsm8k", prompt_opened_think=True) == "Answer: 7"
+    assert graded_answer(opened, suite="humaneval_plus", prompt_opened_think=True) == "\nAnswer: 7"
+    code = "trace</think>\n    return a + b\n"
+    assert graded_answer(code, suite="humaneval_plus", prompt_opened_think=True) == "\n    return a + b\n"
+    assert graded_answer(code, suite="gsm8k", prompt_opened_think=True) == "return a + b"
+    assert "humaneval_plus" in CODE_SUITES and "mbpp_plus" in CODE_SUITES
+
+    thought = "The answer is 99<|end_of_thought|>\nThe answer is 7"
+    assert graded_answer(thought, suite="gsm8k", think_marker="<|end_of_thought|>") == "The answer is 7"
+    assert score_gsm8k("7", strip_think_blocks(thought))["passed"] is False
+    assert score_gsm8k("7", graded_answer(thought, suite="gsm8k", think_marker="<|end_of_thought|>"))["passed"] is True
+
+    opened_item = {
+        "id": "gsm8k:template-opened",
+        "suite": "gsm8k",
+        "raw_response": opened,
+        "expected": "7",
+        "prompt_opened_think": True,
+        "passed": False,
+        "score": 0.0,
+    }
+    assert _answer_text(opened_item, {}) == "Answer: 7"
+    opened_run = _write_run(
+        tmp_path / "opened",
+        [opened_item],
+        {"run_id": "opened", "suites": []},
+    )
+    opened_result = rescore_run_dir(opened_run)
+    saved = json.loads((Path(opened_result["run_dir"]) / "items.jsonl").read_text(encoding="utf-8"))
+    assert saved["passed"] is True
+    assert saved["predicted"] == "7"
+    assert saved["score"] == 1.0
+
+    # The same close, with the flag stored only on the run.
+    run_level = dict(opened_item)
+    run_level.pop("prompt_opened_think")
+    run_level["id"] = "gsm8k:template-opened-run"
+    flagged = _write_run(
+        tmp_path / "opened-run",
+        [run_level],
+        {"run_id": "opened-run", "prompt_opened_think": True, "think_marker": "</think>", "suites": []},
+    )
+    flagged_saved = json.loads(
+        (Path(rescore_run_dir(flagged)["run_dir"]) / "items.jsonl").read_text(encoding="utf-8")
+    )
+    assert flagged_saved["passed"] is True
+    assert flagged_saved["predicted"] == "7"
+
+    thought_item = {
+        "id": "gsm8k:end-of-thought",
+        "suite": "gsm8k",
+        "raw_response": thought,
+        "expected": "7",
+        "think_marker": "<|end_of_thought|>",
+        "passed": False,
+        "score": 0.0,
+    }
+    thought_run = _write_run(
+        tmp_path / "thought",
+        [thought_item],
+        {"run_id": "thought", "suites": []},
+    )
+    thought_saved = json.loads(
+        (Path(rescore_run_dir(thought_run)["run_dir"]) / "items.jsonl").read_text(encoding="utf-8")
+    )
+    assert thought_saved["passed"] is True
+    assert thought_saved["predicted"] == "7"
+
+    # Stored response is what the run graded, even when raw still holds the trace.
+    preferred = {
+        "id": "gsm8k:stored",
+        "suite": "gsm8k",
+        "response": "The answer is 7",
+        "raw_response": "The answer is 99</think>\nThe answer is 4",
+        "expected": "7",
+        "prompt_opened_think": True,
+        "think_marker": "</think>",
+        "passed": False,
+        "score": 0.0,
+    }
+    preferred_run = _write_run(tmp_path / "stored", [preferred], {"run_id": "stored", "suites": []})
+    preferred_saved = json.loads(
+        (Path(rescore_run_dir(preferred_run)["run_dir"]) / "items.jsonl").read_text(encoding="utf-8")
+    )
+    assert preferred_saved["passed"] is True
+    assert preferred_saved["predicted"] == "7"
+
+
+def test_runner_records_think_flags_and_grades_the_answer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("LLM_EVAL_STANDARD_SUBSET", raising=False)
+    monkeypatch.delenv("LLM_EVAL_STANDARD_SEED", raising=False)
+
+    class OpenedThink:
+        def generate(self, prompt, **kwargs):
+            return ModelResponse(
+                "The answer is 99",
+                1.0,
+                4,
+                {
+                    "raw_text": "The answer is 99</think>\nThe answer is 4",
+                    "think_marker": "</think>",
+                    "prompt_opened_think": True,
+                    "hit_token_cap": False,
+                    "think_truncated": False,
+                    "prompt_over_budget": False,
+                },
+            )
+
+    from standard_bench import SCORER_VERSION
+
+    result = run_standard_suite(
+        _ctx(OpenedThink(), tmp_path),
+        {"fixtures": True, "preset": "standard_capability"},
+        "gsm8k",
+    )
+    assert result["metrics"]["think_marker"] == "</think>"
+    assert result["metrics"]["prompt_opened_think"] is True
+    assert result["metrics"]["scorer_version"] == SCORER_VERSION
+    first, second = result["items"]
+    assert first["response"] == "The answer is 4"
+    assert first["raw_response"] == "The answer is 99</think>\nThe answer is 4"
+    assert first["think_marker"] == "</think>"
+    assert first["prompt_opened_think"] is True
+    assert first["passed"] is True
+    assert first["scorer_version"] == SCORER_VERSION
+    assert second["response"] == "The answer is 4"
+    assert second["passed"] is False
+
+
+def test_rescore_reasoning_quick50_reproduces_runtime_metrics(tmp_path: Path, capsys: pytest.CaptureFixture):
+    import copy
+
+    from llm_eval.models.context import strip_think_blocks
+
+    from standard_bench import SCORER_VERSION
+    from standard_bench.answers import CODE_SUITES, graded_answer
+    from standard_bench.identity import stable_row_id
+    from standard_bench.load import load_file, load_suite
+    from standard_bench.protocol import CUSTOMER_SUITES, QUICK_SEED, subset_limits
+    from standard_bench.reference import exclusions_for
+    from standard_bench.rescore import rescore_run_dir
+    from standard_bench.runner import _aggregate, _prompt_for, _score
+    from standard_bench.sandbox import RunLimits
+    from standard_bench.scorers.gsm8k import extract_gold
+
+    poison = "The answer is 99, the answer is (J), with a comma"
+    limits = RunLimits()
+    caps = subset_limits("quick50")
+    items: list[dict] = []
+    suites = []
+    naive_passed: list[bool] = []
+    graded_passed: list[bool] = []
+    cursor = 0
+    for suite in CUSTOMER_SUITES:
+        rows, _entry = load_suite(FIXTURES, suite)
+        dropped = exclusions_for(suite)
+        rows = [row for row in rows if str(row.get("task_id")) not in dropped]
+        chosen = select_rows(rows, caps[suite], QUICK_SEED)
+        assert chosen == select_rows(list(rows), caps[suite], QUICK_SEED)
+        assert len(chosen) == min(50, len(rows))
+        validation = load_file(FIXTURES, suite, "validation.jsonl") if suite == "mmlu_pro" else []
+        suite_items = []
+        for row in chosen:
+            if suite == "mmlu_pro":
+                answer = f"the answer is ({row['answer']})"
+            elif suite == "gsm8k":
+                answer = f"The answer is {extract_gold(row['answer'])}"
+            elif suite == "math500":
+                answer = "\\boxed{" + str(row["answer"]) + "}"
+            elif suite == "ifeval":
+                instructions = list(row.get("instruction_id_list") or [])
+                answer = "one short line" if "punctuation:no_comma" in instructions else "too short"
+            else:
+                answer = str(row.get("canonical_solution") or "")
+            if cursor % 2 == 0:
+                marker = "</think>"
+                opened = True
+            else:
+                marker = "<|end_of_thought|>"
+                opened = False
+            cursor += 1
+            gap = "" if suite in CODE_SUITES else "\n"
+            raw = f"{poison}{marker}{gap}{answer}"
+            graded = graded_answer(
+                raw,
+                suite=suite,
+                think_marker=marker,
+                prompt_opened_think=opened,
+            )
+            assert poison not in graded
+            if suite in CODE_SUITES:
+                assert graded == answer
+            else:
+                assert graded == answer.strip()
+            _prompt, private = _prompt_for(suite, row, validation)
+            scored = _score(suite, graded, private, limits)
+            naive = strip_think_blocks(raw, strip_edges=suite not in CODE_SUITES)
+            if suite not in CODE_SUITES:
+                naive_scored = _score(suite, naive, private, limits)
+                naive_passed.append(bool(naive_scored.get("passed")))
+                graded_passed.append(bool(scored.get("passed")))
+            item = {
+                "id": stable_row_id(suite, row),
+                "suite": suite,
+                "category": "public_benchmark",
+                "response": graded,
+                "raw_response": raw,
+                "think_marker": marker,
+                "prompt_opened_think": opened,
+                "expected": scored.get("expected", ""),
+                "predicted": scored.get("predicted", ""),
+                "passed": scored.get("passed"),
+                "score": scored.get("score"),
+                "base_pass": scored.get("base_pass"),
+                "plus_pass": scored.get("plus_pass"),
+                "prompt_strict": scored.get("prompt_strict"),
+                "prompt_loose": scored.get("prompt_loose"),
+                "instruction_strict": scored.get("instruction_strict"),
+                "instruction_loose": scored.get("instruction_loose"),
+                "source": "live",
+                "subset": "quick50",
+                "seed": QUICK_SEED,
+                "preset": "standard_capability_quick",
+                "protocol": "quick-check",
+                "scorer_version": SCORER_VERSION,
+            }
+            suite_items.append(item)
+            items.append(item)
+        metrics = _aggregate(suite, suite_items)
+        metrics["limit"] = caps[suite]
+        metrics["n_items"] = len(suite_items)
+        metrics["scorer_version"] = SCORER_VERSION
+        suites.append(
+            {
+                "name": suite,
+                "subset": "quick50",
+                "seed": QUICK_SEED,
+                "protocol": "quick-check",
+                "preset": "standard_capability_quick",
+                "pass_rate": metrics.get("score"),
+                "metrics": metrics,
+            }
+        )
+    assert naive_passed != graded_passed
+    record = {
+        "run_id": "reasoning-quick50",
+        "scorer_version": SCORER_VERSION,
+        "connection": {"model": "Phi-4-mini-reasoning"},
+        "suites": suites,
+    }
+    run = _write_run(tmp_path / "reasoning", items, record)
+    result = rescore_run_dir(run, data_dir=FIXTURES)
+    assert result["pass_flip_warning"] == ""
+    assert result["pass_flips"] == []
+    captured = capsys.readouterr()
+    assert "flipped passed" not in captured.err
+    saved = _read_items(Path(result["run_dir"]) / "items.jsonl")
+    assert _grades(saved) == _grades(items)
+    saved_record = json.loads((Path(result["run_dir"]) / "run.json").read_text(encoding="utf-8"))
+    for suite_row in suites:
+        name = suite_row["name"]
+        fresh = _aggregate(name, [item for item in saved if item["suite"] == name])
+        original = _aggregate(name, [item for item in items if item["suite"] == name])
+        assert fresh == original
+        stored = next(row for row in saved_record["suites"] if row["name"] == name)
+        assert stored["pass_rate"] == original["score"]
+        assert stored["metrics"]["score"] == original["score"]
+
+    fallback_items = copy.deepcopy(items)
+    for item in fallback_items:
+        item.pop("response")
+    fallback = _write_run(tmp_path / "reasoning-raw", fallback_items, record)
+    fallback_result = rescore_run_dir(fallback, data_dir=FIXTURES)
+    assert fallback_result["pass_flip_warning"] == ""
+    fallback_saved = _read_items(Path(fallback_result["run_dir"]) / "items.jsonl")
+    assert _grades(fallback_saved) == _grades(items)
+
+
+def test_rescore_warns_when_unchanged_scorer_flips_passed(tmp_path: Path, capsys: pytest.CaptureFixture):
+    from standard_bench import SCORER_VERSION
+    from standard_bench.rescore import rescore_run_dir
+
+    def build(n: int, flips: int, version: str) -> list[dict]:
+        rows = []
+        for index in range(n):
+            rows.append(
+                {
+                    "id": f"gsm8k:flip-{index}",
+                    "suite": "gsm8k",
+                    "response": "The answer is 4",
+                    "raw_response": "The answer is 99</think>\nThe answer is 4",
+                    "expected": "4",
+                    "prompt_opened_think": True,
+                    "think_marker": "</think>",
+                    "passed": index >= flips,
+                    "score": 0.0 if index < flips else 1.0,
+                    "scorer_version": version,
+                }
+            )
+        return rows
+
+    warned = _write_run(
+        tmp_path / "warned",
+        build(8, 8, SCORER_VERSION),
+        {"run_id": "warned", "scorer_version": SCORER_VERSION, "suites": []},
+    )
+    warned_result = rescore_run_dir(warned)
+    err = capsys.readouterr().err
+    assert "flipped passed on 8/8" in err
+    assert "gsm8k gsm8k:flip-0: passed False -> True" in err
+    assert "gsm8k gsm8k:flip-4: passed False -> True" in err
+    assert "and 3 more" in err
+    assert "gsm8k:flip-5" not in err
+    assert warned_result["pass_flip_warning"]
+    assert [row["id"] for row in warned_result["pass_flips"][:5]] == [f"gsm8k:flip-{i}" for i in range(5)]
+    assert all(json.loads(line)["passed"] for line in (Path(warned_result["run_dir"]) / "items.jsonl").read_text().splitlines())
+
+    quiet = _write_run(
+        tmp_path / "boundary",
+        build(20, 1, SCORER_VERSION),
+        {"run_id": "boundary", "scorer_version": SCORER_VERSION, "suites": []},
+    )
+    boundary = rescore_run_dir(quiet)
+    err = capsys.readouterr().err
+    assert boundary["pass_flip_warning"] == ""
+    assert boundary["pass_flips"] == []
+    assert "flipped passed" not in err
+
+    older = _write_run(
+        tmp_path / "older",
+        build(8, 8, "1"),
+        {"run_id": "older", "scorer_version": "1", "suites": []},
+    )
+    older_result = rescore_run_dir(older)
+    err = capsys.readouterr().err
+    assert older_result["pass_flip_warning"] == ""
+    assert "flipped passed" not in err
+    assert all(
+        json.loads(line)["passed"]
+        for line in (Path(older_result["run_dir"]) / "items.jsonl").read_text().splitlines()
+    )

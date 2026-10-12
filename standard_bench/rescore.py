@@ -13,6 +13,11 @@ Code suites need the pinned dataset so the current plus tests can run. Other
 suites use that dataset when it is passed, and otherwise the gold already
 stored on the item. GPQA question text stays redacted. When the dataset is
 loaded, the stored letter is graded against the row that id points at.
+
+The stored response is the text the run graded. When it is missing, the raw
+completion is extracted with the same think marker and template-opened flag.
+An unchanged scorer that flips passed on more than 5% of items prints a
+warning and the first differing items.
 """
 
 from __future__ import annotations
@@ -21,13 +26,13 @@ import hashlib
 import json
 import shutil
 import subprocess
+import sys
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
 from pathlib import Path
 
-from llm_eval.models.context import strip_think_blocks
-
 from standard_bench import SCORER_VERSION, SUITE_NAMES, SUITE_VERSION
+from standard_bench.answers import graded_answer
 from standard_bench.export import render_csv, render_json, rows_for_run
 from standard_bench.identity import ItemIdError, index_rows
 from standard_bench.load import jsonl_lines, load_file, load_suite, select_rows
@@ -328,12 +333,126 @@ def _private(suite: str, item: dict, row: dict | None) -> dict:
     raise RescoreError(f"No scorer for suite {suite}.")
 
 
-def _answer_text(item: dict) -> str:
-    raw = item.get("raw_response")
-    if raw is None or raw == "":
-        raw = item.get("response") or ""
+def _flag_from(source: dict, key: str):
+    if not isinstance(source, dict) or key not in source:
+        return _MISSING
+    return source[key]
+
+
+def _extraction_flags(item: dict, record: dict) -> tuple[str, bool]:
+    """Think marker and template-opened flag for one item.
+
+    The item wins. A run that stored the pair only in run.json, or on the
+    suite metrics, is the fallback. A missing flag is false.
+    """
     suite = str(item.get("suite") or "")
-    return strip_think_blocks(str(raw), strip_edges=suite not in {"humaneval_plus", "mbpp_plus"})
+    suite_metrics: dict = {}
+    for row in record.get("suites") or []:
+        if isinstance(row, dict) and str(row.get("name") or "") == suite:
+            metrics = row.get("metrics")
+            if isinstance(metrics, dict):
+                suite_metrics = metrics
+            break
+    marker = _first_present(
+        _flag_from(item, "think_marker"),
+        _flag_from(suite_metrics, "think_marker"),
+        _flag_from(record, "think_marker"),
+    )
+    opened = _first_present(
+        _flag_from(item, "prompt_opened_think"),
+        _flag_from(suite_metrics, "prompt_opened_think"),
+        _flag_from(record, "prompt_opened_think"),
+    )
+    if marker is _MISSING:
+        marker = ""
+    if opened is _MISSING:
+        opened = False
+    return str(marker or ""), bool(opened)
+
+
+def _answer_text(item: dict, record: dict | None = None) -> str:
+    """Text graded for this item.
+
+    ``response`` is the exact string the run scored. When it was not stored,
+    extract it from ``raw_response`` with the same think marker and
+    template-opened flag the run used. Code suites keep their indent.
+    """
+    if "response" in item and item.get("response") is not None:
+        return str(item.get("response"))
+    marker, opened = _extraction_flags(item, record or {})
+    raw = item.get("raw_response")
+    if raw is None:
+        raw = ""
+    return graded_answer(
+        str(raw),
+        suite=str(item.get("suite") or ""),
+        think_marker=marker,
+        prompt_opened_think=opened,
+    )
+
+
+_FLIP_PREVIEW = 5
+
+
+def _recorded_versions(record: dict, items: list[dict]) -> list[str]:
+    found: list[str] = []
+    if record.get("scorer_version") not in (None, ""):
+        found.append(str(record.get("scorer_version")))
+    for item in items:
+        if item.get("scorer_version") not in (None, ""):
+            found.append(str(item.get("scorer_version")))
+    for row in record.get("suites") or []:
+        if not isinstance(row, dict):
+            continue
+        metrics = row.get("metrics")
+        if isinstance(metrics, dict) and metrics.get("scorer_version") not in (None, ""):
+            found.append(str(metrics.get("scorer_version")))
+    return found
+
+
+def _scorer_unchanged(record: dict, items: list[dict]) -> bool:
+    """True when this run was already scored with the current scorer version."""
+    found = _recorded_versions(record, items)
+    if not found:
+        return False
+    return all(version == str(SCORER_VERSION) for version in found)
+
+
+def _pass_flip_warning(original: list[dict], updated: list[dict]) -> tuple[str, list[dict]]:
+    """Warn when an unchanged scorer flips ``passed`` on more than 5% of items."""
+    compared = 0
+    flips: list[dict] = []
+    for old, new in zip(original, updated):
+        if "passed" not in old:
+            continue
+        compared += 1
+        if bool(old.get("passed")) == bool(new.get("passed")):
+            continue
+        flips.append(
+            {
+                "id": new.get("id"),
+                "suite": new.get("suite"),
+                "passed_before": old.get("passed"),
+                "passed_after": new.get("passed"),
+            }
+        )
+    if compared == 0 or len(flips) * 20 <= compared:
+        return "", []
+    lines = [
+        (
+            f"warning: rescore flipped passed on {len(flips)}/{compared} items "
+            f"with scorer version {SCORER_VERSION} unchanged"
+        )
+    ]
+    for flip in flips[:_FLIP_PREVIEW]:
+        lines.append(
+            f"  {flip['suite']} {flip['id']}: passed {flip['passed_before']} -> {flip['passed_after']}"
+        )
+    if len(flips) > _FLIP_PREVIEW:
+        lines.append(f"  and {len(flips) - _FLIP_PREVIEW} more")
+    message = "\n".join(lines)
+    print(message, file=sys.stderr)
+    return message, flips
 
 
 def _apply_score(item: dict, scored: dict, commit: str) -> None:
@@ -403,6 +522,13 @@ def rescore_run_dir(
         directory = _rescored_dir(source)
     commit = scorer_commit()
     limits = RunLimits()
+    unchanged = _scorer_unchanged(record, items)
+    original_passed = []
+    for item in items:
+        snap = {"id": item.get("id"), "suite": item.get("suite")}
+        if "passed" in item:
+            snap["passed"] = item.get("passed")
+        original_passed.append(snap)
     updated = []
     for item in items:
         suite = str(item.get("suite") or "")
@@ -444,7 +570,7 @@ def rescore_run_dir(
             reply = f"Answer: {predicted}" if predicted else ""
             scored = score_gpqa(str(private.get("gold") or ""), reply)
         else:
-            scored = _score(suite, _answer_text(item), private, limits)
+            scored = _score(suite, _answer_text(item, record), private, limits)
         _apply_score(item, scored, commit)
         if item.get("redacted"):
             item["expected"] = ""
@@ -503,6 +629,10 @@ def rescore_run_dir(
     exported = rows_for_run(directory)
     csv_path.write_text(render_csv(exported), encoding="utf-8")
     json_path.write_text(render_json(exported), encoding="utf-8")
+    warning = ""
+    flips: list[dict] = []
+    if unchanged:
+        warning, flips = _pass_flip_warning(original_passed, updated)
     return {
         "run_dir": str(directory),
         "csv": str(csv_path),
@@ -511,6 +641,8 @@ def rescore_run_dir(
         "scorer_version": SCORER_VERSION,
         "scorer_commit": commit,
         "scorecard": card,
+        "pass_flip_warning": warning,
+        "pass_flips": flips,
     }
 
 
