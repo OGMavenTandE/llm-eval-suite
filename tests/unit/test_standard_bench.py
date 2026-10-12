@@ -1521,14 +1521,17 @@ def test_rescore_rewrites_saved_responses_without_a_model(tmp_path: Path):
 
 
 def test_rescore_in_place_writes_backups(tmp_path: Path):
+    from standard_bench.load import load_suite
     from standard_bench.rescore import rescore_run_dir
+    from standard_bench.runner import _row_id
 
+    gsm_rows, _entry = load_suite(FIXTURES, "gsm8k")
     run = tmp_path / "run"
     run.mkdir()
     (run / "items.jsonl").write_text(
         json.dumps(
             {
-                "id": "gsm8k:0",
+                "id": _row_id("gsm8k", 0, gsm_rows[0]),
                 "suite": "gsm8k",
                 "raw_response": "The answer is 4",
                 "response": "The answer is 4",
@@ -1571,3 +1574,567 @@ def test_scorer_commit_falls_back_without_git(monkeypatch: pytest.MonkeyPatch):
     assert stamp == _scorer_stamp()
     assert stamp
     assert f"+scorer{SCORER_VERSION}" in stamp
+
+
+def _clear_standard_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    for key in (
+        "LLM_EVAL_STANDARD_SUBSET",
+        "LLM_EVAL_STANDARD_SEED",
+        "LLM_EVAL_STANDARD_LIMIT",
+        "LLM_EVAL_STANDARD_LIMITS",
+        "LLM_EVAL_STANDARD_THINKING_BUDGET",
+        "LLM_EVAL_INCLUDE_GPQA",
+        "LLM_EVAL_STANDARD_DATA",
+        "LLM_EVAL_STANDARD_FIXTURES",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+
+class _AlignedModel(StubStandardModel):
+    """Answers from a marker in the prompt, so the wrong gold fails the item."""
+
+    def generate(self, prompt: str, **kwargs) -> ModelResponse:
+        import re
+
+        text = prompt or ""
+        reply = "I do not know."
+        if "CORRECT=" in text and "\nA)" in text:
+            marker = re.search(r"CORRECT=(\S+)", text)
+            want = marker.group(1) if marker else ""
+            reply = "Answer: Z"
+            for letter in "ABCD":
+                line = re.search(rf"(?m)^{letter}\) (.+)$", text)
+                if line and line.group(1).strip() == want:
+                    reply = f"Answer: {letter}"
+                    break
+        elif "def value_" in text and "RETURN=" in text:
+            number = re.search(r"RETURN=(\d+)", text)
+            reply = f"    return {number.group(1)}\n" if number else reply
+        elif "def value():" in text and "RETURN=" in text:
+            number = re.search(r"RETURN=(\d+)", text)
+            reply = f"    return {number.group(1)}\n" if number else reply
+        elif "kw" in text:
+            marker = re.search(r"kw\d{4}", text)
+            if marker:
+                reply = marker.group(0)
+        elif "LETTER=" in text:
+            marker = re.search(r"LETTER=([A-J])", text)
+            if marker:
+                reply = f"The answer is ({marker.group(1)})."
+        elif "VALUE " in text:
+            marker = re.search(r"VALUE (\d+)", text)
+            if marker:
+                reply = f"\\boxed{{{marker.group(1)}}}"
+        else:
+            numbers = re.findall(r"What is (\d+)\?", text)
+            if numbers:
+                reply = f"The answer is {numbers[-1]}."
+        return ModelResponse(
+            text=reply,
+            latency_ms=0.1,
+            tokens_used=4,
+            metadata={
+                "model": self.name,
+                "device": "stub",
+                "raw_text": reply,
+                "hit_token_cap": False,
+                "think_truncated": False,
+                "prompt_over_budget": False,
+                "completion_tokens": 4,
+            },
+        )
+
+
+def _materialize(root: Path, suites: dict[str, list[dict]]) -> None:
+    from standard_bench.manifest import file_record, write_manifest
+
+    payload: dict = {"version": 1, "suites": {}}
+    for name, rows in suites.items():
+        relative = f"{name}/test.jsonl"
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+        payload["suites"][name] = {
+            "files": [file_record(root, relative)],
+            "full_size": len(rows),
+            "gated": name == "gpqa_diamond",
+            "license": "mit",
+            "repo": "synthetic",
+            "revision": "test",
+            "rows": len(rows),
+        }
+    write_manifest(root, payload)
+
+
+def _shuffle_suite(root: Path, suite: str) -> None:
+    import random
+
+    from standard_bench.manifest import file_record, load_manifest, write_manifest
+
+    path = root / suite / "test.jsonl"
+    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    original = list(rows)
+    rng = random.Random(1)
+    for _ in range(8):
+        rng.shuffle(rows)
+        if rows != original:
+            break
+    assert rows != original
+    path.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+    payload = load_manifest(root)
+    payload["suites"][suite]["files"] = [file_record(root, f"{suite}/test.jsonl")]
+    write_manifest(root, payload)
+
+
+def _gsm_rows(count: int) -> list[dict]:
+    return [
+        {"question": f"What is {index}?", "answer": f"{index} + 0 = {index}.\n#### {index}"}
+        for index in range(count)
+    ]
+
+
+def _mmlu_rows(count: int) -> list[dict]:
+    letters = "ABCDEFGHIJ"
+    rows = []
+    for index in range(count):
+        letter = letters[index % 10]
+        rows.append(
+            {
+                "question_id": 5000 + index,
+                "question": f"LETTER={letter} synthetic {index}",
+                "options": [f"opt{i}" for i in range(10)],
+                "answer": letter,
+                "answer_index": letters.index(letter),
+                "cot_content": "",
+                "category": "synthetic",
+                "src": "synthetic",
+            }
+        )
+    return rows
+
+
+def _math_rows(count: int) -> list[dict]:
+    return [
+        {
+            "problem": f"VALUE {index}",
+            "solution": str(index),
+            "answer": str(index),
+            "subject": "synthetic",
+            "level": 1,
+            "unique_id": f"synth-math-{index}",
+        }
+        for index in range(count)
+    ]
+
+
+def _ifeval_rows(count: int) -> list[dict]:
+    return [
+        {
+            "key": 1000 + index,
+            "prompt": f"Include kw{index:04d} in the reply.",
+            "instruction_id_list": ["keywords:existence"],
+            "kwargs": [{"keywords": [f"kw{index:04d}"]}],
+        }
+        for index in range(count)
+    ]
+
+
+def _humaneval_rows(count: int) -> list[dict]:
+    rows = []
+    for index in range(count):
+        rows.append(
+            {
+                "task_id": f"Synth/{index}",
+                "prompt": f'def value_{index}():\n    """RETURN={index}"""\n',
+                "entry_point": f"value_{index}",
+                "canonical_solution": f"def value_{index}():\n    return {index}\n",
+                "base_test": f"def check(candidate):\n    assert candidate() == {index}\n",
+                "plus_test": f"def check(candidate):\n    assert candidate() == {index}\n",
+            }
+        )
+    return rows
+
+
+def _mbpp_rows(count: int) -> list[dict]:
+    rows = []
+    for index in range(count):
+        rows.append(
+            {
+                "task_id": f"s{index}",
+                "prompt": f"RETURN={index} Return that number.",
+                "entry_point": "value",
+                "function_header": "def value():\n",
+                "test_list": [f"assert value() == {index}"],
+                "base_test": f"def check(candidate):\n    assert candidate() == {index}\n",
+                "plus_test": f"def check(candidate):\n    assert candidate() == {index}\n",
+                "canonical_solution": f"def value():\n    return {index}\n",
+                "test_imports": [],
+            }
+        )
+    return rows
+
+
+def _gpqa_rows(count: int) -> list[dict]:
+    return [
+        {
+            "id": f"rec{index}",
+            "question": f"INHOUSE_Q{index} CORRECT=gold{index}",
+            "correct": f"gold{index}",
+            "incorrect": [f"no{index}a", f"no{index}b", f"no{index}c"],
+        }
+        for index in range(count)
+    ]
+
+
+def _run_names(tmp_path: Path, data: Path, names: list[str], subset: str, preset: str) -> list[dict]:
+    config = {
+        "fixtures": False,
+        "data_dir": str(data),
+        "subset": subset,
+        "preset": preset,
+        "thinking_budget": 512,
+    }
+    model = _AlignedModel()
+    return [run_standard_suite(_ctx(model, tmp_path), config, name) for name in names]
+
+
+def _dump_run(dest: Path, results: list[dict]) -> Path:
+    dest.mkdir()
+    items = [item for result in results for item in result["items"]]
+    (dest / "items.jsonl").write_text(
+        "".join(json.dumps(item) + "\n" for item in items),
+        encoding="utf-8",
+    )
+    (dest / "run.json").write_text(
+        json.dumps(
+            {
+                "run_id": dest.name,
+                "connection": {"model": "OLMo 2 1B Instruct", "precision": "bf16"},
+                "suites": [
+                    {
+                        "name": result["name"],
+                        "subset": result.get("subset"),
+                        "seed": result.get("seed"),
+                        "protocol": result.get("protocol"),
+                        "preset": result.get("preset"),
+                        "metrics": result.get("metrics") or {},
+                    }
+                    for result in results
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return dest
+
+
+def _grade(item: dict) -> tuple:
+    return (
+        item.get("suite"),
+        item.get("passed"),
+        item.get("score"),
+        item.get("expected"),
+        item.get("predicted"),
+        item.get("plus_pass"),
+        item.get("prompt_strict"),
+    )
+
+
+def _grades(items: list[dict]) -> list[tuple]:
+    return [_grade(item) for item in items]
+
+
+def _read_items(path: Path) -> list[dict]:
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def _blank_stored_gold(path: Path) -> None:
+    rows = _read_items(path)
+    for item in rows:
+        if item.get("suite") in {"gsm8k", "math500", "mmlu_pro"}:
+            item["expected"] = ""
+    path.write_text("".join(json.dumps(item) + "\n" for item in rows), encoding="utf-8")
+
+
+def _assert_rescored(original: list[dict], run_dir: Path) -> list[dict]:
+    saved = _read_items(run_dir / "items.jsonl")
+    assert _grades(saved) == _grades(original)
+    return saved
+
+
+def test_row_id_ignores_subset_position():
+    from standard_bench.runner import _row_id
+
+    row = {"question": "What is 2 + 2?", "answer": "#### 4"}
+    assert _row_id("gsm8k", 0, row) == _row_id("gsm8k", 41, row)
+    assert _row_id("gsm8k", 0, row).startswith("gsm8k:q")
+    assert _row_id("ifeval", 3, {"key": 1000, "prompt": "x"}) == "ifeval:1000"
+    assert _row_id("humaneval_plus", 9, {"task_id": "Synth/3"}) == "humaneval_plus:Synth/3"
+
+
+def test_duplicate_question_stops_before_generation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from standard_bench.identity import ItemIdError
+
+    _clear_standard_env(monkeypatch)
+    data = tmp_path / "data"
+    _materialize(data, {"gsm8k": [{"question": "What is 1?", "answer": "#### 1"}] * 2})
+    with pytest.raises(ItemIdError, match="ambiguous"):
+        run_standard_suite(
+            _ctx(_AlignedModel(), tmp_path),
+            {"fixtures": False, "data_dir": str(data), "subset": "full", "preset": "standard_capability"},
+            "gsm8k",
+        )
+
+
+def test_rescore_rejects_ambiguous_and_partial_ids(tmp_path: Path):
+    from standard_bench.load import load_suite
+    from standard_bench.rescore import RescoreError, rescore_run_dir
+    from standard_bench.runner import _prompt_for, _row_id
+
+    gsm_rows, _entry = load_suite(FIXTURES, "gsm8k")
+    prompt = _prompt_for("gsm8k", gsm_rows[0], [])[0]
+    valid = {
+        "id": _row_id("gsm8k", 0, gsm_rows[0]),
+        "suite": "gsm8k",
+        "prompt": prompt,
+        "raw_response": "The answer is 4",
+        "response": "The answer is 4",
+        "expected": "",
+        "passed": False,
+        "score": 0.0,
+    }
+    missing = dict(valid)
+    missing["id"] = ""
+    run = tmp_path / "missing"
+    run.mkdir()
+    (run / "items.jsonl").write_text(json.dumps(missing) + "\n", encoding="utf-8")
+    (run / "run.json").write_text(json.dumps({"run_id": "missing", "suites": []}) + "\n", encoding="utf-8")
+    with pytest.raises(RescoreError, match="subset"):
+        rescore_run_dir(run, data_dir=FIXTURES)
+
+    mixed = tmp_path / "mixed"
+    mixed.mkdir()
+    other = dict(valid)
+    other["id"] = "gsm8k:missing"
+    (mixed / "items.jsonl").write_text(
+        json.dumps(valid) + "\n" + json.dumps(other) + "\n",
+        encoding="utf-8",
+    )
+    (mixed / "run.json").write_text(
+        json.dumps(
+            {
+                "run_id": "mixed",
+                "suites": [
+                    {
+                        "name": "gsm8k",
+                        "subset": "full",
+                        "seed": None,
+                        "metrics": {"n_items": 2, "limit": None},
+                    }
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(RescoreError, match="cannot align every item"):
+        rescore_run_dir(mixed, data_dir=FIXTURES)
+
+    data = tmp_path / "dup"
+    _materialize(data, {"gsm8k": [{"question": "What is 4?", "answer": "#### 4"}] * 2})
+    ambiguous = tmp_path / "ambiguous"
+    ambiguous.mkdir()
+    (ambiguous / "items.jsonl").write_text(json.dumps(valid) + "\n", encoding="utf-8")
+    (ambiguous / "run.json").write_text(json.dumps({"run_id": "ambiguous", "suites": []}) + "\n", encoding="utf-8")
+    with pytest.raises(RescoreError, match="ambiguous"):
+        rescore_run_dir(ambiguous, data_dir=data)
+
+
+def _rescore_matches(monkeypatch: pytest.MonkeyPatch, run: Path, data: Path, original: list[dict]) -> Path:
+    from standard_bench.rescore import rescore_run_dir
+
+    def explode(*_args, **_kwargs):
+        raise AssertionError("rescore re-ran subset selection")
+
+    _blank_stored_gold(run / "items.jsonl")
+    monkeypatch.setattr("standard_bench.rescore.select_rows", explode)
+    result = rescore_run_dir(run, data_dir=data)
+    saved = _assert_rescored(original, Path(result["run_dir"]))
+    assert saved
+    return Path(result["run_dir"])
+
+
+def test_rescore_quick50_matches_and_ignores_a_shuffled_dataset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from standard_bench.scorers.gsm8k import extract_gold
+
+    _clear_standard_env(monkeypatch)
+    count = 55
+    gsm = _gsm_rows(count)
+    data = tmp_path / "data"
+    names = ["gsm8k", "mmlu_pro", "math500", "ifeval", "humaneval_plus"]
+    _materialize(
+        data,
+        {
+            "gsm8k": gsm,
+            "mmlu_pro": _mmlu_rows(count),
+            "math500": _math_rows(count),
+            "ifeval": _ifeval_rows(count),
+            "humaneval_plus": _humaneval_rows(count),
+        },
+    )
+    results = _run_names(tmp_path, data, names, "quick50", "standard_capability_quick")
+    original = [item for result in results for item in result["items"]]
+    assert all(item.get("passed") for item in original)
+    gsm_result = next(result for result in results if result["name"] == "gsm8k")
+    assert len(gsm_result["items"]) == 50
+    assert gsm_result["seed"] == QUICK_SEED
+    assert [item["expected"] for item in gsm_result["items"]] != [
+        extract_gold(row["answer"]) for row in gsm[:50]
+    ]
+    assert all(item["id"].startswith("gsm8k:q") for item in gsm_result["items"])
+    ifeval = next(result for result in results if result["name"] == "ifeval")
+    assert all(str(item["id"]).startswith("ifeval:1") for item in ifeval["items"])
+    humaneval = next(result for result in results if result["name"] == "humaneval_plus")
+    assert all(str(item["id"]).startswith("humaneval_plus:Synth/") for item in humaneval["items"])
+    run = _dump_run(tmp_path / "quick", results)
+    _rescore_matches(monkeypatch, run, data, original)
+    for name in names:
+        _shuffle_suite(data, name)
+    _rescore_matches(monkeypatch, run, data, original)
+
+
+def test_rescore_short_matches_after_the_dataset_is_shuffled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    _clear_standard_env(monkeypatch)
+    count = 12
+    data = tmp_path / "data"
+    names = ["gsm8k", "mmlu_pro", "math500", "ifeval"]
+    _materialize(
+        data,
+        {
+            "gsm8k": _gsm_rows(count),
+            "mmlu_pro": _mmlu_rows(count),
+            "math500": _math_rows(count),
+            "ifeval": _ifeval_rows(count),
+        },
+    )
+    results = _run_names(tmp_path, data, names, "short", "standard_capability")
+    original = [item for result in results for item in result["items"]]
+    assert all(item.get("passed") for item in original)
+    assert all(result["seed"] is None and result["subset"] == "short" for result in results)
+    assert len(next(result for result in results if result["name"] == "gsm8k")["items"]) == count
+    run = _dump_run(tmp_path / "short", results)
+    _rescore_matches(monkeypatch, run, data, original)
+    for name in names:
+        _shuffle_suite(data, name)
+    _rescore_matches(monkeypatch, run, data, original)
+
+
+def test_rescore_legacy_quick50_uses_the_recorded_subset_and_aborts_on_mismatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from standard_bench.load import select_rows as real_select
+    from standard_bench.rescore import RescoreError, rescore_run_dir
+    from standard_bench.scorers.gsm8k import extract_gold
+
+    _clear_standard_env(monkeypatch)
+    count = 55
+    gsm = _gsm_rows(count)
+    data = tmp_path / "data"
+    names = ["gsm8k", "ifeval"]
+    _materialize(data, {"gsm8k": gsm, "ifeval": _ifeval_rows(count)})
+    results = _run_names(tmp_path, data, names, "quick50", "standard_capability_quick")
+    original = [item for result in results for item in result["items"]]
+    assert all(item.get("passed") for item in original)
+    gsm_items = next(result for result in results if result["name"] == "gsm8k")["items"]
+    assert [item["expected"] for item in gsm_items] != [extract_gold(row["answer"]) for row in gsm[:50]]
+    run = _dump_run(tmp_path / "legacy", results)
+    rewritten = _read_items(run / "items.jsonl")
+    seen: dict[str, int] = {}
+    for item in rewritten:
+        suite = str(item.get("suite") or "")
+        index = seen.get(suite, 0)
+        seen[suite] = index + 1
+        item["id"] = f"{suite}:{index}"
+        item["subset"] = "full"
+        item["seed"] = None
+        item["subset_limit"] = None
+        if suite == "gsm8k":
+            item["expected"] = ""
+    (run / "items.jsonl").write_text(
+        "".join(json.dumps(item) + "\n" for item in rewritten),
+        encoding="utf-8",
+    )
+    calls: list[tuple] = []
+
+    def spy(rows, limit, seed):
+        calls.append((limit, seed, len(rows)))
+        return real_select(rows, limit, seed)
+
+    monkeypatch.setattr("standard_bench.rescore.select_rows", spy)
+    result = rescore_run_dir(run, data_dir=data)
+    assert _grades(_read_items(Path(result["run_dir"]) / "items.jsonl")) == _grades(original)
+    assert (50, QUICK_SEED) in {(limit, seed) for limit, seed, _count in calls}
+    for name in names:
+        _shuffle_suite(data, name)
+    with pytest.raises(RescoreError, match="Prompt text does not match"):
+        rescore_run_dir(run, data_dir=data)
+
+
+def test_rescore_full_preset_and_gpqa_align_by_id(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    _clear_standard_env(monkeypatch)
+    data = tmp_path / "data"
+    names = ["gsm8k", "mmlu_pro", "math500", "ifeval", "humaneval_plus", "mbpp_plus"]
+    _materialize(
+        data,
+        {
+            "gsm8k": _gsm_rows(4),
+            "mmlu_pro": _mmlu_rows(4),
+            "math500": _math_rows(4),
+            "ifeval": _ifeval_rows(4),
+            "humaneval_plus": _humaneval_rows(2),
+            "mbpp_plus": _mbpp_rows(2),
+        },
+    )
+    results = _run_names(tmp_path, data, names, "full", "standard_capability")
+    original = [item for result in results for item in result["items"]]
+    assert all(item.get("passed") for item in original)
+    assert all(result["subset"] == "full" and result["seed"] is None for result in results)
+    run = _dump_run(tmp_path / "full", results)
+    _rescore_matches(monkeypatch, run, data, original)
+    for name in names:
+        _shuffle_suite(data, name)
+    _rescore_matches(monkeypatch, run, data, original)
+
+    gpqa_data = tmp_path / "gpqa"
+    gpqa_rows = _gpqa_rows(8)
+    _materialize(gpqa_data, {"gpqa_diamond": gpqa_rows})
+    quick = _run_names(tmp_path, gpqa_data, ["gpqa_diamond"], "quick50", "standard_capability_gpqa")
+    gpqa_items = quick[0]["items"]
+    assert len(gpqa_items) == 8
+    assert quick[0]["seed"] == QUICK_SEED
+    assert [item["id"] for item in gpqa_items] != [f"gpqa_diamond:{row['id']}" for row in gpqa_rows]
+    assert all(item.get("passed") for item in gpqa_items)
+    assert all(item.get("prompt") == "" and item.get("response") == "" for item in gpqa_items)
+    gpqa_run = _dump_run(tmp_path / "gpqa-quick", quick)
+    saved_dir = _rescore_matches(monkeypatch, gpqa_run, gpqa_data, gpqa_items)
+    blob = (saved_dir / "items.jsonl").read_text(encoding="utf-8")
+    assert "INHOUSE_Q" not in blob
+    assert "CORRECT=" not in blob
+    assert "gold0" not in blob
+    assert all(item.get("rescored") for item in _read_items(saved_dir / "items.jsonl"))
+    _shuffle_suite(gpqa_data, "gpqa_diamond")
+    _rescore_matches(monkeypatch, gpqa_run, gpqa_data, gpqa_items)
+
+    full = _run_names(tmp_path, gpqa_data, ["gpqa_diamond"], "full", "standard_capability_gpqa")
+    assert all(item.get("passed") for item in full[0]["items"])
+    full_run = _dump_run(tmp_path / "gpqa-full", full)
+    _shuffle_suite(gpqa_data, "gpqa_diamond")
+    saved_full = _rescore_matches(monkeypatch, full_run, gpqa_data, full[0]["items"])
+    full_blob = (saved_full / "items.jsonl").read_text(encoding="utf-8")
+    assert "INHOUSE_Q" not in full_blob
+    assert "gold0" not in full_blob
