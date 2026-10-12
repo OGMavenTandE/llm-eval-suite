@@ -22,7 +22,6 @@ import importlib.util
 import json
 import logging
 import os
-import re
 import sys
 import time
 from pathlib import Path
@@ -40,7 +39,12 @@ from llm_eval.offline import (
 apply_startup_offline()
 
 from llm_eval.models.base import BaseModel, ModelResponse
-from llm_eval.models.context import strip_think_blocks
+from llm_eval.models.context import (
+    answer_after_think,
+    prompt_opened_think,
+    scored_after_thinking,
+    think_split,
+)
 
 logger = logging.getLogger("llm_eval.models.hf_folder")
 
@@ -48,10 +52,6 @@ STAGE1_MIN_TRANSFORMERS = (5, 5)
 MULTIMODAL_ARCHITECTURES = {"Gemma4ForConditionalGeneration"}
 STAGE1_MODEL_TYPES = {"gemma4", "nemotron_h", "lfm2"}
 MAMBA_MODEL_TYPES = {"nemotron_h", "granitemoehybrid"}
-
-_THINK_CLOSE = re.compile(r"</think>", re.IGNORECASE)
-_THINK_OPEN_TAG = re.compile(r"<think\b", re.IGNORECASE)
-
 
 def torch_device_name(torch_module) -> str:
     """``cuda`` when this torch build can see a GPU, otherwise ``cpu``."""
@@ -175,28 +175,6 @@ def mamba_execution_path(model_type: str, name: str = "", *, platform: str | Non
     if ssm is not None and conv is not None:
         return "mamba-ssm"
     return "torch"
-
-
-def prompt_opened_think(prompt: str) -> bool:
-    """True when the chat template left an unclosed ``<think>`` on the prompt."""
-    tail = (prompt or "")[-120:].lower()
-    return "<think>" in tail and "</think>" not in tail
-
-
-def answer_after_think(raw: str, *, prompt_opened_think: bool = False) -> str:
-    """Scored text. Drops a closed think block and an unterminated one.
-
-    When the template opened ``<think>`` in the prompt, the completion
-    starts inside that block. Text through ``</think>`` is dropped. If
-    the close tag never arrives, the completion is still thinking.
-    """
-    text = raw or ""
-    if prompt_opened_think and not _THINK_OPEN_TAG.search(text):
-        close = _THINK_CLOSE.search(text)
-        if close is None:
-            return ""
-        text = text[close.end() :]
-    return strip_think_blocks(text)
 
 
 _THINK_MARKERS = (
@@ -421,23 +399,11 @@ def _token_count(tokens) -> int:
 
 
 def _think_split(text: str, marker: str) -> tuple[bool, str]:
-    """Whether ``marker`` closed the think block, and the text after it."""
-    if not text or not marker:
-        return False, ""
-    index = text.lower().find(marker.lower())
-    if index < 0:
-        return False, ""
-    return True, text[index + len(marker) :]
+    return think_split(text, marker)
 
 
 def _scored_after_thinking(raw_text: str, marker: str) -> str:
-    """Answer text after the think block. The block itself is not scored."""
-    if marker.lower() == "</think>":
-        return answer_after_think(raw_text, prompt_opened_think=True)
-    closed, after = _think_split(raw_text, marker)
-    if closed:
-        return strip_think_blocks(after)
-    return ""
+    return scored_after_thinking(raw_text, marker)
 
 
 class HuggingFaceFolderModel(BaseModel):
@@ -607,6 +573,8 @@ class HuggingFaceFolderModel(BaseModel):
                 prompt_over_budget=True,
                 prompt_budget_error=message,
                 stopped_on_newline_run=False,
+                think_marker="",
+                prompt_opened_think=opened_think,
             )
         if use_thinking:
             return self._generate_with_thinking(
@@ -615,6 +583,7 @@ class HuggingFaceFolderModel(BaseModel):
                 think_cap=think_cap,
                 use_chat=use_chat,
                 prompt_budget=allowed,
+                prompt_opened_think=opened_think,
             )
         new_tokens, raw_text, latency_ms, newline_stop = self._generate_new(token_ids, answer_cap)
         completion_tokens = _token_count(new_tokens)
@@ -635,6 +604,8 @@ class HuggingFaceFolderModel(BaseModel):
             prompt_over_budget=False,
             prompt_budget_error="",
             stopped_on_newline_run=newline_stop,
+            think_marker="",
+            prompt_opened_think=opened_think,
         )
 
     def _resolved_think_cap(self, explicit) -> int:
@@ -694,6 +665,7 @@ class HuggingFaceFolderModel(BaseModel):
         think_cap: int,
         use_chat: bool,
         prompt_budget: int,
+        prompt_opened_think: bool = False,
     ) -> ModelResponse:
         """Think up to the thinking cap, then generate the answer under its own cap.
 
@@ -761,6 +733,8 @@ class HuggingFaceFolderModel(BaseModel):
             prompt_over_budget=False,
             prompt_budget_error="",
             stopped_on_newline_run=bool(think_newline or answer_newline),
+            think_marker=marker,
+            prompt_opened_think=marker.lower() == "</think>" or bool(prompt_opened_think),
         )
 
     def _response(
@@ -781,6 +755,8 @@ class HuggingFaceFolderModel(BaseModel):
         prompt_over_budget: bool,
         prompt_budget_error: str,
         stopped_on_newline_run: bool = False,
+        think_marker: str = "",
+        prompt_opened_think: bool = False,
     ) -> ModelResponse:
         return ModelResponse(
             text=text,
@@ -807,6 +783,8 @@ class HuggingFaceFolderModel(BaseModel):
                 "prompt_over_budget": prompt_over_budget,
                 "prompt_budget_error": prompt_budget_error,
                 "stopped_on_newline_run": stopped_on_newline_run,
+                "think_marker": think_marker,
+                "prompt_opened_think": bool(prompt_opened_think),
             },
         )
 
