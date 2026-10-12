@@ -15,6 +15,7 @@ from llm_eval.offline import activate_run_offline
 
 from standard_bench import COUNTS_TOWARD_DOW_SCORE, SUITE_VERSION
 from standard_bench.catalog import suite_spec
+from standard_bench.identity import index_rows, stable_row_id
 from standard_bench.load import load_file, load_suite, select_rows
 from standard_bench.manifest import HashMismatch, ManifestError
 from standard_bench.protocol import GPQA_SUITE, QUICK_SEED, protocol_name, subset_limits
@@ -239,11 +240,14 @@ def _score(suite: str, response: str, private: dict, limits: RunLimits) -> dict:
     raise KeyError(suite)
 
 
-def _row_id(suite: str, index: int, row: dict) -> str:
-    for key in ("task_id", "id", "question_id", "key", "unique_id"):
-        if row.get(key) not in (None, ""):
-            return f"{suite}:{row.get(key)}"
-    return f"{suite}:{index}"
+def _row_id(suite: str, _index: int, row: dict) -> str:
+    """Stable id for one dataset row.
+
+    Position is not part of the id. Subset position changes when quick50
+    shuffles, and a rescore that treated that position as the dataset row
+    graded the saved prediction against a different gold answer.
+    """
+    return stable_row_id(suite, row)
 
 
 def _aggregate(suite: str, items: list[dict]) -> dict:
@@ -338,6 +342,9 @@ def run_standard_suite(ctx, config: dict, suite: str) -> dict:
             "GPQA Diamond was not run. The customer kit does not include it.",
         )
     rows, entry = loaded
+    # Ids have to be unique on the full file. A duplicate would make rescore
+    # guess, so the run stops before it sends a prompt.
+    index_rows(suite, rows)
     dropped = exclusions_for(suite)
     if dropped:
         rows = [row for row in rows if str(row.get("task_id")) not in dropped]
@@ -361,8 +368,8 @@ def run_standard_suite(ctx, config: dict, suite: str) -> dict:
     done = 0
     total = len(rows)
     redact = suite == "gpqa_diamond"
-    for index, row in enumerate(rows):
-        item_id = _row_id(suite, index, row)
+    for row in rows:
+        item_id = stable_row_id(suite, row)
         if item_id in ctx.completed_ids:
             done += 1
             continue
