@@ -301,6 +301,35 @@ def create_app(
                 names.append(name)
         return {"models": names}
 
+    @app.get("/api/servers/presets")
+    def server_presets():
+        from llm_eval.models.served import SERVER_PRESETS
+
+        return {"presets": [preset.as_dict() for preset in SERVER_PRESETS.values()]}
+
+    @app.get("/api/servers/health")
+    def server_health(base_url: str, server: str = "vllm"):
+        from llm_eval.models.served import check_health, preset_for
+
+        try:
+            preset = preset_for(server)
+            return check_health(base_url or preset.default_base_url, preset.health_path)
+        except (RuntimeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/servers/models")
+    def server_models(base_url: str, server: str = "vllm"):
+        from llm_eval.models.served import list_models, preset_for
+
+        try:
+            preset = preset_for(server)
+            listed = list_models(base_url or preset.default_base_url)
+        except (RuntimeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if not listed["ok"]:
+            raise HTTPException(status_code=502, detail=listed.get("error") or "Could not list models")
+        return listed
+
     @app.get("/api/datasets/sample")
     def sample_info():
         path = app.state.sample_dataset

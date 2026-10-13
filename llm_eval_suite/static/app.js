@@ -194,8 +194,49 @@ async function loadOffline() {
   applyOfflineStatus();
 }
 
+const SERVER_DEFAULTS = {
+  ollama: { url: "http://127.0.0.1:11434", label: "Installed Ollama models", note: "" },
+  vllm: {
+    url: "http://127.0.0.1:8000/v1",
+    label: "vLLM models",
+    note: "Chat completions. vLLM applies the model chat template. Max tokens default to 512 because vLLM's own default is 16. Streaming is on so the test can report time to first token.",
+  },
+  llama_cpp: {
+    url: "http://127.0.0.1:8080/v1",
+    label: "llama.cpp models",
+    note: "Chat completions. llama.cpp applies the GGUF chat template. Max tokens default to 512. Streaming is on so the test can report time to first token.",
+  },
+};
+const KNOWN_SERVER_URLS = new Set(Object.values(SERVER_DEFAULTS).map((row) => row.url));
+
+function applyServerDefaults() {
+  const type = $("conn-type").value;
+  const preset = SERVER_DEFAULTS[type];
+  const note = $("server-note");
+  const label = $("model-list-label");
+  if (!preset) {
+    if (note) {
+      note.textContent = "";
+      note.classList.add("hidden");
+    }
+    if (label) label.textContent = "Installed models";
+    return;
+  }
+  const url = $("conn-url");
+  if (!url.value.trim() || KNOWN_SERVER_URLS.has(url.value.trim())) url.value = preset.url;
+  if (type === "vllm" || type === "llama_cpp") $("conn-mode").value = "chat";
+  if (label) label.textContent = preset.label;
+  if (note) {
+    note.textContent = preset.note;
+    note.classList.toggle("hidden", !preset.note);
+  }
+}
+
 ["conn-url", "conn-type"].forEach((id) => $(id).addEventListener("input", updateCloudBanner));
-$("conn-type").addEventListener("change", updateCloudBanner);
+$("conn-type").addEventListener("change", () => {
+  applyServerDefaults();
+  updateCloudBanner();
+});
 $("offline-toggle").addEventListener("change", async () => {
   try {
     state.offline = await api("/api/offline", {
@@ -214,7 +255,12 @@ $("list-models").addEventListener("click", async () => {
   const button = $("list-models");
   button.disabled = true;
   try {
-    const data = await api("/api/ollama/tags?base_url=" + encodeURIComponent($("conn-url").value.trim() || "http://127.0.0.1:11434"));
+    const type = $("conn-type").value;
+    const base = encodeURIComponent($("conn-url").value.trim());
+    const path = type === "vllm" || type === "llama_cpp"
+      ? "/api/servers/models?server=" + encodeURIComponent(type) + "&base_url=" + base
+      : "/api/ollama/tags?base_url=" + (base || encodeURIComponent("http://127.0.0.1:11434"));
+    const data = await api(path);
     const select = $("ollama-models");
     select.innerHTML = "";
     if (!data.models.length) {
@@ -286,12 +332,15 @@ $("test-connection").addEventListener("click", async () => {
       box.textContent = data.error || "Connection failed.";
       return;
     }
-    box.textContent = [
+    const lines = [
       "Reply: " + data.reply,
       "Latency: " + data.latency_ms + " ms",
       "Tokens/s: " + (data.tokens_per_second == null ? "n/a" : data.tokens_per_second),
       "Tokens: " + (data.tokens_used == null ? "n/a" : data.tokens_used),
-    ].join("\n");
+    ];
+    if (data.ttft_ms != null) lines.push("TTFT: " + data.ttft_ms + " ms");
+    if (data.health) lines.push("Health: " + (data.health.ok ? "ok" : (data.health.error || "failed")));
+    box.textContent = lines.join("\n");
   } catch (err) {
     box.textContent = err.message;
   }
@@ -312,6 +361,8 @@ $("save-connection").addEventListener("click", async () => {
 
 const TYPE_TEXT = {
   ollama: "Ollama",
+  vllm: "vLLM",
+  llama_cpp: "llama.cpp server",
   openai: "OpenAI-compatible",
   hf: "Hugging Face folder",
   nanogpt: "nanoGPT checkpoint",

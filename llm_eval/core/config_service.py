@@ -9,7 +9,7 @@ from llm_eval.schemas.model_info import ModelInfo
 from llm_eval.schemas.run_request import RunRequest, RunValidationResult
 
 REQUIRED_CONFIG_KEYS = ("models", "evaluators", "dataset")
-SUPPORTED_PROVIDERS = ("ollama", "openai")
+SUPPORTED_PROVIDERS = ("ollama", "openai", "vllm", "llama_cpp")
 SUPPORTED_EVALUATORS = ("correctness", "latency", "robustness", "consistency", "cost")
 
 
