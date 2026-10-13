@@ -27,6 +27,7 @@ _CONNECTION_KEYS = {
     "think",
     "stream",
     "remote_what",
+    "edge_stream",
 }
 
 
@@ -85,9 +86,10 @@ class OpenAIModel(BaseModel):
         if self.think is not None:
             payload["think"] = self.think
 
+        want_stream = bool(self.stream or kwargs.get("edge_stream"))
         refuse_remote_http(self.base_url, what=self.remote_what)
         start = time.perf_counter()
-        if self.stream:
+        if want_stream:
             streamed = self._generate_stream(url, payload, headers, start)
             if streamed is not None:
                 return streamed

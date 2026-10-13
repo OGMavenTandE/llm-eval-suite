@@ -96,6 +96,30 @@ def _seed(runs: Path) -> None:
             },
             "suites": [{"name": "garak", "source": "fixture", "label": "Fixture / smoke (no live model call)", "notes": "fixture"}],
             "analysis": {},
+            "edge_metrics": {
+                "concurrency": 1,
+                "ttft_ms": {"value": "n/a", "reason": "connector did not stream"},
+                "output_tokens_per_second": {"value": 42.5, "reason": ""},
+                "latency_ms": {
+                    "p50": {"value": 18.0, "reason": ""},
+                    "p95": {"value": 40.0, "reason": ""},
+                    "n": 2,
+                },
+                "peak_vram_mib": {"value": "n/a", "reason": "no NVIDIA GPU detected"},
+                "peak_ram_mib": {"value": 8192.0, "reason": ""},
+                "power_watts_average": {"value": "n/a", "reason": "no NVIDIA GPU detected"},
+                "power_watts_peak": {"value": "n/a", "reason": "no NVIDIA GPU detected"},
+                "joules_per_output_token": {"value": "n/a", "reason": "no NVIDIA GPU detected"},
+                "hardware": {
+                    "gpu": {"value": "n/a", "reason": "no NVIDIA GPU detected"},
+                    "driver": {"value": "n/a", "reason": "no NVIDIA GPU detected"},
+                    "cuda": {"value": "n/a", "reason": "no NVIDIA GPU detected"},
+                    "cpu": {"value": "Test CPU", "reason": ""},
+                    "ram_mib": {"value": 16384, "reason": ""},
+                    "os": {"value": "Linux", "reason": ""},
+                    "power_mode": {"value": "n/a", "reason": "power mode was not reported"},
+                },
+            },
         },
         [live_fail, fixture_fail],
     )
@@ -323,10 +347,14 @@ def _launch():
     try:
         browser = playwright.chromium.launch(headless=True)
     except Exception as exc:
-        playwright.stop()
         if os.environ.get("GITHUB_ACTIONS") == "true" and sys.platform.startswith("linux"):
+            playwright.stop()
             pytest.fail(f"Playwright chromium did not launch: {exc}")
-        pytest.skip(f"Playwright chromium is not installed: {exc}")
+        try:
+            browser = playwright.chromium.launch(channel="chrome", headless=True)
+        except Exception:
+            playwright.stop()
+            pytest.skip(f"Playwright chromium is not installed: {exc}")
     return playwright, browser
 
 
@@ -393,6 +421,13 @@ def test_screens_load_and_invalid_score_is_withheld(tmp_path: Path):
         scorecard = page.locator("#scorecard").inner_text()
         assert "Score withheld" in scorecard
         assert "%" not in scorecard
+        edge = page.locator("#edge-metrics").inner_text()
+        assert "n/a" in edge
+        assert "no NVIDIA GPU detected" in edge
+        assert "connector did not stream" in edge
+        assert "42.5" in edge
+        assert "p50 18" in edge
+        assert "Test CPU" in edge
         assert "1 failing live prompt" in page.locator("#failures").inner_text()
         assert "not counted" in page.locator("#failures").inner_text()
         assert page.locator("#analysis-text").get_attribute("tabindex") == "0"

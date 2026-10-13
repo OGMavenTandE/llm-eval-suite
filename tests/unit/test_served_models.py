@@ -169,6 +169,61 @@ def test_stream_reports_ttft_and_sends_the_token_cap(server: str):
     assert ScriptedHandler.seen[0]["max_tokens"] == 128
 
 
+def test_edge_session_records_ttft_for_vllm_and_llama_cpp(server: str):
+    """Native streaming and the edge_stream hook both land on the scorecard."""
+    from llm_eval.edge.metrics import summarize_power
+    from llm_eval.edge.session import EdgeSession
+
+    class Quiet:
+        def start(self):
+            return None
+
+        def stop(self):
+            return []
+
+        def summary(self, output_tokens):
+            return summarize_power(
+                [],
+                gpu_enabled=False,
+                gpu_reason="no NVIDIA GPU detected",
+                output_tokens=output_tokens,
+            )
+
+    hardware = {
+        "gpu": {"value": "n/a", "reason": "no NVIDIA GPU detected"},
+        "endpoint": {"value": "local", "reason": ""},
+    }
+    cases = (
+        (VllmModel, "vllm", {}),
+        (LlamaCppModel, "llama_cpp", {"stream": False}),
+    )
+    for cls, kind, extra in cases:
+        ScriptedHandler.mode = "stream"
+        ScriptedHandler.seen = []
+        params = {"base_url": server, **extra}
+        model = cls("local-model", params)
+        session = EdgeSession(
+            {"type": kind, "base_url": server},
+            concurrency=1,
+            sampler=Quiet(),
+            hardware=hardware,
+        )
+        session.wrap(model)
+        session.start()
+        result = model.generate("ping")
+        summary = session.finish()
+        assert result.metadata["provider"] == kind
+        assert result.metadata["streaming"] is True
+        assert result.metadata["ttft_ms"] is not None
+        assert result.metadata["completion_tokens"] == 1
+        assert summary["ttft_ms"]["p50"]["value"] == result.metadata["ttft_ms"]
+        assert summary["ttft_ms"]["p50"]["reason"] == ""
+        assert summary["output_tokens"]["value"] == 1
+        assert isinstance(summary["output_tokens_per_second"]["value"], float)
+        assert summary["output_tokens_per_second"]["value"] > 0
+        assert ScriptedHandler.seen[0]["stream"] is True
+
+
 def test_completions_mode_skips_the_chat_template(server: str):
     model = LlamaCppModel("local-model", {"base_url": server, "mode": "completions"})
     result = model.generate("ping")
