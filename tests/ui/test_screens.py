@@ -417,6 +417,7 @@ def test_screens_load_and_invalid_score_is_withheld(tmp_path: Path):
         page.on("pageerror", lambda err: errors.append(f"pageerror: {err}"))
         page.on("console", lambda msg: errors.append(f"console: {msg.text}") if msg.type == "error" else None)
         page.goto(url, wait_until="domcontentloaded")
+        assert "Built with Llama" in (page.locator("#llama-attribution").inner_text())
         page.wait_for_function("() => document.querySelector('#results-run option[value=invalidrun]')")
         for name in ("connect", "run", "results", "compare", "judges"):
             page.click(f'button[data-tab="{name}"]')

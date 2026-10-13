@@ -21,6 +21,8 @@ That writes one tarball, `llm-eval-offline.tar.gz`. Inside it:
 - `judges/JUDGES.json`, and the judge files only when you pass `--judges-dir`.
 - `SHA256SUMS` and `manifest.json`.
 - `install.sh`.
+- `NOTICE`, which says Built with Llama.
+- `third_party/certifi/` and `third_party/tqdm/`, each with that package's license and the Mozilla Public License 2.0 text.
 
 `qwen2.5:3b-instruct` and `llama3.2:3b` are about 2 GB each, about 4 GB together. Leaving them out keeps the tarball to the wheelhouse plus the kit (the kit itself is about 5 MB). Pass `--judges-dir` to copy a model directory in. On the closed network, the same flag on `doctor` points at judges that traveled on separate media.
 

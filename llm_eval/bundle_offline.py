@@ -412,6 +412,32 @@ def _resolve_kit(
         raise BundleOfflineError(str(exc)) from exc
 
 
+def _stage_attributions(staging: Path, repo_root: Path) -> None:
+    """Copy vendored MPL-2.0 texts and the Llama attribution into the tarball."""
+    notice = repo_root / "NOTICE"
+    if not notice.is_file():
+        raise BundleOfflineError("NOTICE is missing. It must say Built with Llama.")
+    text = notice.read_text(encoding="utf-8")
+    if "Built with Llama" not in text:
+        raise BundleOfflineError("NOTICE must include the Built with Llama attribution.")
+    shutil.copy2(notice, staging / "NOTICE")
+    source = repo_root / "third_party"
+    required = (
+        source / "certifi" / "LICENSE",
+        source / "certifi" / "MPL-2.0",
+        source / "tqdm" / "LICENSE",
+        source / "tqdm" / "MPL-2.0",
+    )
+    missing = [str(path.relative_to(repo_root)) for path in required if not path.is_file()]
+    if missing:
+        raise BundleOfflineError("Missing third-party license files: " + ", ".join(missing) + ".")
+    for path in required:
+        mpl = path.read_text(encoding="utf-8")
+        if "Mozilla Public License" not in mpl and "MPL" not in mpl:
+            raise BundleOfflineError(f"{path.name} under {path.parent.name} is not an MPL-2.0 license file.")
+    _copy_tree(source, staging / "third_party")
+
+
 def _stage_detectors(staging: Path, source: Path | None) -> list[dict]:
     root = staging / "garak_detectors"
     root.mkdir(parents=True, exist_ok=True)
@@ -614,6 +640,7 @@ def build_offline_bundle(
         script = staging / "install.sh"
         script.write_text(render_install_sh(), encoding="utf-8", newline="\n")
         script.chmod(0o755)
+        _stage_attributions(staging, root)
         manifest = {
             "version": 1,
             "kind": "llm-eval-offline-bundle",

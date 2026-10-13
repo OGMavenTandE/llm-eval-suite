@@ -1,5 +1,9 @@
 # Benchmark licenses
 
+Built with Llama.
+
+The offline bundle includes the Mozilla Public License 2.0 text for certifi and for tqdm, under `third_party/certifi/` and `third_party/tqdm/`.
+
 These rows are the datasets behind the capability presets. The customer kit vendors the six public suites and a SHA-256 manifest. Revisions are the Hub commits recorded on 2026-10-10.
 
 GPQA Diamond is in-house only. It is not in the customer presets or the customer zip. Do not republish the questions in plain text. The authors ask that the questions not be republished. The Hub dataset is gated.
