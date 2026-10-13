@@ -5,6 +5,8 @@ It is for test and evaluation teams who need a repeatable check of a model on a 
 
 Built by [AI Eval Corp](https://aieval.org), with test and evaluation built into development.
 
+Built with Llama.
+
 ## Quick start
 
 Python 3.10 or newer. From a fresh clone:

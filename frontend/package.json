@@ -2,6 +2,8 @@
   "name": "llm-eval-workbench-ui",
   "private": true,
   "version": "0.1.0",
+  "license": "MIT",
+  "author": "AI Eval Corporation",
   "type": "module",
   "scripts": {
     "dev": "vite",

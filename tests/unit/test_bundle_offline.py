@@ -145,6 +145,15 @@ def test_bundle_packs_wheels_kit_detectors_and_a_judge_manifest(tmp_path: Path):
     prefix = BUNDLE_DIRNAME + "/"
     names = set(members)
     assert prefix + "install.sh" in names
+    assert prefix + "NOTICE" in names
+    assert b"Built with Llama" in members[prefix + "NOTICE"]
+    for package in ("certifi", "tqdm"):
+        license_name = prefix + f"third_party/{package}/LICENSE"
+        mpl_name = prefix + f"third_party/{package}/MPL-2.0"
+        assert license_name in names
+        assert mpl_name in names
+        assert b"Mozilla Public License" in members[mpl_name]
+        assert b"2.0" in members[mpl_name]
     assert prefix + "SHA256SUMS" in names
     assert prefix + "manifest.json" in names
     assert prefix + "kit/standard-capability-kit.zip" in names
