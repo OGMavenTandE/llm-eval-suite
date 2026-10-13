@@ -1714,15 +1714,18 @@ def run_council(
     ``generate_for(judge)`` returns a callable ``prompt -> text``. Tests pass
     stub callables. When omitted, each judge is built as a connection profile.
     """
-    from llm_eval_suite.connections import same_model
+    from llm_eval_suite.connections import cover_judge, same_family, same_model
 
     under_test = under_test or run.get("connection") or {}
     eligible = []
     excluded = []
     seen_models = set()
+    dropped_family = False
     for judge in judges:
-        if same_model(judge, under_test):
+        if same_model(judge, under_test) or same_family(judge, under_test):
             excluded.append(judge.get("model"))
+            if same_family(judge, under_test):
+                dropped_family = True
             continue
         model_name = (judge.get("model") or "").strip()
         if model_name and model_name in seen_models:
@@ -1730,6 +1733,17 @@ def run_council(
         if model_name:
             seen_models.add(model_name)
         eligible.append(judge)
+    if dropped_family:
+        cover = cover_judge(under_test)
+        cover_name = (cover or {}).get("model") or ""
+        if (
+            cover is not None
+            and cover_name not in seen_models
+            and not same_model(cover, under_test)
+            and not same_family(cover, under_test)
+        ):
+            eligible.append(cover)
+            seen_models.add(cover_name)
 
     payload = judge_payload(run, items)
     payload_json = json.dumps(payload, indent=2, default=str)
@@ -1743,7 +1757,7 @@ def run_council(
         return _fallback(
             template,
             payload,
-            reason="No judge was used. The model under test is not allowed to grade itself, and no other judge is configured.",
+            reason="No judge was used. The model under test is not allowed to grade itself or a model from its own family, and no other judge is configured.",
             excluded=excluded,
             number_guard="pass",
         )
@@ -1994,11 +2008,11 @@ def run_council(
 
 
 def _pick_chairman(usable, chairman_name, under_test):
-    from llm_eval_suite.connections import same_model
+    from llm_eval_suite.connections import same_family, same_model
 
     if chairman_name:
         for judge, generate in usable:
-            if judge.get("model") == chairman_name and not same_model(judge, under_test):
+            if judge.get("model") == chairman_name and not same_model(judge, under_test) and not same_family(judge, under_test):
                 return judge, generate
     return usable[0]
 

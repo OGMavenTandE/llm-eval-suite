@@ -57,7 +57,7 @@ def _wheels(tmp_path: Path) -> Path:
 
 def _judges(tmp_path: Path) -> Path:
     root = tmp_path / "judge-models"
-    for name in ("qwen2.5-3b-instruct", "llama3.2-3b"):
+    for name in ("phi4-mini", "granite4-micro", "llama3.2-3b"):
         folder = root / name
         folder.mkdir(parents=True)
         (folder / "config.json").write_text("{}\n", encoding="utf-8")
@@ -156,7 +156,8 @@ def test_bundle_packs_wheels_kit_detectors_and_a_judge_manifest(tmp_path: Path):
     judges = json.loads(members[prefix + "judges/JUDGES.json"].decode("utf-8"))
     assert judges["included"] is False
     assert judges["bytes"] == 0
-    assert "qwen2.5:3b-instruct" in judges["tradeoff"]
+    assert "phi4-mini" in judges["tradeoff"]
+    assert "granite4:micro" in judges["tradeoff"]
     assert "about 4 GB" in judges["tradeoff"]
     assert JUDGE_TRADEOFF in judges["tradeoff"]
     detectors = json.loads(members[prefix + "garak_detectors/DETECTORS.json"].decode("utf-8"))
@@ -189,7 +190,8 @@ def test_bundle_can_embed_judge_files(tmp_path: Path):
     judges = json.loads(members[BUNDLE_DIRNAME + "/judges/JUDGES.json"].decode("utf-8"))
     assert judges["included"] is True
     assert judges["bytes"] > 0
-    assert BUNDLE_DIRNAME + "/judges/qwen2.5-3b-instruct/config.json" in members
+    assert BUNDLE_DIRNAME + "/judges/phi4-mini/config.json" in members
+    assert BUNDLE_DIRNAME + "/judges/granite4-micro/config.json" in members
 
 
 def test_missing_wheelhouse_is_an_error(tmp_path: Path):
@@ -337,7 +339,8 @@ def test_doctor_fails_open_egress_proxy_hashes_and_a_required_gpu(
     assert "HTTPS_PROXY" in by_name["proxy"].detail
     assert by_name["hashes"].ok is False
     assert by_name["judges"].ok is False
-    assert "qwen2.5:3b-instruct" in by_name["judges"].detail
+    assert "phi4-mini" in by_name["judges"].detail
+    assert "granite4:micro" in by_name["judges"].detail
     assert by_name["gpu"].ok is False
     report = format_report(checks)
     assert report.endswith("OVERALL FAIL\n")

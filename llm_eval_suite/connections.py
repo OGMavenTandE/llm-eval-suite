@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import uuid
 from pathlib import Path
 from urllib.parse import urlparse
@@ -17,22 +18,28 @@ from llm_eval.offline import hub_allowed, hub_refused_message, refuse_remote_htt
 DEFAULT_JUDGE_TIMEOUT = 90
 DEFAULT_JUDGE_MAX_TOKENS = 1200
 
+# phi4-mini is MIT. granite4:micro is Apache-2.0. llama3.2:3b grades when the
+# model under test is in the Phi or Granite family.
+COVER_JUDGE_MODEL = "llama3.2:3b"
+
 DEFAULT_JUDGES = [
     {
-        "name": "qwen2.5:3b-instruct",
+        "name": "phi4-mini",
         "type": "ollama",
         "base_url": "http://127.0.0.1:11434",
-        "model": "qwen2.5:3b-instruct",
+        "model": "phi4-mini",
         "mode": "chat",
         "cloud": False,
+        "license": "MIT",
     },
     {
-        "name": "llama3.2:3b",
+        "name": "granite4:micro",
         "type": "ollama",
         "base_url": "http://127.0.0.1:11434",
-        "model": "llama3.2:3b",
+        "model": "granite4:micro",
         "mode": "chat",
         "cloud": False,
+        "license": "Apache-2.0",
     },
 ]
 
@@ -378,6 +385,43 @@ def same_model(judge: dict, under_test: dict) -> bool:
     left = (judge.get("model") or "").strip()
     right = (under_test.get("model") or "").strip()
     return bool(left) and left == right
+
+
+def model_family(name: str | None) -> str:
+    """Family id for a judge or a model under test. Empty when it is neither Phi, Granite, nor Llama."""
+    raw = (name or "").strip().lower()
+    if not raw:
+        return ""
+    tokens = [part for part in re.split(r"[^a-z0-9]+", raw) if part]
+    if any(token.startswith("phi") for token in tokens):
+        return "phi"
+    if any(token.startswith("granite") for token in tokens):
+        return "granite"
+    if any(token.startswith("llama") for token in tokens):
+        return "llama"
+    return ""
+
+
+def same_family(judge: dict, under_test: dict) -> bool:
+    """A judge does not grade a model from its own family."""
+    left = model_family(judge.get("model") or judge.get("name"))
+    right = model_family(under_test.get("model") or under_test.get("name"))
+    return bool(left) and left == right
+
+
+def cover_judge(under_test: dict) -> dict | None:
+    """llama3.2:3b grades when the model under test is Phi or Granite."""
+    family = model_family(under_test.get("model") or under_test.get("name"))
+    if family not in {"phi", "granite"}:
+        return None
+    return {
+        "name": COVER_JUDGE_MODEL,
+        "type": "ollama",
+        "base_url": "http://127.0.0.1:11434",
+        "model": COVER_JUDGE_MODEL,
+        "mode": "chat",
+        "cloud": False,
+    }
 
 
 def detect_path(path: str) -> dict:
