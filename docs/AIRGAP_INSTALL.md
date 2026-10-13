@@ -4,6 +4,56 @@ This is the documented path for copying LLM Eval Suite onto a closed network (IL
 
 The pins match `llm_eval_suite/eval_env.py` and `run_app.bat`: torch 2.13.0, garak 0.17.0, transformers 5.18.0. The GPU wheel comes from the PyTorch CUDA 12.6 index.
 
+## One-command bundle
+
+On a connected machine, from the repo root:
+
+```bash
+python -m llm_eval bundle-offline --output dist/llm-eval-offline.tar.gz
+```
+
+That writes one tarball, `llm-eval-offline.tar.gz`. Inside it:
+
+- `wheelhouse/linux-x86_64/`, the wheels for that platform. The CUDA torch wheel is the largest part.
+- `wheelhouse/win-amd64/` when those wheels can be downloaded from this machine. A Windows miss is recorded in `manifest.json` and the Linux wheelhouse is still packed. `install.sh` is Linux only. On Windows, use the manual commands below with `wheelhouse/win-amd64`.
+- `kit/standard-capability-kit.zip`, the six public suites and the test kit code.
+- `garak_detectors/`, the two misleading-probe classifiers when those folders are already on the build machine.
+- `judges/JUDGES.json`, and the judge files only when you pass `--judges-dir`.
+- `SHA256SUMS` and `manifest.json`.
+- `install.sh`.
+
+`qwen2.5:3b-instruct` and `llama3.2:3b` are about 2 GB each, about 4 GB together. Leaving them out keeps the tarball to the wheelhouse plus the kit (the kit itself is about 5 MB). Pass `--judges-dir` to copy a model directory in. On the closed network, the same flag on `doctor` points at judges that traveled on separate media.
+
+The DistilBERT refutation detector is about 260 MB. The RoBERTa NLI detector is about 1.4 GB. Copy both into `models/garak_detectors` before the build if Government T&E will run the misleading probes. Empty folders are not packed. `garak_detectors/DETECTORS.json` still names the repo, the revision, and the file list, and `doctor` fails the detector check until the files are present. The command does not download those weights.
+
+The closed network needs the Python version in `manifest.json` (default 3.11). Wheels are tagged for that version.
+
+To pack files you already have, without a package index or a dataset fetch:
+
+```bash
+python -m llm_eval bundle-offline --output dist/llm-eval-offline.tar.gz --no-download --no-fetch --wheelhouse wheelhouse --kit dist/standard-capability-kit.zip --detectors models/garak_detectors
+```
+
+## On the closed network, from the tarball
+
+Copy the tarball on approved media. Then:
+
+```bash
+tar -xzf llm-eval-offline.tar.gz
+cd llm-eval-offline
+./install.sh
+```
+
+`install.sh` creates `.venv-eval`, installs from the wheelhouse with `--no-index`, unpacks the kit, and runs `python -m llm_eval doctor --bundle .`. It does not call the network. Doctor prints `PASS` or `FAIL` for egress, proxy and package-index variables, the SHA-256 manifest, the capability kit, detector files, judge files, the Python version, and the GPU. The exit status is 0 only when every line passes. A machine that can open a socket to the public internet fails the egress check. A set `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, or `PIP_INDEX_URL` fails the proxy check.
+
+A missing GPU is a pass unless you add `--require-gpu`. Use that on a Galleon, where a GPU is expected:
+
+```bash
+python -m llm_eval doctor --bundle . --require-gpu --judges-dir /path/to/ollama/models
+```
+
+The step-by-step wheelhouse below is the same install without the tarball.
+
 ## On the connected build machine
 
 From the repo root, with Python 3.10 or newer:

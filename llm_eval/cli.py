@@ -9,6 +9,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="llm_eval",
         description="LLM Evaluation Suite — run evaluations from a YAML config.",
+        epilog=(
+            "Offline bundle: python -m llm_eval bundle-offline. "
+            "Air-gap check: python -m llm_eval doctor."
+        ),
     )
     parser.add_argument(
         "--config",
@@ -48,6 +52,21 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv=None):
+    if argv is None:
+        argv = sys.argv[1:]
+    else:
+        argv = list(argv)
+    if argv and argv[0] == "bundle-offline":
+        from llm_eval.bundle_offline import main as bundle_main
+
+        bundle_main(argv[1:])
+        return
+    if argv and argv[0] == "doctor":
+        from llm_eval.doctor import main as doctor_main
+
+        doctor_main(argv[1:])
+        return
+
     parser = build_parser()
     args = parser.parse_args(argv)
 
