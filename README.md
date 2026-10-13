@@ -48,7 +48,7 @@ The engine runs YAML configs against local or API-backed models, writes timestam
 ## Current capabilities
 
 - YAML-driven evaluations with no code changes required
-- Model connectors: Ollama, OpenAI-compatible, and a local Hugging Face folder
+- Model connectors: Ollama, OpenAI-compatible, vLLM, llama.cpp server, and a local Hugging Face folder
 - nanoGPT `ckpt.pt` to a Hugging Face GPT-2 folder, with a logits check
 - Five built-in evaluators: correctness, latency, robustness, consistency, cost
 - Presets: Quick, Standard, Full, Government T&E, Standard capability, and Standard capability quick check
@@ -63,6 +63,8 @@ The engine runs YAML configs against local or API-backed models, writes timestam
 Ollama example: start Ollama, choose type Ollama, base URL `http://127.0.0.1:11434`, and a model such as `llama3.2:3b`. Use Test connection, save the profile, pick the Quick preset, and click Run. The API key can stay blank for a local server. The Run screen shows probe count, prompt count, and a time estimate before you start. That estimate is reused only after a measured run of the same model, endpoint, and suite. Otherwise it stays on Estimating until this run has timed a few prompts. While garak is running, the progress line shows the attempt count.
 
 Hugging Face folder example: point the folder field at a local model directory that already has `config.json` and a tokenizer (a GPT-2 Medium export is the expected shape). Set max context to `1024` for GPT-2. Base models should use completions mode. Prompt plus new tokens are clamped to that window (the prompt is shortened from the left).
+
+vLLM and llama.cpp server are separate connectors on the OpenAI chat API. Both default to chat completions so the server applies its chat template, a 512 token cap, and streaming so Test connection can report time to first token. vLLM's base URL is `http://127.0.0.1:8000/v1`. llama.cpp server's is `http://127.0.0.1:8080/v1`. TensorRT-LLM and NVIDIA NIM stay on the OpenAI-compatible connector. See [docs/OPENAI_SERVERS.md](docs/OPENAI_SERVERS.md).
 
 A nanoGPT `ckpt.pt` (a file that contains `model_args`) can be converted with the button on the Connect screen, or:
 

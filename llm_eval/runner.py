@@ -14,14 +14,14 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 def _get_model_class(provider: str):
-    if provider == "ollama":
-        from llm_eval.models.ollama_model import OllamaModel
-        return OllamaModel
-    elif provider == "openai":
-        from llm_eval.models.openai_model import OpenAIModel
-        return OpenAIModel
-    else:
-        raise ValueError(f"Unknown model provider: '{provider}'. Supported: ollama, openai")
+    from llm_eval.core.config_service import SUPPORTED_PROVIDERS
+    from llm_eval.models import MODEL_REGISTRY
+
+    model_cls = MODEL_REGISTRY.get(provider)
+    if model_cls is None:
+        supported = ", ".join(SUPPORTED_PROVIDERS)
+        raise ValueError(f"Unknown model provider: '{provider}'. Supported: {supported}")
+    return model_cls
 
 
 # ---------------------------------------------------------------------------

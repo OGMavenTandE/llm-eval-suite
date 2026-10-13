@@ -130,10 +130,19 @@ class ConnectionStore:
             "trust_remote_code": bool(payload.get("trust_remote_code")),
             "use_chat_template": _chat_template_flag(payload.get("use_chat_template")),
         }
-        if profile["type"] not in {"openai", "ollama", "hf", "nanogpt"}:
-            raise ValueError("type must be openai, ollama, hf, or nanogpt")
-        if profile["type"] in {"openai", "ollama"} and not profile["model"]:
+        if profile["type"] not in {"openai", "ollama", "hf", "nanogpt", "vllm", "llama_cpp"}:
+            raise ValueError("type must be openai, ollama, hf, nanogpt, vllm, or llama_cpp")
+        if profile["type"] in {"openai", "ollama", "vllm", "llama_cpp"} and not profile["model"]:
             raise ValueError("A model name is required.")
+        if profile["type"] in {"vllm", "llama_cpp"}:
+            if not profile["base_url"]:
+                profile["base_url"] = openai_base_url(profile)
+            if not payload.get("max_new_tokens"):
+                profile["max_new_tokens"] = 512
+            if profile["mode"] not in {"chat", "completions"}:
+                profile["mode"] = "chat"
+            if profile["use_chat_template"] is None:
+                profile["use_chat_template"] = True
         if profile["hub"] and not profile["folder"]:
             profile["folder"] = profile["model"]
         if profile["type"] == "hf" and not profile["folder"]:
@@ -214,11 +223,19 @@ class ConnectionStore:
         )
 
 
+_SERVER_ROOTS = {
+    "ollama": "http://127.0.0.1:11434",
+    "vllm": "http://127.0.0.1:8000",
+    "llama_cpp": "http://127.0.0.1:8080",
+}
+
+
 def openai_base_url(profile: dict) -> str:
+    kind = profile.get("type") or "openai"
     base = (profile.get("base_url") or "").rstrip("/")
-    if profile.get("type") == "ollama":
+    if kind in _SERVER_ROOTS:
         if not base:
-            base = "http://127.0.0.1:11434"
+            base = _SERVER_ROOTS[kind]
         if not base.endswith("/v1"):
             return base + "/v1"
     if not base:
@@ -276,6 +293,22 @@ def build_model(profile: dict) -> BaseModel:
         raise RuntimeError(
             "Convert the nanoGPT checkpoint to a Hugging Face folder, then connect that folder."
         )
+    if kind in {"vllm", "llama_cpp"}:
+        from llm_eval.models.served import model_for, preset_for
+
+        preset = preset_for(kind)
+        params = {
+            "base_url": openai_base_url(profile),
+            "api_key": profile.get("api_key") or "",
+            "mode": profile.get("mode") or preset.mode,
+            "timeout": profile.get("timeout") or 120,
+            "max_new_tokens": int(profile.get("max_new_tokens") or preset.default_max_tokens),
+            "stream": True if profile.get("stream") is None else bool(profile.get("stream")),
+        }
+        if profile.get("max_context"):
+            params["max_context"] = int(profile["max_context"])
+        refuse_remote_http(params["base_url"], what="remote endpoint")
+        return model_for(kind)(profile.get("model") or "model", params)
     params = {
         "base_url": openai_base_url(profile),
         "api_key": profile.get("api_key") or "",
@@ -294,18 +327,22 @@ def build_model(profile: dict) -> BaseModel:
 
 def test_connection(profile: dict, model: BaseModel | None = None, prompt: str | None = None) -> dict:
     prompt = prompt or "Reply with the single word pong."
+    health = None
+    kind = profile.get("type")
+    if model is None and kind in {"vllm", "llama_cpp"}:
+        from llm_eval.models.served import check_health, preset_for
+
+        try:
+            health = check_health(openai_base_url(profile), preset_for(kind).health_path)
+        except (RuntimeError, ValueError) as exc:
+            return _failed_test(str(exc), health=None)
+        if not health["ok"]:
+            return _failed_test(health.get("error") or "Health check failed.", health=health)
     try:
         target = model or build_model(profile)
         result = target.generate(prompt, max_tokens=32)
     except Exception as exc:  # noqa: BLE001 - returned to the connect screen
-        return {
-            "ok": False,
-            "reply": "",
-            "latency_ms": None,
-            "tokens_per_second": None,
-            "tokens_used": None,
-            "error": str(exc),
-        }
+        return _failed_test(str(exc), health=health)
     seconds = (result.latency_ms or 0) / 1000
     tokens = result.tokens_used
     rate = None
@@ -317,7 +354,22 @@ def test_connection(profile: dict, model: BaseModel | None = None, prompt: str |
         "latency_ms": round(result.latency_ms, 2),
         "tokens_per_second": rate,
         "tokens_used": tokens,
+        "ttft_ms": (result.metadata or {}).get("ttft_ms"),
+        "health": health,
         "error": None,
+    }
+
+
+def _failed_test(error: str, health: dict | None) -> dict:
+    return {
+        "ok": False,
+        "reply": "",
+        "latency_ms": None,
+        "tokens_per_second": None,
+        "tokens_used": None,
+        "ttft_ms": None,
+        "health": health,
+        "error": error,
     }
 
 

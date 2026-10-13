@@ -52,7 +52,7 @@
     <section id="connect" class="page">
       <header class="page-head">
         <h2>Connect a model</h2>
-        <p class="lede">Local servers do not need an API key. Leave it blank for Ollama, LM Studio, llama.cpp, and other OpenAI-compatible endpoints on this machine.</p>
+        <p class="lede">Local servers do not need an API key. Leave it blank for Ollama, vLLM, llama.cpp server, and other OpenAI-compatible endpoints on this machine.</p>
       </header>
       <div class="layout-split">
         <div class="stack">
@@ -67,6 +67,8 @@
                 <label for="conn-type">Type</label>
                 <select id="conn-type">
                   <option value="ollama">Ollama</option>
+                  <option value="vllm">vLLM</option>
+                  <option value="llama_cpp">llama.cpp server</option>
                   <option value="openai">OpenAI-compatible endpoint</option>
                   <option value="hf">Hugging Face folder</option>
                   <option value="nanogpt">nanoGPT checkpoint</option>
@@ -81,7 +83,7 @@
                 <input id="conn-model" placeholder="llama3.2:3b" spellcheck="false">
               </div>
               <div class="field">
-                <label for="ollama-models">Installed Ollama models</label>
+                <label id="model-list-label" for="ollama-models">Installed Ollama models</label>
                 <div class="input-with-button">
                   <select id="ollama-models"><option value="">Not listed yet</option></select>
                   <button id="list-models" type="button">List models</button>
@@ -103,6 +105,7 @@
                 <input id="conn-context" type="number" min="8" placeholder="1024 for GPT-2">
               </div>
             </div>
+            <p id="server-note" class="hint hidden"></p>
             <label class="check" for="offline-toggle">
               <input id="offline-toggle" type="checkbox">
               Offline mode. Blocks the OpenAI cloud API and refuses weight downloads.

@@ -87,6 +87,38 @@ def _probe_ollama(base_url: str = "http://localhost:11434", timeout: float = 1.0
         return False, "error", set()
 
 
+def _server_reachable(provider: str) -> bool:
+    from llm_eval.models.served import check_health, preset_for
+
+    preset = preset_for(provider)
+    try:
+        return bool(check_health(preset.default_base_url, preset.health_path, timeout=1.0)["ok"])
+    except (RuntimeError, ValueError):
+        return False
+
+
+def _apply_server_probe(item: dict, provider: str, name: str) -> None:
+    from llm_eval.models.served import list_models, preset_for
+
+    preset = preset_for(provider)
+    if not _server_reachable(provider):
+        item["connection_status"] = "unreachable"
+        item["available"] = False
+        item["warning_message"] = f"{preset.label} is not reachable at {preset.default_base_url}."
+        return
+    item["connection_status"] = "reachable"
+    try:
+        listed = list_models(preset.default_base_url, timeout=1.0)
+    except (RuntimeError, ValueError):
+        listed = {"ok": False, "models": []}
+    names = set(listed.get("models") or [])
+    if listed.get("ok") and name in names:
+        item["available"] = True
+        return
+    item["available"] = False
+    item["warning_message"] = f"Model '{name}' was not reported by {preset.label}."
+
+
 def discover_models(settings: AppSettings, config_service: ConfigService | None = None) -> tuple[list[dict], list[str]]:
     config_service = config_service or get_config_service()
     seen: dict[tuple[str, str], dict] = {}
@@ -127,6 +159,8 @@ def discover_models(settings: AppSettings, config_service: ConfigService | None 
         elif provider == "openai":
             item["connection_status"] = "configured"
             item["warning_message"] = "OpenAI availability is not probed automatically in offline mode."
+        elif provider in {"vllm", "llama_cpp"}:
+            _apply_server_probe(item, provider, name)
 
     models = sorted(seen.values(), key=lambda item: (item["provider"], item["name"]))
     return models, sorted(providers)
@@ -146,6 +180,9 @@ def build_system_status(settings: AppSettings) -> dict:
         warnings.append(f"No datasets found in {settings.datasets_dir}.")
     if "ollama" in providers and not _probe_ollama()[0]:
         warnings.append("Ollama provider is referenced but not reachable locally.")
+    for provider, label in (("vllm", "vLLM"), ("llama_cpp", "llama.cpp server")):
+        if provider in providers and not _server_reachable(provider):
+            warnings.append(f"{label} is referenced but not reachable at its default local URL.")
 
     return {
         "app_version": __import__("llm_eval").__version__,
