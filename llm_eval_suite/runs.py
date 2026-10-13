@@ -17,7 +17,7 @@ from llm_eval.datasets.loader import load_dataset
 from llm_eval.garak.live import is_empty_generation, validity_from_items
 from llm_eval_suite.compare import compare_runs
 from llm_eval_suite.council import run_council
-from llm_eval_suite.presets import estimate_preset, expand_preset
+from llm_eval_suite.presets import apply_per_suite, estimate_preset, expand_preset
 from llm_eval_suite.report_html import render_report
 from llm_eval_suite.scoring import live_failures, scorecard, withhold_category_scores
 from llm_eval_suite.suites import RUNNERS, SuiteContext, planned_suite_total
@@ -232,6 +232,7 @@ class RunManager:
         in_process: bool | None = None,
         watch_cancel: bool = False,
         offline: bool | None = None,
+        per_suite: int | None = None,
     ) -> dict:
         if preset_id == "dow_bench":
             from dow_bench.meta import exclusion_reason
@@ -249,6 +250,8 @@ class RunManager:
             run_dir = self.runs_dir / run_id
             run_dir.mkdir(parents=True, exist_ok=True)
         expanded = expand_preset(preset_id)
+        if per_suite is not None:
+            expanded = apply_per_suite(expanded, per_suite)
         if offline:
             expanded = {**expanded, "offline": True}
         rows = load_dataset(dataset_path)

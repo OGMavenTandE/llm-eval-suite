@@ -12,7 +12,8 @@ from llm_eval.edge.quant import build_delta_report, render_html, render_markdown
 from llm_eval.edge.session import edge_concurrency
 from llm_eval.models.base import BaseModel, ModelResponse
 from llm_eval_suite.compare import compare_runs
-from llm_eval_suite.presets import expand_preset, list_presets
+from llm_eval_suite.presets import apply_per_suite, expand_preset, list_presets
+from standard_bench.runner import resolve_limit
 
 
 class ReplyModel(BaseModel):
@@ -111,7 +112,16 @@ def test_accuracy_tolerance_and_power_deltas():
     assert benchmark["name"] == "gsm8k"
     assert benchmark["delta"] == -0.25
     assert benchmark["status"] == "fail"
+    assert benchmark["baseline_n"] == 4
+    assert benchmark["variant_passed"] == 3
+    assert benchmark["within_noise"] is True
+    assert benchmark["note"] == "within ±1 item"
     assert benched["verdict"] == "fail"
+    text = render_markdown(benched)
+    html = render_html(benched)
+    assert "3/4" in text
+    assert "within ±1 item" in text
+    assert "within ±1 item" in html
     speed = {row["name"]: row for row in variant["speed"]}
     assert speed["output_tokens_per_second"]["delta"] == 40.0
     power = {row["name"]: row for row in variant["power"]}
@@ -126,6 +136,75 @@ def test_accuracy_tolerance_and_power_deltas():
     )
     assert tight["verdict"] == "fail"
     assert tight["variants"][0]["accuracy"]["categories"][0]["status"] == "fail"
+
+
+def _bench_items(suite: str, passed: int, n: int) -> list[dict]:
+    return [{"suite": suite, "passed": index < passed, "counts_toward_score": True} for index in range(n)]
+
+
+def test_benchmark_noise_uses_item_counts_and_the_binomial_interval():
+    one_item = build_delta_report(
+        [
+            _run("fp16", 1.0, items=_bench_items("gsm8k", 20, 20)),
+            _run("q4", 1.0, items=_bench_items("gsm8k", 19, 20)),
+        ],
+        baseline="fp16",
+        tolerance=0.02,
+    )
+    row = one_item["variants"][0]["accuracy"]["benchmarks"][0]
+    assert row["delta"] == -0.05
+    assert row["status"] == "fail"
+    assert row["baseline_n"] == 20
+    assert row["variant_n"] == 20
+    assert row["baseline_passed"] == 20
+    assert row["variant_passed"] == 19
+    assert row["within_noise"] is True
+    assert row["note"] == "within ±1 item"
+    assert one_item["verdict"] == "fail"
+
+    wide = build_delta_report(
+        [
+            _run("fp16", 1.0, items=_bench_items("mmlu_pro", 20, 20)),
+            _run("q4", 1.0, items=_bench_items("mmlu_pro", 10, 20)),
+        ],
+        baseline="fp16",
+        tolerance=0.05,
+    )
+    separated = wide["variants"][0]["accuracy"]["benchmarks"][0]
+    assert separated["within_noise"] is False
+    assert separated["note"] == ""
+    assert separated["status"] == "fail"
+
+    overlap = build_delta_report(
+        [
+            _run("fp16", 1.0, items=_bench_items("gsm8k", 27, 30)),
+            _run("q4", 1.0, items=_bench_items("gsm8k", 24, 30)),
+        ],
+        baseline="fp16",
+        tolerance=0.05,
+    )
+    noisy = overlap["variants"][0]["accuracy"]["benchmarks"][0]
+    assert noisy["note"] == "within the 95% binomial interval"
+    assert noisy["within_noise"] is True
+    assert noisy["status"] == "fail"
+    assert overlap["verdict"] == "fail"
+
+
+def test_per_suite_caps_standard_quick_and_leaves_quant_quick_at_five():
+    quick = expand_preset("standard_capability_quick")
+    names = [row["name"] for row in quick["suites"]]
+    assert names == ["mmlu_pro", "gsm8k", "math500", "ifeval", "humaneval_plus", "mbpp_plus"]
+    capped = apply_per_suite(quick, 20)
+    gsm = next(row for row in capped["suites"] if row["name"] == "gsm8k")
+    assert gsm["limit"] == 20
+    assert resolve_limit(gsm, "gsm8k") == 20
+    assert capped["per_suite"] == 20
+    smoke = apply_per_suite(expand_preset("quant_quick"), 20)
+    assert smoke["suites"][0]["max_items"] == 5
+    shrunk = apply_per_suite(expand_preset("quant_quick"), 2)
+    assert shrunk["suites"][0]["max_items"] == 2
+    with pytest.raises(ValueError):
+        apply_per_suite(quick, 0)
 
 
 def test_invalid_run_does_not_emit_an_accuracy_delta():
@@ -176,7 +255,34 @@ def test_cli_dry_run_writes_a_plan(tmp_path: Path):
     assert plan["baseline"] == "fp16"
     assert plan["variants"][1]["label"] == "q4"
     assert plan["note"] == "Dry run. No model was called."
+    assert plan["per_suite"] is None
     assert not (out / "report.json").exists()
+
+    standard = tmp_path / "standard"
+    with pytest.raises(SystemExit) as standard_exc:
+        main(
+            [
+                "quant-compare",
+                "--dry-run",
+                "--baseline",
+                "fp16=llama3.2:3b-instruct-fp16",
+                "--variant",
+                "q4=llama3.2:3b-instruct-q4_K_M",
+                "--preset",
+                "standard_capability_quick",
+                "--per-suite",
+                "20",
+                "--provider",
+                "vllm",
+                "--out",
+                str(standard),
+            ]
+        )
+    assert standard_exc.value.code == 0
+    standard_plan = json.loads((standard / "plan.json").read_text(encoding="utf-8"))
+    assert standard_plan["preset"] == "standard_capability_quick"
+    assert standard_plan["per_suite"] == 20
+    assert standard_plan["provider"] == "vllm"
 
 
 def test_cli_run_writes_reports_for_a_stub_pair(tmp_path: Path):

@@ -28,10 +28,20 @@ def build_parser() -> argparse.ArgumentParser:
     quant = sub.add_parser("quant-compare", help="Run one suite on each quantization and write a delta report.")
     quant.add_argument("--baseline", required=True, help="Baseline as label=model, for example fp16=llama3.2:3b-instruct-fp16.")
     quant.add_argument("--variant", action="append", default=[], help="Another variant as label=model. Repeat for each quantization.")
-    quant.add_argument("--provider", choices=("ollama", "openai"), default="ollama")
+    quant.add_argument("--provider", choices=("ollama", "openai", "vllm", "llama_cpp"), default="ollama")
     quant.add_argument("--base-url", default="http://127.0.0.1:11434")
-    quant.add_argument("--preset", default="quant_quick")
+    quant.add_argument(
+        "--preset",
+        default="quant_quick",
+        help="Any suite preset. quant_quick is the five-question smoke. standard_capability_quick is the quick50 standard subset.",
+    )
     quant.add_argument("--dataset", default="datasets/sample_factcheck_50.jsonl")
+    quant.add_argument(
+        "--per-suite",
+        type=int,
+        default=None,
+        help="Cap each suite at N items. Use 20 with standard_capability_quick for a shorter standard subset. A larger N does not raise quant_quick above five.",
+    )
     quant.add_argument("--tolerance", type=float, default=0.05, help="Largest accuracy drop that still passes.")
     quant.add_argument("--concurrency", type=int, default=1, help="Optional load-probe concurrency recorded by the edge metrics.")
     quant.add_argument("--out", default="runs/quant-compare")
@@ -59,6 +69,7 @@ def run_quant_compare(spec: dict, *, model_factory=None) -> dict:
             "baseline": pairs[0][0],
             "tolerance": spec["tolerance"],
             "concurrency": spec["concurrency"],
+            "per_suite": spec.get("per_suite"),
             "variants": [{"label": label, "model": model} for label, model in pairs],
             "note": "Dry run. No model was called.",
         }
@@ -87,6 +98,7 @@ def run_quant_compare(spec: dict, *, model_factory=None) -> dict:
             dataset_path=spec["dataset"],
             background=False,
             in_process=True,
+            per_suite=spec.get("per_suite"),
         )
         collected.append(
             {
@@ -115,6 +127,8 @@ def spec_from_args(args: argparse.Namespace) -> dict:
         raise ValueError("--concurrency must be at least 1.")
     if args.tolerance < 0:
         raise ValueError("--tolerance must be zero or positive.")
+    if args.per_suite is not None and args.per_suite < 1:
+        raise ValueError("--per-suite must be at least 1.")
     return {
         "baseline_pair": baseline,
         "variants": variants,
@@ -124,6 +138,7 @@ def spec_from_args(args: argparse.Namespace) -> dict:
         "dataset": args.dataset,
         "tolerance": args.tolerance,
         "concurrency": args.concurrency,
+        "per_suite": args.per_suite,
         "out": args.out,
         "dry_run": bool(args.dry_run),
     }

@@ -55,6 +55,8 @@ STANDARD_SUITE_NAMES = (
     "mbpp_plus",
 )
 
+_MAX_ITEM_SUITES = ("factcheck", "robustness", "consistency")
+
 DEMO_MODEL_A_FOLDER = r"C:\AI Eval\LLMs\nanoGPT-master\nanoGPT-master\hf-dow-news"
 DEMO_MODEL_B = "gpt2-medium"
 
@@ -278,6 +280,40 @@ def demo_pair(path: str | Path | None = None, folder: str | None = None) -> dict
         "offline": bool(body.get("offline")),
         "base_folder_env": "LLM_EVAL_DEMO_BASE_FOLDER",
     }
+
+
+def apply_per_suite(expanded: dict, per_suite: int) -> dict:
+    """Cap each suite at ``per_suite`` items.
+
+    Standard benchmarks get ``limit``, which wins over a named subset such as
+    quick50. Fact-check, robustness, and consistency get ``max_items``. An
+    existing smaller cap stays, so ``quant_quick`` remains five items when
+    the requested cap is larger. Garak's per-probe cap shrinks the same way.
+    Department of War suites keep the item file the preset selected.
+    """
+    try:
+        cap = int(per_suite)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("per_suite must be a positive integer.") from exc
+    if cap < 1:
+        raise ValueError("per_suite must be a positive integer.")
+    suites = []
+    for suite in expanded.get("suites") or []:
+        row = dict(suite)
+        name = row.get("name")
+        if name in STANDARD_SUITE_NAMES:
+            row["limit"] = cap
+        elif name in _MAX_ITEM_SUITES:
+            current = row.get("max_items")
+            row["max_items"] = cap if current in (None, "") else min(int(current), cap)
+        elif name == "garak":
+            current = row.get("max_prompts_per_probe")
+            row["max_prompts_per_probe"] = cap if current in (None, "") else min(int(current), cap)
+        suites.append(row)
+    updated = dict(expanded)
+    updated["suites"] = suites
+    updated["per_suite"] = cap
+    return updated
 
 
 def expand_preset(preset_id: str, path: str | Path | None = None) -> dict:

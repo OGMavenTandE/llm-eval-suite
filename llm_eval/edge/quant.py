@@ -1,14 +1,17 @@
 """Compare quantization variants of one model against a chosen baseline.
 
 Accuracy deltas use category pass rates and public-benchmark pass rates.
-Speed and power deltas use the edge metrics recorded on each run. An invalid
-run does not contribute an accuracy number. A missing power or latency cell
-stays n/a and does not fail the tolerance.
+Each row carries n and the passed count. A one-item swing, or a rate whose
+95% binomial intervals overlap, is marked. That mark does not change the
+verdict. Speed and power deltas use the edge metrics recorded on each run.
+An invalid run does not contribute an accuracy number. A missing power or
+latency cell stays n/a and does not fail the tolerance.
 """
 
 from __future__ import annotations
 
 import json
+import math
 from html import escape
 from pathlib import Path
 
@@ -49,6 +52,67 @@ def numeric_delta(baseline, variant, *, digits: int = 4) -> dict:
     }
 
 
+def wilson_interval(passed: int, n: int, z: float = 1.96) -> tuple[float, float]:
+    """95% Wilson score interval for a binomial pass rate."""
+    if n <= 0:
+        return (0.0, 1.0)
+    p = float(passed) / float(n)
+    z2 = z * z
+    denom = 1.0 + z2 / n
+    center = (p + z2 / (2.0 * n)) / denom
+    margin = z * math.sqrt((p * (1.0 - p) + z2 / (4.0 * n)) / n) / denom
+    return (max(0.0, center - margin), min(1.0, center + margin))
+
+
+def _passed_from_rate(rate, n) -> int | None:
+    """Recover a passed count only when the stored rate is that count over n."""
+    if rate is None or n in (None, ""):
+        return None
+    try:
+        total = int(n)
+        raw = float(rate) * total
+    except (TypeError, ValueError):
+        return None
+    if total < 0:
+        return None
+    nearest = int(round(raw))
+    if abs(raw - nearest) > 1e-6:
+        return None
+    return nearest
+
+
+def _passed_from_items(items: list[dict], category: str) -> int | None:
+    rows = [
+        item
+        for item in items
+        if item.get("category") == category and item.get("counts_toward_score", True) is not False
+    ]
+    if not rows:
+        return None
+    return sum(1 for item in rows if item.get("passed"))
+
+
+def noise_flag(baseline: dict, variant: dict) -> tuple[bool, str]:
+    """Mark a delta that is one item, or inside overlapping 95% intervals.
+
+    The mark is a note. It does not change pass or fail.
+    """
+    left = baseline.get("passed")
+    right = variant.get("passed")
+    left_n = baseline.get("sample_count")
+    right_n = variant.get("sample_count")
+    if left is None or right is None or not left_n or not right_n:
+        return False, ""
+    item_delta = abs(int(right) - int(left))
+    if item_delta <= 1:
+        return True, "within ±1 item"
+    left_lo, left_hi = wilson_interval(int(left), int(left_n))
+    right_lo, right_hi = wilson_interval(int(right), int(right_n))
+    if left_lo <= right_hi and right_lo <= left_hi:
+        return True, "within the 95% binomial interval"
+    return False, ""
+
+
 def _rate_rows(run: dict, items: list[dict]) -> tuple[list[dict], list[dict]]:
     if _invalid(run):
         return [], []
@@ -57,12 +121,18 @@ def _rate_rows(run: dict, items: list[dict]) -> tuple[list[dict], list[dict]]:
         rate = row.get("pass_rate")
         if row.get("status") in {"not_run", "withheld", "fixture"} or rate is None:
             continue
+        name = row.get("category")
+        sample_count = row.get("sample_count")
+        passed = _passed_from_items(items, name)
+        if passed is None:
+            passed = _passed_from_rate(rate, sample_count)
         categories.append(
             {
-                "name": row.get("category"),
-                "label": row.get("label") or row.get("category"),
+                "name": name,
+                "label": row.get("label") or name,
                 "pass_rate": float(rate),
-                "sample_count": row.get("sample_count"),
+                "sample_count": sample_count,
+                "passed": passed,
             }
         )
     groups: dict[str, list[dict]] = {}
@@ -76,8 +146,17 @@ def _rate_rows(run: dict, items: list[dict]) -> tuple[list[dict], list[dict]]:
     benchmarks = []
     for name in sorted(groups):
         rows = groups[name]
-        rate = sum(1 for item in rows if item.get("passed")) / len(rows)
-        benchmarks.append({"name": name, "label": name, "pass_rate": round(rate, 4), "sample_count": len(rows)})
+        passed = sum(1 for item in rows if item.get("passed"))
+        rate = passed / len(rows)
+        benchmarks.append(
+            {
+                "name": name,
+                "label": name,
+                "pass_rate": round(rate, 4),
+                "sample_count": len(rows),
+                "passed": passed,
+            }
+        )
     return categories, benchmarks
 
 
@@ -88,6 +167,14 @@ def _pair_accuracy(baseline_rows: list[dict], variant_rows: list[dict], *, toler
     for name in list(dict.fromkeys([*left.keys(), *right.keys()])):
         a = left.get(name)
         b = right.get(name)
+        counts = {
+            "baseline_n": None if a is None else a.get("sample_count"),
+            "variant_n": None if b is None else b.get("sample_count"),
+            "baseline_passed": None if a is None else a.get("passed"),
+            "variant_passed": None if b is None else b.get("passed"),
+            "within_noise": False,
+            "note": "",
+        }
         if a is None or b is None:
             paired.append(
                 {
@@ -98,13 +185,17 @@ def _pair_accuracy(baseline_rows: list[dict], variant_rows: list[dict], *, toler
                         None if b is None else b["pass_rate"],
                         "not run on both variants",
                     ),
+                    **counts,
                 }
             )
             continue
         delta = numeric_delta(a["pass_rate"], b["pass_rate"], digits=4)
         if delta["status"] == "measured":
             delta["status"] = "pass" if delta["delta"] >= -float(tolerance) else "fail"
-        paired.append({"name": name, "label": b.get("label") or a.get("label") or name, **delta})
+        within, note = noise_flag(a, b)
+        counts["within_noise"] = within
+        counts["note"] = note
+        paired.append({"name": name, "label": b.get("label") or a.get("label") or name, **delta, **counts})
     return paired
 
 
@@ -257,6 +348,7 @@ def render_markdown(report: dict) -> str:
         f"Tolerance: {report.get('tolerance')}. Verdict: {report.get('verdict')}.",
         "",
         "Accuracy deltas are the variant minus the baseline. A drop larger than the tolerance fails.",
+        "n is the item count. A note of within ±1 item, or within the 95% binomial interval, means the delta is inside sampling noise. The note does not change the verdict.",
         "Speed and power deltas are reported from the edge metrics and do not change the verdict.",
         "",
     ]
@@ -279,13 +371,16 @@ def render_markdown(report: dict) -> str:
                 continue
             lines.append(
                 _md_table(
-                    ["Name", "Baseline", "Variant", "Delta", "Status"],
+                    ["Name", "Baseline", "n", "Variant", "n", "Delta", "Noise", "Status"],
                     [
                         [
                             str(row.get("label") or row.get("name")),
                             _plain(row.get("baseline")),
+                            _count_text(row.get("baseline_passed"), row.get("baseline_n")),
                             _plain(row.get("variant")),
+                            _count_text(row.get("variant_passed"), row.get("variant_n")),
                             _fmt_delta(row),
+                            str(row.get("note") or ""),
                             str(row.get("status")),
                         ]
                         for row in rows
@@ -315,6 +410,14 @@ def render_markdown(report: dict) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def _count_text(passed, n) -> str:
+    if n in (None, ""):
+        return ""
+    if passed in (None, ""):
+        return str(n)
+    return f"{passed}/{n}"
+
+
 def _plain(value) -> str:
     if value == "n/a" or value is None:
         return "n/a"
@@ -335,15 +438,22 @@ def render_html(report: dict) -> str:
                 "<tr>"
                 f"<td>{escape(str(row.get('label') or row.get('name')))}</td>"
                 f"<td>{escape(_plain(row.get('baseline')))}</td>"
+                f"<td>{escape(_count_text(row.get('baseline_passed'), row.get('baseline_n')))}</td>"
                 f"<td>{escape(_plain(row.get('variant')))}</td>"
+                f"<td>{escape(_count_text(row.get('variant_passed'), row.get('variant_n')))}</td>"
                 f"<td>{escape(_fmt_delta(row))}</td>"
+                f"<td>{escape(str(row.get('note') or ''))}</td>"
                 f"<td>{escape(str(row.get('status')))}</td>"
                 "</tr>"
                 for row in rows
             )
-            empty = "<tr><td colspan=\"5\">No rows.</td></tr>" if not rows else body
+            empty = "<tr><td colspan=\"8\">No rows.</td></tr>" if not rows else body
             blocks.append(
-                f"<h3>{escape(title)}</h3><table><tr><th>Name</th><th>Baseline</th><th>Variant</th><th>Delta</th><th>Status</th></tr>{empty}</table>"
+                "<h3>"
+                + escape(title)
+                + "</h3><table><tr><th>Name</th><th>Baseline</th><th>n</th><th>Variant</th><th>n</th><th>Delta</th><th>Noise</th><th>Status</th></tr>"
+                + empty
+                + "</table>"
             )
         for title, key in (("Speed", "speed"), ("Power", "power")):
             rows = variant.get(key) or []
@@ -378,7 +488,7 @@ def render_html(report: dict) -> str:
 <h1>Quantization comparison</h1>
 <p>Baseline: {escape(str(report.get('baseline')))} ({escape(str(report.get('baseline_model') or ''))}).</p>
 <p>Tolerance: {escape(str(report.get('tolerance')))}. Verdict: {escape(str(report.get('verdict')))}.</p>
-<p>Accuracy deltas are the variant minus the baseline. A drop larger than the tolerance fails. Speed and power are reported and do not change the verdict.</p>
+<p>Accuracy deltas are the variant minus the baseline. A drop larger than the tolerance fails. n is the item count. A noise note means the delta is within ±1 item or inside the 95% binomial interval, and that note does not change the verdict. Speed and power are reported and do not change the verdict.</p>
 {''.join(sections)}
 </main>
 </body>
@@ -412,7 +522,9 @@ def edge_metric_deltas(left: dict, right: dict) -> list[dict]:
 __all__ = [
     "build_delta_report",
     "edge_metric_deltas",
+    "noise_flag",
     "render_html",
     "render_markdown",
+    "wilson_interval",
     "write_reports",
 ]
