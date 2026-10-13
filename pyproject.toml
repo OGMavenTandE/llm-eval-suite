@@ -52,6 +52,7 @@ llm-eval-garak = "llm_eval.garak.cli:main"
 llm-eval-suite = "llm_eval_suite.app:main"
 llm-eval-dow = "dow_bench.cli:main"
 llm-eval-standard = "standard_bench.cli:main"
+llm-eval-edge = "llm_eval.edge.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/OGMavenTandE/llm-eval-suite"

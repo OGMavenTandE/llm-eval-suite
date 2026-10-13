@@ -21,9 +21,12 @@ _PROBE_PROMPT = "Reply with the single word pong."
 def edge_concurrency(expanded: dict | None, connection: dict | None) -> int:
     expanded = expanded or {}
     connection = connection or {}
-    raw = (expanded.get("edge") or {}).get("concurrency")
-    if raw is None:
-        raw = connection.get("edge_concurrency", 1)
+    # An explicit connection value overrides the preset, so a quant compare
+    # can raise concurrency without editing the preset file.
+    if connection.get("edge_concurrency") not in (None, ""):
+        raw = connection.get("edge_concurrency")
+    else:
+        raw = (expanded.get("edge") or {}).get("concurrency", 1)
     try:
         value = int(raw)
     except (TypeError, ValueError):

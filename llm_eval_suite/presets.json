@@ -154,5 +154,13 @@
     "offline": true,
     "in_house": true,
     "gpqa_diamond": {"max_new_tokens": 1024, "prompt_budget": 4096}
+  },
+  "quant_quick": {
+    "label": "Quantization quick check",
+    "description": "Five fact-check questions for comparing quantizations of one model. Run the same preset on each variant.",
+    "warning": "Quick subset for a quantization delta, not a full evaluation. The sample fact-check file is general knowledge, not the Department of War set.",
+    "offline": true,
+    "edge": {"concurrency": 1},
+    "factcheck": {"max_items": 5, "trials": 1}
   }
 }

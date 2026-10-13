@@ -1026,6 +1026,19 @@ $("do-compare").addEventListener("click", async () => {
       html += '<div class="panel"><div class="panel-head"><h3>Prompts that changed most</h3>' +
         '<p class="hint">No prompt scores changed.</p></div></div>';
     }
+    if (data.edge && data.edge.length) {
+      html += '<div class="panel"><div class="panel-head"><h3>Speed and power</h3>' +
+        '<p class="hint">Later run minus earlier run. n/a means that counter was not measured.</p></div><div class="table-wrap">' +
+        tableHtml(
+          [{ label: "Metric" }, { label: leftLabel, num: true }, { label: rightLabel, num: true }, { label: "Change", num: true }],
+          data.edge.map((row) => {
+            const delta = row.delta === "n/a" || row.delta == null
+              ? "n/a" + (row.reason ? " (" + row.reason + ")" : "")
+              : (Number(row.delta) > 0 ? "+" + row.delta : String(row.delta));
+            return [td(row.label), td(row.baseline, "num"), td(row.variant, "num"), td(delta, "num")];
+          }),
+        ) + "</div></div>";
+    }
     out.innerHTML = html;
   } catch (err) {
     out.innerHTML = '<div class="banner banner-fail">' + escapeHtml(err.message) + "</div>";

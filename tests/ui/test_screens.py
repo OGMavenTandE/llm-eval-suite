@@ -208,6 +208,22 @@ def _seed(runs: Path) -> None:
                 "scorecard": card,
                 "suites": [],
                 "analysis": {"narrative": "Same scores.", "source_label": "Template"},
+                "edge_metrics": {
+                    "output_tokens_per_second": {
+                        "value": 40.0 if run_id == "same-a" else 55.0,
+                        "reason": "",
+                    },
+                    "latency_ms": {
+                        "p50": {"value": 20.0, "reason": ""},
+                        "p95": {"value": 30.0, "reason": ""},
+                    },
+                    "ttft_ms": {"value": "n/a", "reason": "connector did not stream"},
+                    "power_watts_average": {"value": "n/a", "reason": "no NVIDIA GPU detected"},
+                    "power_watts_peak": {"value": "n/a", "reason": "no NVIDIA GPU detected"},
+                    "joules_per_output_token": {"value": "n/a", "reason": "no NVIDIA GPU detected"},
+                    "peak_vram_mib": {"value": "n/a", "reason": "no NVIDIA GPU detected"},
+                    "peak_ram_mib": {"value": 1000.0, "reason": ""},
+                },
             },
             [shared],
         )
@@ -445,6 +461,9 @@ def test_screens_load_and_invalid_score_is_withheld(tmp_path: Path):
         option = page.locator("#compare-left option[value='same-a']").inner_text()
         assert option.split(" (")[0] in compared
         assert "No prompt scores changed" in compared
+        assert "Output tokens/s" in compared
+        assert "+15" in compared
+        assert "no NVIDIA GPU detected" in compared
         assert "Capital of France?" not in compared
         assert "482193" not in compared
         assert "T15:25" not in compared

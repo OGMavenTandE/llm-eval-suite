@@ -1,0 +1,240 @@
+"""Quantization delta report. No model server and no GPU."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from llm_eval.edge.cli import main, parse_variant, run_quant_compare
+from llm_eval.edge.quant import build_delta_report, render_html, render_markdown
+from llm_eval.edge.session import edge_concurrency
+from llm_eval.models.base import BaseModel, ModelResponse
+from llm_eval_suite.compare import compare_runs
+from llm_eval_suite.presets import expand_preset, list_presets
+
+
+class ReplyModel(BaseModel):
+    def __init__(self, name: str, reply: str):
+        super().__init__(name, {})
+        self.reply = reply
+
+    def generate(self, prompt: str, **kwargs) -> ModelResponse:
+        return ModelResponse(
+            text=self.reply,
+            latency_ms=20.0,
+            tokens_used=4,
+            metadata={"ttft_ms": 5.0, "output_tokens": 4, "eval_seconds": 0.1},
+        )
+
+
+def _edge(tokens_per_second, watts=None):
+    def cell(value, reason=""):
+        if value is None:
+            return {"value": "n/a", "reason": reason or "not measured"}
+        return {"value": value, "reason": ""}
+
+    return {
+        "ttft_ms": {"p50": cell(10.0), "p95": cell(12.0), "n": 2},
+        "output_tokens_per_second": cell(tokens_per_second),
+        "latency_ms": {"p50": cell(20.0), "p95": cell(30.0), "n": 2},
+        "power_watts_average": cell(watts, "no NVIDIA GPU detected"),
+        "power_watts_peak": cell(None if watts is None else watts + 10, "no NVIDIA GPU detected"),
+        "joules_per_output_token": cell(None, "no NVIDIA GPU detected"),
+        "peak_vram_mib": cell(None, "no NVIDIA GPU detected"),
+        "peak_ram_mib": cell(8000.0),
+    }
+
+
+def _run(label, rate, *, invalid=False, tokens=80.0, watts=100.0, items=None):
+    status = "invalid" if invalid else "completed"
+    return {
+        "label": label,
+        "model": f"llama-{label}",
+        "run": {
+            "run_id": label,
+            "status": status,
+            "validity": "invalid" if invalid else "ok",
+            "scorecard": {
+                "categories": [
+                    {
+                        "category": "hallucination_factuality",
+                        "label": "Hallucination / factuality",
+                        "status": "withheld" if invalid else "pass",
+                        "pass_rate": None if invalid else rate,
+                        "sample_count": 5,
+                        "source": "live",
+                    }
+                ]
+            },
+            "edge_metrics": _edge(tokens, watts),
+        },
+        "items": [] if items is None else items,
+    }
+
+
+def test_parse_variant_keeps_ollama_tags():
+    assert parse_variant("q4=llama3.2:3b-instruct-q4_K_M") == ("q4", "llama3.2:3b-instruct-q4_K_M")
+    with pytest.raises(ValueError):
+        parse_variant("q4")
+
+
+def test_accuracy_tolerance_and_power_deltas():
+    report = build_delta_report(
+        [_run("fp16", 1.0, tokens=80.0, watts=100.0), _run("q4", 0.95, tokens=120.0, watts=70.0)],
+        baseline="fp16",
+        tolerance=0.05,
+    )
+    assert report["verdict"] == "pass"
+    variant = report["variants"][0]
+    category = variant["accuracy"]["categories"][0]
+    assert category["delta"] == -0.05
+    assert category["status"] == "pass"
+    benched = build_delta_report(
+        [
+            _run(
+                "fp16",
+                1.0,
+                items=[{"suite": "gsm8k", "passed": True, "counts_toward_score": True}] * 4,
+            ),
+            _run(
+                "q4",
+                1.0,
+                items=[{"suite": "gsm8k", "passed": index < 3, "counts_toward_score": True} for index in range(4)],
+            ),
+        ],
+        baseline="fp16",
+        tolerance=0.05,
+    )
+    benchmark = benched["variants"][0]["accuracy"]["benchmarks"][0]
+    assert benchmark["name"] == "gsm8k"
+    assert benchmark["delta"] == -0.25
+    assert benchmark["status"] == "fail"
+    assert benched["verdict"] == "fail"
+    speed = {row["name"]: row for row in variant["speed"]}
+    assert speed["output_tokens_per_second"]["delta"] == 40.0
+    power = {row["name"]: row for row in variant["power"]}
+    assert power["power_watts_average"]["delta"] == -30.0
+    assert power["joules_per_output_token"]["delta"] == "n/a"
+    assert "NVIDIA" in power["joules_per_output_token"]["reason"]
+
+    tight = build_delta_report(
+        [_run("fp16", 1.0), _run("q4", 0.94)],
+        baseline="fp16",
+        tolerance=0.05,
+    )
+    assert tight["verdict"] == "fail"
+    assert tight["variants"][0]["accuracy"]["categories"][0]["status"] == "fail"
+
+
+def test_invalid_run_does_not_emit_an_accuracy_delta():
+    report = build_delta_report(
+        [_run("fp16", 1.0, invalid=True), _run("q4", 0.5)],
+        baseline="fp16",
+        tolerance=0.05,
+    )
+    assert report["verdict"] == "n/a"
+    row = report["variants"][0]["accuracy"]["categories"][0]
+    assert row["delta"] == "n/a"
+    assert row["reason"] == "score withheld"
+    text = render_markdown(report)
+    html = render_html(report)
+    assert "score withheld" in text
+    assert "score withheld" in html
+    assert "n/a" in text
+
+
+def test_quant_quick_preset_and_connection_concurrency():
+    expanded = expand_preset("quant_quick")
+    assert [row["name"] for row in expanded["suites"]] == ["factcheck"]
+    assert expanded["suites"][0]["max_items"] == 5
+    assert expanded["edge"]["concurrency"] == 1
+    assert any(row["id"] == "quant_quick" for row in list_presets())
+    assert edge_concurrency(expanded, {"edge_concurrency": 4}) == 4
+    assert edge_concurrency(expanded, {}) == 1
+
+
+def test_cli_dry_run_writes_a_plan(tmp_path: Path):
+    out = tmp_path / "quant"
+    with pytest.raises(SystemExit) as exc:
+        main(
+            [
+                "quant-compare",
+                "--dry-run",
+                "--baseline",
+                "fp16=llama3.2:3b-instruct-fp16",
+                "--variant",
+                "q4=llama3.2:3b-instruct-q4_K_M",
+                "--out",
+                str(out),
+            ]
+        )
+    assert exc.value.code == 0
+    plan = json.loads((out / "plan.json").read_text(encoding="utf-8"))
+    assert plan["dry_run"] is True
+    assert plan["baseline"] == "fp16"
+    assert plan["variants"][1]["label"] == "q4"
+    assert plan["note"] == "Dry run. No model was called."
+    assert not (out / "report.json").exists()
+
+
+def test_cli_run_writes_reports_for_a_stub_pair(tmp_path: Path):
+    dataset = tmp_path / "facts.jsonl"
+    dataset.write_text(
+        json.dumps({"prompt": "Capital of France?", "expected_answer": "Paris"}) + "\n",
+        encoding="utf-8",
+    )
+    out = tmp_path / "quant"
+
+    def factory(profile):
+        reply = "Paris" if "fp16" in profile["model"] else "Lyon"
+        return ReplyModel(profile["model"], reply)
+
+    result = run_quant_compare(
+        {
+            "baseline_pair": ("fp16", "llama-fp16"),
+            "variants": [("q4", "llama-q4")],
+            "provider": "ollama",
+            "base_url": "http://127.0.0.1:11434",
+            "preset": "quant_quick",
+            "dataset": str(dataset),
+            "tolerance": 0.05,
+            "concurrency": 1,
+            "out": str(out),
+            "dry_run": False,
+        },
+        model_factory=factory,
+    )
+    assert result["verdict"] == "fail"
+    markdown = (out / "report.md").read_text(encoding="utf-8")
+    html = (out / "report.html").read_text(encoding="utf-8")
+    saved = json.loads((out / "report.json").read_text(encoding="utf-8"))
+    assert "Hallucination / factuality" in markdown
+    assert "-1.0" in markdown
+    assert "Output tokens/s" in html
+    assert saved["baseline"] == "fp16"
+    assert saved["variants"][0]["speed"]
+
+
+def test_compare_view_includes_speed_and_power_deltas():
+    left = {
+        "run_id": "a",
+        "created_at": "2026-10-13T15:00:00+00:00",
+        "connection": {"model": "fp16"},
+        "scorecard": {"categories": []},
+        "edge_metrics": _edge(40.0, None),
+    }
+    right = {
+        "run_id": "b",
+        "created_at": "2026-10-13T16:00:00+00:00",
+        "connection": {"model": "q4"},
+        "scorecard": {"categories": []},
+        "edge_metrics": _edge(55.0, None),
+    }
+    compared = compare_runs(right, left, [], [])
+    by_name = {row["name"]: row for row in compared["edge"]}
+    assert by_name["output_tokens_per_second"]["delta"] == 15.0
+    assert by_name["peak_vram_mib"]["delta"] == "n/a"
+    assert "NVIDIA" in by_name["peak_vram_mib"]["reason"]
+    assert compare_runs({"run_id": "a", "scorecard": {}}, {"run_id": "b", "scorecard": {}}, [], [])["edge"] == []

@@ -137,6 +137,9 @@ def compare_runs(left: dict, right: dict, left_items: list[dict], right_items: l
         "items": [] if left_invalid or right_invalid else item_deltas,
     }
     compared["unpaired_note"] = unpaired_prompt_note(compared) if compared["unpaired_prompts"] else ""
+    from llm_eval.edge.quant import edge_metric_deltas
+
+    compared["edge"] = edge_metric_deltas(left, right)
     return compared
 
 
