@@ -64,10 +64,15 @@ def _edge_section(run: dict) -> str:
     return f"<h2>Edge performance</h2><table>{body}</table>"
 
 
+def report_css() -> str:
+    """Token stylesheet with the bundled fonts inlined, for a standalone page."""
+    if not TOKENS_PATH.is_file():
+        return ""
+    return _embed_font_urls(TOKENS_PATH.read_text(encoding="utf-8"))
+
+
 def render_report(run: dict, items: list[dict]) -> str:
-    css = ""
-    if TOKENS_PATH.is_file():
-        css = _embed_font_urls(TOKENS_PATH.read_text(encoding="utf-8"))
+    css = report_css()
     connection = run.get("connection") or {}
     dataset = run.get("dataset") or {}
     card = run.get("scorecard") or {}
