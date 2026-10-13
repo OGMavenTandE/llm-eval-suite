@@ -772,7 +772,7 @@ function td(value, cls) {
 function metricCell(cell) {
   if (!cell || typeof cell !== "object") return { text: "n/a", reason: "" };
   if (cell.value === "n/a" || cell.value == null) return { text: "n/a", reason: cell.reason || "" };
-  return { text: String(cell.value), reason: "" };
+  return { text: String(cell.value), reason: cell.reason || "" };
 }
 
 function metricPair(node) {
@@ -807,6 +807,10 @@ function renderEdge(run) {
     ["Latency (ms)", metricPair(metrics.latency_ms)],
     ["Concurrency", { text: metrics.concurrency == null ? "n/a" : String(metrics.concurrency), reason: "" }],
     ["Peak VRAM (MiB)", metricCell(metrics.peak_vram_mib)],
+  ];
+  if (metrics.baseline_vram_mib) cells.push(["Baseline VRAM (MiB)", metricCell(metrics.baseline_vram_mib)]);
+  if (metrics.vram_method) cells.push(["VRAM method", metricCell(metrics.vram_method)]);
+  cells.push(
     ["Peak RAM (MiB)", metricCell(metrics.peak_ram_mib)],
     ["Average watts", metricCell(metrics.power_watts_average)],
     ["Peak watts", metricCell(metrics.power_watts_peak)],
@@ -818,7 +822,7 @@ function renderEdge(run) {
     ["RAM (MiB)", metricCell(hardware.ram_mib)],
     ["OS", metricCell(hardware.os)],
     ["Power mode", metricCell(hardware.power_mode)],
-  ];
+  );
   root.innerHTML = '<div class="edge-grid">' + cells.map((row) => edgeCell(row[0], row[1])).join("") + "</div>";
 }
 

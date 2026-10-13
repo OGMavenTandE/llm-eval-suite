@@ -10,6 +10,7 @@ from llm_eval.edge.hardware import (
     endpoint_is_local,
     gpu_counter_reason,
     hardware_stamp,
+    parse_compute_apps,
     parse_nvidia_smi_query,
     probe_gpu,
     ram_mib_from_bytes,
@@ -24,8 +25,9 @@ from llm_eval.edge.metrics import (
     summarize_requests,
     tokens_per_second,
 )
-from llm_eval.edge.power import sampler_for_connection
+from llm_eval.edge.power import ResourceSampler, sampler_for_connection
 from llm_eval.edge.session import EdgeSession
+from llm_eval_suite.report_html import render_report
 from llm_eval.edge.streaming import consume_ollama_lines, consume_openai_sse, ollama_stream_generate
 from llm_eval.models.base import BaseModel, ModelResponse
 from llm_eval_suite.runs import RunManager
@@ -410,3 +412,64 @@ def test_run_records_edge_metrics_and_keeps_them_when_invalid(tmp_path: Path, mo
     assert any(row["status"] == "withheld" for row in invalid["scorecard"]["categories"])
     assert invalid["scorecard"]["edge"]["latency_ms"]["p50"]["value"] == 3.0
     assert invalid["edge_metrics"]["peak_ram_mib"]["value"] != "n/a" or invalid["edge_metrics"]["peak_ram_mib"]["reason"]
+
+
+def test_per_process_vram_ignores_a_leftover_model():
+    text = "\n".join(
+        [
+            "11, ollama, 7000",
+            "22, ollama, 8547",
+            "33, leftover, [N/A]",
+        ]
+    )
+    apps = parse_compute_apps(text)
+    assert [row["pid"] for row in apps] == ["11", "22"]
+    assert apps[1]["vram_mib"] == 8547
+    ticks = iter([0.0, 1.0])
+    sampler = ResourceSampler(
+        gpu_enabled=True,
+        gpu_reason="",
+        gpu_reader=lambda: {"vram_mib": 11146, "watts": 80},
+        ram_reader=lambda: 1000.0,
+        vram_sample="per-process",
+        process_reader=lambda: apps,
+        exclude_pids=["11"],
+        clock=lambda: next(ticks),
+    )
+    sampler._sample()
+    sampler._sample()
+    session = EdgeSession(
+        {
+            "type": "vllm",
+            "edge_vram": {
+                "method": "per-process",
+                "sample": "per-process",
+                "baseline_vram_mib": 500,
+                "baseline_reason": "",
+                "note": "Peak is the VRAM of compute apps that were not running before this variant.",
+            },
+        },
+        sampler=sampler,
+        hardware={"gpu": {"value": "RTX 4070 Super", "reason": ""}},
+    )
+    summary = session.finish()
+    assert summary["peak_vram_mib"]["value"] == 8547.0
+    assert summary["vram_method"]["value"] == "per-process"
+    assert summary["baseline_vram_mib"]["value"] == 500.0
+    card = scorecard_edge(summary)
+    assert card["vram_method"]["value"] == "per-process"
+    assert card["baseline_vram_mib"]["value"] == 500.0
+    html = render_report(
+        {
+            "run_id": "q4",
+            "connection": {"model": "q4"},
+            "scorecard": {"categories": [], "verdict": "No live categories scored"},
+            "suites": [],
+            "edge_metrics": summary,
+        },
+        [],
+    )
+    assert "VRAM method" in html
+    assert "per-process" in html
+    assert "Baseline VRAM" in html
+    assert "8547" in html

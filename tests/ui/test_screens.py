@@ -159,6 +159,53 @@ def _seed(runs: Path) -> None:
         },
         [],
     )
+    _write_run(
+        runs,
+        "vramrun",
+        {
+            "run_id": "vramrun",
+            "status": "completed",
+            "validity": "ok",
+            "created_at": "2026-10-06T18:00:00+00:00",
+            "preset": "quant_quick",
+            "connection": {"model": "llama3.2:3b-instruct-q4_K_M"},
+            "scorecard": {
+                "pass_bar_percent": 80.0,
+                "meets_bar": True,
+                "verdict": "Meets the 80% pass bar",
+                "live_category_count": 1,
+                "categories_below_bar": 0,
+                "overall_pass_percent": None,
+                "failure_count": 0,
+                "live_item_count": 1,
+                "categories": [
+                    {
+                        "category": "hallucination_factuality",
+                        "label": "Hallucination / factuality",
+                        "status": "pass",
+                        "pass_percent": 100.0,
+                        "pass_rate": 1.0,
+                        "sample_count": 1,
+                        "source": "live",
+                    }
+                ],
+            },
+            "suites": [],
+            "analysis": {"narrative": "VRAM isolated.", "source_label": "Template"},
+            "edge_metrics": {
+                "concurrency": 1,
+                "peak_vram_mib": {"value": 8547.0, "reason": ""},
+                "baseline_vram_mib": {"value": 512.0, "reason": ""},
+                "vram_method": {
+                    "value": "card peak after unloading other models",
+                    "reason": "Unloaded llama3.2:3b-instruct-fp16.",
+                },
+                "peak_ram_mib": {"value": 8000.0, "reason": ""},
+                "hardware": {"cpu": {"value": "Test CPU", "reason": ""}},
+            },
+        },
+        [],
+    )
     shared = {
         "id": "fact-1",
         "passed": True,
@@ -453,6 +500,13 @@ def test_screens_load_and_invalid_score_is_withheld(tmp_path: Path):
         ok_text = page.locator("#readout").inner_text()
         assert "Score withheld" not in ok_text
         assert "Meets the 80% pass bar" in ok_text
+        page.select_option("#results-run", "vramrun")
+        page.wait_for_function("() => document.querySelector('#edge-metrics').innerText.includes('VRAM method')")
+        vram_edge = page.locator("#edge-metrics").inner_text()
+        assert "8547" in vram_edge
+        assert "512" in vram_edge
+        assert "card peak after unloading other models" in vram_edge
+        assert "Unloaded llama3.2:3b-instruct-fp16." in vram_edge
         page.click('button[data-tab="compare"]')
         page.select_option("#compare-left", "same-b")
         page.select_option("#compare-right", "same-a")

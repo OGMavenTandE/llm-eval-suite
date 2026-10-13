@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
 from llm_eval.edge.quant import build_delta_report, write_reports
+from llm_eval.edge.vram import prepare_variant_vram
 
 
 def parse_variant(text: str) -> tuple[str, str]:
@@ -36,6 +38,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Any suite preset. quant_quick is the five-question smoke. standard_capability_quick is the quick50 standard subset.",
     )
     quant.add_argument("--dataset", default="datasets/sample_factcheck_50.jsonl")
+    quant.add_argument(
+        "--data",
+        default=None,
+        help="Standard benchmark directory. Same as LLM_EVAL_STANDARD_DATA. Required for a standard preset unless that variable is already set.",
+    )
     quant.add_argument(
         "--per-suite",
         type=int,
@@ -70,6 +77,7 @@ def run_quant_compare(spec: dict, *, model_factory=None) -> dict:
             "tolerance": spec["tolerance"],
             "concurrency": spec["concurrency"],
             "per_suite": spec.get("per_suite"),
+            "data": spec.get("data") or "",
             "variants": [{"label": label, "model": model} for label, model in pairs],
             "note": "Dry run. No model was called.",
         }
@@ -80,35 +88,50 @@ def run_quant_compare(spec: dict, *, model_factory=None) -> dict:
 
     from llm_eval_suite.runs import RunManager
 
+    data_path = require_standard_data(spec["preset"], spec.get("data"))
+    previous_data = os.environ.get("LLM_EVAL_STANDARD_DATA")
+    overwrite_data = bool(spec.get("data") and data_path)
+    if overwrite_data:
+        os.environ["LLM_EVAL_STANDARD_DATA"] = data_path
     manager = RunManager(out / "runs", model_factory=model_factory)
     collected = []
-    for label, model in pairs:
-        connection = {
-            "name": label,
-            "type": spec["provider"],
-            "model": model,
-            "base_url": spec["base_url"],
-            "api_key": "",
-            "mode": "chat",
-            "edge_concurrency": spec["concurrency"],
-        }
-        record = manager.start(
-            connection=connection,
-            preset_id=spec["preset"],
-            dataset_path=spec["dataset"],
-            background=False,
-            in_process=True,
-            per_suite=spec.get("per_suite"),
-        )
-        collected.append(
-            {
-                "label": label,
+    try:
+        for label, model in pairs:
+            policy = prepare_variant_vram(spec["provider"], spec["base_url"])
+            connection = {
+                "name": label,
+                "type": spec["provider"],
                 "model": model,
-                "run": record,
-                "items": manager.items(record["run_id"]),
+                "base_url": spec["base_url"],
+                "api_key": "",
+                "mode": "chat",
+                "edge_concurrency": spec["concurrency"],
+                "edge_vram": policy,
             }
-        )
+            record = manager.start(
+                connection=connection,
+                preset_id=spec["preset"],
+                dataset_path=spec["dataset"],
+                background=False,
+                in_process=True,
+                per_suite=spec.get("per_suite"),
+            )
+            collected.append(
+                {
+                    "label": label,
+                    "model": model,
+                    "run": record,
+                    "items": manager.items(record["run_id"]),
+                }
+            )
+    finally:
+        if overwrite_data:
+            if previous_data is None:
+                os.environ.pop("LLM_EVAL_STANDARD_DATA", None)
+            else:
+                os.environ["LLM_EVAL_STANDARD_DATA"] = previous_data
     report = build_delta_report(collected, baseline=pairs[0][0], tolerance=float(spec["tolerance"]))
+    report = attach_execution_failures(report, collected)
     report["files"] = {
         "json": str(out / "report.json"),
         "markdown": str(out / "report.md"),
@@ -139,9 +162,72 @@ def spec_from_args(args: argparse.Namespace) -> dict:
         "tolerance": args.tolerance,
         "concurrency": args.concurrency,
         "per_suite": args.per_suite,
+        "data": args.data,
         "out": args.out,
         "dry_run": bool(args.dry_run),
     }
+
+
+def standard_suites_for_preset(preset_id: str) -> list[str]:
+    from llm_eval_suite.presets import STANDARD_SUITE_NAMES, expand_preset
+
+    expanded = expand_preset(preset_id)
+    names = []
+    for row in expanded.get("suites") or []:
+        name = row.get("name")
+        if name in STANDARD_SUITE_NAMES:
+            names.append(name)
+    return names
+
+
+def require_standard_data(preset_id: str, data: str | None) -> str | None:
+    """Return the benchmark directory, or None when this preset does not need one.
+
+    A standard preset with no directory raises before any model call. The
+    message matches the runner. Hashes are checked for every suite except
+    GPQA, which stays a recorded skip when its file is absent.
+    """
+    suites = standard_suites_for_preset(preset_id)
+    if not suites:
+        return None
+    from standard_bench.manifest import HashMismatch, ManifestError, verify_suite
+    from standard_bench.runner import resolve_dest
+
+    config = {"data_dir": data} if data else {}
+    try:
+        dest = resolve_dest(config)
+    except ManifestError as exc:
+        raise ValueError(str(exc)) from exc
+    if not dest.is_dir():
+        raise ValueError(
+            f"Standard benchmark directory does not exist: {dest}. "
+            "Set LLM_EVAL_STANDARD_DATA or pass --data."
+        )
+    for suite in suites:
+        if suite == "gpqa_diamond":
+            continue
+        try:
+            verify_suite(dest, suite)
+        except (ManifestError, HashMismatch) as exc:
+            raise ValueError(str(exc)) from exc
+    return str(dest)
+
+
+def attach_execution_failures(report: dict, collected: list[dict]) -> dict:
+    """A run that did not finish is a failed comparison, not an unscored n/a."""
+    failures = []
+    for row in collected:
+        run = row.get("run") or {}
+        error = str(run.get("error") or "").strip()
+        status = str(run.get("status") or "")
+        if status == "failed" or error:
+            label = row.get("label") or "run"
+            failures.append(f"{label}: {error or status}")
+    if failures:
+        report = dict(report)
+        report["verdict"] = "fail"
+        report["failures"] = failures
+    return report
 
 
 def main(argv=None) -> None:
@@ -159,9 +245,11 @@ def main(argv=None) -> None:
         print(f"Dry run plan: {result.get('plan')}")
         print("No model was called.")
         sys.exit(0)
+    for line in result.get("failures") or []:
+        print(line, file=sys.stderr)
     print(f"Verdict: {result.get('verdict')}")
     files = result.get("files") or {}
     for kind in ("json", "markdown", "html"):
         if files.get(kind):
             print(f"{kind}: {files[kind]}")
-    sys.exit(0)
+    sys.exit(1 if result.get("verdict") == "fail" else 0)
