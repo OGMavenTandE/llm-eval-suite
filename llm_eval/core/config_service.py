@@ -13,6 +13,18 @@ SUPPORTED_PROVIDERS = ("ollama", "openai", "vllm", "llama_cpp")
 SUPPORTED_EVALUATORS = ("correctness", "latency", "robustness", "consistency", "cost")
 
 
+def _known_providers() -> list[str]:
+    from llm_eval.plugins import compatible_names
+
+    return [*SUPPORTED_PROVIDERS, *compatible_names("connectors")]
+
+
+def _known_evaluators() -> list[str]:
+    from llm_eval.plugins import compatible_names
+
+    return [*SUPPORTED_EVALUATORS, *compatible_names("scorers")]
+
+
 class ConfigService:
     """Config loading, normalization, and validation helpers."""
 
@@ -92,10 +104,10 @@ class ConfigService:
                 errors.append(f"Model entry {i + 1} is missing 'name'.")
             if "provider" not in model:
                 errors.append(f"Model entry {i + 1} is missing 'provider'.")
-            elif model["provider"] not in SUPPORTED_PROVIDERS:
+            elif model["provider"] not in _known_providers():
                 errors.append(
                     f"Model entry {i + 1} has unknown provider '{model['provider']}'. "
-                    f"Supported: {', '.join(SUPPORTED_PROVIDERS)}."
+                    f"Supported: {', '.join(_known_providers())}."
                 )
 
         evaluators = config.get("evaluators", [])
@@ -109,10 +121,10 @@ class ConfigService:
             name = ev.get("name")
             if not name:
                 errors.append(f"Evaluator entry {i + 1} is missing 'name'.")
-            elif name not in SUPPORTED_EVALUATORS:
+            elif name not in _known_evaluators():
                 errors.append(
                     f"Evaluator entry {i + 1} has unknown name '{name}'. "
-                    f"Supported: {', '.join(SUPPORTED_EVALUATORS)}."
+                    f"Supported: {', '.join(_known_evaluators())}."
                 )
 
         dataset = config.get("dataset")

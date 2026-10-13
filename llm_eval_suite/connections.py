@@ -293,6 +293,16 @@ def build_model(profile: dict) -> BaseModel:
         raise RuntimeError(
             "Convert the nanoGPT checkpoint to a Hugging Face folder, then connect that folder."
         )
+    if kind not in {"openai", "ollama", "vllm", "llama_cpp", "hf", "nanogpt"}:
+        from llm_eval.plugins import find, note_ran
+
+        plugin = find("connectors", kind)
+        if plugin is not None:
+            note_ran(plugin)
+            target = plugin.target
+            if isinstance(target, type):
+                return target(profile.get("model") or "model", profile)
+            return target(profile)
     if kind in {"vllm", "llama_cpp"}:
         from llm_eval.models.served import model_for, preset_for
 

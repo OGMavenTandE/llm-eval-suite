@@ -7,6 +7,12 @@ from llm_eval.schemas.run_request import RunRequest, RunValidationResult
 from llm_eval.schemas.run_result import AuditMetadata, RunStartResult
 
 
+def _plugin_manifest() -> list[dict]:
+    from llm_eval.plugins import current_manifest
+
+    return current_manifest()
+
+
 class AuditService:
     """Produce and persist structured audit metadata for evaluation runs."""
 
@@ -59,6 +65,7 @@ class AuditService:
             status=run_result.status,
             artifact_paths=run_result.artifacts,
             error_message=run_result.error_message,
+            plugins=_plugin_manifest(),
         )
 
     def build_from_validation(

@@ -20,7 +20,7 @@ from llm_eval_suite.council import run_council
 from llm_eval_suite.presets import apply_per_suite, estimate_preset, expand_preset
 from llm_eval_suite.report_html import render_report
 from llm_eval_suite.scoring import live_failures, scorecard, withhold_category_scores
-from llm_eval_suite.suites import RUNNERS, SuiteContext, planned_suite_total
+from llm_eval_suite.suites import SuiteContext, planned_suite_total, runner_for
 from llm_eval_suite.timing import TimingStore
 from llm_eval_suite.worker import build_worker_command
 
@@ -495,6 +495,9 @@ class RunManager:
         model = None
         edge = None
         self._append_log(run_dir, f"Run {run_id} started.")
+        from llm_eval.plugins import reset_manifest
+
+        reset_manifest()
         if watch_cancel:
             threading.Thread(target=self._watch_cancel, args=(run_dir, cancel), daemon=True).start()
         try:
@@ -512,7 +515,7 @@ class RunManager:
             for suite in expanded["suites"]:
                 if cancel.is_set():
                     break
-                runner = RUNNERS[suite["name"]]
+                runner = runner_for(suite["name"])
                 suite_name = suite["name"]
                 total = planned_suite_total(suite_name, suite, len(rows))
                 now = time.perf_counter()
@@ -640,6 +643,9 @@ class RunManager:
     ):
         record = self._read_run(run_dir) or {}
         record["status"] = status
+        from llm_eval.plugins import current_manifest
+
+        record["plugins"] = current_manifest()
         record["completed_at"] = _now()
         record["suites"] = suites
         record["scorecard"] = scorecard(items)
