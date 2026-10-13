@@ -46,6 +46,13 @@ def _edge_section(run: dict) -> str:
         ("Latency", _pair_text(metrics.get("latency_ms"))),
         ("Concurrency", str(metrics.get("concurrency") if metrics.get("concurrency") is not None else "n/a")),
         ("Peak VRAM (MiB)", format_metric(metrics.get("peak_vram_mib"))),
+    ]
+    if metrics.get("baseline_vram_mib"):
+        rows.append(("Baseline VRAM (MiB)", format_metric(metrics.get("baseline_vram_mib"))))
+    if metrics.get("vram_method"):
+        rows.append(("VRAM method", format_metric(metrics.get("vram_method"))))
+    rows.extend(
+        [
         ("Peak RAM (MiB)", format_metric(metrics.get("peak_ram_mib"))),
         ("Average power (W)", format_metric(metrics.get("power_watts_average"))),
         ("Peak power (W)", format_metric(metrics.get("power_watts_peak"))),
@@ -57,7 +64,8 @@ def _edge_section(run: dict) -> str:
         ("RAM (MiB)", format_metric(hardware.get("ram_mib"))),
         ("OS", format_metric(hardware.get("os"))),
         ("Power mode", format_metric(hardware.get("power_mode"))),
-    ]
+        ]
+    )
     body = "".join(
         f"<tr><th>{escape(label)}</th><td>{escape(value)}</td></tr>" for label, value in rows
     )

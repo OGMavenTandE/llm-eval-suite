@@ -11,8 +11,15 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 from llm_eval.edge.hardware import hardware_stamp
-from llm_eval.edge.metrics import combine_summary, metric_number, sample_from_response, summarize_requests
+from llm_eval.edge.metrics import (
+    apply_vram_policy,
+    combine_summary,
+    metric_number,
+    sample_from_response,
+    summarize_requests,
+)
 from llm_eval.edge.power import sampler_for_connection
+from llm_eval.edge.vram import default_process_reader
 
 _STREAM_TYPES = {"OllamaModel", "OpenAIModel", "VllmModel", "LlamaCppModel"}
 _PROBE_PROMPT = "Reply with the single word pong."
@@ -49,7 +56,18 @@ class EdgeSession:
         self._model = None
         self._original = None
         self.hardware = hardware if hardware is not None else hardware_stamp(self.connection)
-        self.sampler = sampler if sampler is not None else sampler_for_connection(self.connection)
+        policy = self.connection.get("edge_vram")
+        self.vram_policy = dict(policy) if isinstance(policy, dict) else {}
+        if sampler is not None:
+            self.sampler = sampler
+        else:
+            sample = str(self.vram_policy.get("sample") or "card")
+            self.sampler = sampler_for_connection(
+                self.connection,
+                vram_sample=sample,
+                process_reader=default_process_reader if sample == "per-process" else None,
+                exclude_pids=self.vram_policy.get("exclude_pids") or [],
+            )
         self._summary: dict | None = None
 
     def wrap(self, model):
@@ -123,6 +141,7 @@ class EdgeSession:
                 "joules": {"value": "n/a", "reason": str(exc)},
                 "joules_per_output_token": {"value": "n/a", "reason": str(exc)},
             }
+        apply_vram_policy(power, list(getattr(self.sampler, "samples", []) or []), self.vram_policy)
         summary = combine_summary(headline, power, self.hardware, serial=kept_serial)
         if self.load_errors:
             summary["load_errors"] = list(self.load_errors)

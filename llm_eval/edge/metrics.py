@@ -32,7 +32,11 @@ def format_metric(cell: dict | None) -> str:
     if value == "n/a" or value is None:
         reason = str(cell.get("reason") or "").strip()
         return f"n/a ({reason})" if reason else "n/a"
-    return str(value)
+    text = str(value)
+    reason = str(cell.get("reason") or "").strip()
+    if reason:
+        return f"{text} ({reason})"
+    return text
 
 
 def percentile(values: list[float], pct: float) -> float:
@@ -240,6 +244,38 @@ def combine_summary(
     return summary
 
 
+def apply_vram_policy(power: dict, samples: list[dict], policy: dict | None) -> dict:
+    """Label how peak VRAM was isolated, and prefer per-process samples when that was the method."""
+    policy = policy or {}
+    method = str(policy.get("method") or "").strip()
+    if not method and "baseline_vram_mib" not in policy:
+        return power
+    note = str(policy.get("note") or "").strip()
+    if "baseline_vram_mib" in policy:
+        baseline = policy.get("baseline_vram_mib")
+        if isinstance(baseline, (int, float)) and not isinstance(baseline, bool):
+            power["baseline_vram_mib"] = measured(float(baseline), 1)
+        else:
+            power["baseline_vram_mib"] = na(str(policy.get("baseline_reason") or "GPU did not report VRAM"))
+    process_values = [
+        float(row["process_vram_mib"])
+        for row in samples
+        if isinstance(row.get("process_vram_mib"), (int, float)) and not isinstance(row.get("process_vram_mib"), bool)
+    ]
+    if method == "per-process":
+        if process_values:
+            power["peak_vram_mib"] = measured(max(process_values), 1)
+            power["vram_method"] = {"value": method, "reason": note}
+        else:
+            power["vram_method"] = {
+                "value": "card",
+                "reason": note or "compute-app memory was not reported",
+            }
+    elif method:
+        power["vram_method"] = {"value": method, "reason": note}
+    return power
+
+
 def scorecard_edge(summary: dict | None) -> dict:
     """Compact block stored on the scorecard. Category scores are unchanged."""
     summary = summary or {}
@@ -260,6 +296,9 @@ def scorecard_edge(summary: dict | None) -> dict:
         "joules_per_output_token",
     )
     block: dict[str, Any] = {key: summary.get(key) for key in keys}
+    for extra in ("vram_method", "baseline_vram_mib"):
+        if extra in summary:
+            block[extra] = summary.get(extra)
     block["hardware"] = {
         key: hardware.get(key)
         for key in ("gpu", "driver", "cuda", "cpu", "ram_mib", "os", "power_mode", "endpoint")

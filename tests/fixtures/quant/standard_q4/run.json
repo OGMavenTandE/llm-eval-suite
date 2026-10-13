@@ -1,0 +1,129 @@
+{
+  "run_id": "q4",
+  "status": "completed",
+  "validity": "ok",
+  "scorecard": {
+    "verdict": "No live categories scored",
+    "live_category_count": 0,
+    "categories": [
+      {
+        "category": "hallucination_factuality",
+        "label": "Hallucination / factuality",
+        "status": "not_run",
+        "pass_rate": null,
+        "sample_count": 0,
+        "source": null
+      }
+    ]
+  },
+  "suites": [
+    {
+      "name": "mmlu_pro",
+      "label": "MMLU-Pro",
+      "status": "completed",
+      "source": "live",
+      "pass_rate": 0.35,
+      "done": 20,
+      "total": 20,
+      "counts_toward_dow_score": false,
+      "metrics": {
+        "n_items": 20,
+        "n_scored": 20,
+        "n_over_budget": 0,
+        "score": 0.35,
+        "counts_toward_dow_score": false,
+        "accuracy": 0.35
+      }
+    },
+    {
+      "name": "gsm8k",
+      "label": "GSM8K",
+      "status": "completed",
+      "source": "live",
+      "pass_rate": 0.75,
+      "done": 20,
+      "total": 20,
+      "counts_toward_dow_score": false,
+      "metrics": {
+        "n_items": 20,
+        "n_scored": 20,
+        "n_over_budget": 0,
+        "score": 0.75,
+        "counts_toward_dow_score": false,
+        "accuracy": 0.75
+      }
+    },
+    {
+      "name": "math500",
+      "label": "MATH-500",
+      "status": "completed",
+      "source": "live",
+      "pass_rate": 0.0,
+      "done": 20,
+      "total": 20,
+      "counts_toward_dow_score": false,
+      "metrics": {
+        "n_items": 20,
+        "n_scored": 20,
+        "n_over_budget": 0,
+        "score": 0.0,
+        "counts_toward_dow_score": false,
+        "accuracy": 0.0
+      }
+    },
+    {
+      "name": "ifeval",
+      "label": "IFEval",
+      "status": "completed",
+      "source": "live",
+      "pass_rate": 0.7,
+      "done": 20,
+      "total": 20,
+      "counts_toward_dow_score": false,
+      "metrics": {
+        "n_items": 20,
+        "n_scored": 20,
+        "n_over_budget": 0,
+        "score": 0.7,
+        "counts_toward_dow_score": false,
+        "prompt_strict": 0.7
+      }
+    },
+    {
+      "name": "humaneval_plus",
+      "label": "HumanEval+",
+      "status": "completed",
+      "source": "live",
+      "pass_rate": 0.6,
+      "done": 20,
+      "total": 20,
+      "counts_toward_dow_score": false,
+      "metrics": {
+        "n_items": 20,
+        "n_scored": 20,
+        "n_over_budget": 0,
+        "score": 0.6,
+        "counts_toward_dow_score": false,
+        "pass_at_1_plus": 0.6
+      }
+    },
+    {
+      "name": "mbpp_plus",
+      "label": "MBPP+",
+      "status": "completed",
+      "source": "live",
+      "pass_rate": 0.5,
+      "done": 20,
+      "total": 20,
+      "counts_toward_dow_score": false,
+      "metrics": {
+        "n_items": 20,
+        "n_scored": 20,
+        "n_over_budget": 0,
+        "score": 0.5,
+        "counts_toward_dow_score": false,
+        "pass_at_1_plus": 0.5
+      }
+    }
+  ]
+}

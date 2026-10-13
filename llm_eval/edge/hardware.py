@@ -157,6 +157,27 @@ def cuda_from_banner(text: str) -> str:
     return match.group(1) if match else ""
 
 
+def parse_compute_apps(text: str) -> list[dict]:
+    """Parse ``pid, process_name, used_gpu_memory`` rows from nvidia-smi."""
+    rows = []
+    for raw in (text or "").splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        parts = [part.strip() for part in line.split(",")]
+        if len(parts) < 3:
+            continue
+        cleaned = parts[2].strip().strip("[]")
+        if not cleaned or cleaned.upper() in {"N/A", "[N/A]", "NOT SUPPORTED"}:
+            continue
+        try:
+            mem = float(cleaned)
+        except ValueError:
+            continue
+        rows.append({"pid": parts[0], "name": parts[1], "vram_mib": mem})
+    return rows
+
+
 def parse_nvidia_smi_query(text: str) -> dict | None:
     """Parse one ``csv,noheader,nounits`` GPU row.
 
@@ -254,6 +275,19 @@ def nvml_snapshot(nvml=None) -> dict | None:
         "vram_mib": vram,
         "power_limit_w": limit,
     }
+
+
+def query_compute_apps() -> list[dict] | None:
+    """Compute-app rows, or None when nvidia-smi is not installed."""
+    if not shutil.which("nvidia-smi"):
+        return None
+    text = _run_smi(
+        [
+            "--query-compute-apps=pid,process_name,used_gpu_memory",
+            "--format=csv,noheader,nounits",
+        ]
+    )
+    return parse_compute_apps(text)
 
 
 def smi_snapshot() -> dict | None:

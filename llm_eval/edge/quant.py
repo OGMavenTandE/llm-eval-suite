@@ -105,12 +105,85 @@ def noise_flag(baseline: dict, variant: dict) -> tuple[bool, str]:
         return False, ""
     item_delta = abs(int(right) - int(left))
     if item_delta <= 1:
-        return True, "within ±1 item"
+        return True, "within +/- 1 item"
     left_lo, left_hi = wilson_interval(int(left), int(left_n))
     right_lo, right_hi = wilson_interval(int(right), int(right_n))
     if left_lo <= right_hi and right_lo <= left_hi:
         return True, "within the 95% binomial interval"
     return False, ""
+
+
+def _sample_count(value) -> int | None:
+    if value in (None, ""):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _benchmark_from_suites(run: dict) -> list[dict]:
+    """Standard-suite pass rates stored on ``run.json``.
+
+    Those items set ``counts_toward_score`` false so they stay out of the
+    DoW scorecard. The suite record is the rate the run actually saved.
+    """
+    rows = []
+    for suite in run.get("suites") or []:
+        name = str(suite.get("name") or "")
+        if name not in PUBLIC_BENCHMARK_SUITES:
+            continue
+        if suite.get("not_run") or suite.get("status") in {"not_run", "withheld", "failed"}:
+            continue
+        metrics = suite.get("metrics") if isinstance(suite.get("metrics"), dict) else {}
+        rate = suite.get("pass_rate")
+        if rate is None:
+            rate = metrics.get("score")
+        if rate is None:
+            continue
+        try:
+            rate_value = float(rate)
+        except (TypeError, ValueError):
+            continue
+        sample_count = _sample_count(metrics.get("n_scored"))
+        if sample_count is None:
+            sample_count = _sample_count(metrics.get("n_items"))
+        if sample_count is None:
+            sample_count = _sample_count(suite.get("done"))
+        rows.append(
+            {
+                "name": name,
+                "label": suite.get("label") or name,
+                "pass_rate": rate_value,
+                "sample_count": sample_count,
+                "passed": _passed_from_rate(rate_value, sample_count),
+            }
+        )
+    return rows
+
+
+def _benchmark_from_items(items: list[dict]) -> list[dict]:
+    groups: dict[str, list[dict]] = {}
+    for item in items:
+        suite = str(item.get("suite") or "")
+        if suite not in PUBLIC_BENCHMARK_SUITES and item.get("category") != "public_benchmark":
+            continue
+        groups.setdefault(suite or "public_benchmark", []).append(item)
+    benchmarks = []
+    for name in sorted(groups):
+        rows = groups[name]
+        passed = sum(1 for item in rows if item.get("passed"))
+        rate = passed / len(rows)
+        benchmarks.append(
+            {
+                "name": name,
+                "label": name,
+                "pass_rate": round(rate, 4),
+                "sample_count": len(rows),
+                "passed": passed,
+            }
+        )
+    return benchmarks
 
 
 def _rate_rows(run: dict, items: list[dict]) -> tuple[list[dict], list[dict]]:
@@ -135,28 +208,11 @@ def _rate_rows(run: dict, items: list[dict]) -> tuple[list[dict], list[dict]]:
                 "passed": passed,
             }
         )
-    groups: dict[str, list[dict]] = {}
-    for item in items:
-        suite = str(item.get("suite") or "")
-        if suite not in PUBLIC_BENCHMARK_SUITES and item.get("category") != "public_benchmark":
-            continue
-        if item.get("counts_toward_score", True) is False:
-            continue
-        groups.setdefault(suite or "public_benchmark", []).append(item)
-    benchmarks = []
-    for name in sorted(groups):
-        rows = groups[name]
-        passed = sum(1 for item in rows if item.get("passed"))
-        rate = passed / len(rows)
-        benchmarks.append(
-            {
-                "name": name,
-                "label": name,
-                "pass_rate": round(rate, 4),
-                "sample_count": len(rows),
-                "passed": passed,
-            }
-        )
+    benchmarks = _benchmark_from_suites(run)
+    seen = {row["name"] for row in benchmarks}
+    for row in _benchmark_from_items(items):
+        if row["name"] not in seen:
+            benchmarks.append(row)
     return categories, benchmarks
 
 
@@ -251,6 +307,38 @@ def _metric_rows(baseline: dict, variant: dict, fields) -> list[dict]:
     return rows
 
 
+def _optional_metric(baseline: dict, variant: dict, key: str, label: str, digits: int) -> list[dict]:
+    left = baseline.get("edge_metrics") or {}
+    right = variant.get("edge_metrics") or {}
+    if key not in left and key not in right:
+        return []
+    return _metric_rows(
+        {"edge_metrics": {key: left.get(key)}},
+        {"edge_metrics": {key: right.get(key)}},
+        ((key, label, (key,), digits),),
+    )
+
+
+def _vram_method_label(run: dict) -> str:
+    cell = (run.get("edge_metrics") or {}).get("vram_method")
+    if not isinstance(cell, dict):
+        return ""
+    value = str(cell.get("value") or "").strip()
+    if not value or value == "n/a":
+        return ""
+    reason = str(cell.get("reason") or "").strip()
+    return f"{value} ({reason})" if reason else value
+
+
+def _empty_accuracy(kind: str, variant: dict) -> str:
+    accuracy = variant.get("accuracy") or {}
+    if kind == "categories" and accuracy.get("benchmarks"):
+        return "No category rows. The standard-suite scores are in the benchmark table."
+    if kind == "benchmarks" and accuracy.get("categories"):
+        return "No benchmark rows."
+    return "No rows."
+
+
 def _verdict(accuracy_rows: list[dict]) -> str:
     if any(row.get("status") == "fail" for row in accuracy_rows):
         return "fail"
@@ -295,6 +383,8 @@ def build_delta_report(variants: list[dict], *, baseline: str, tolerance: float)
             for item in accuracy_rows
             if item.get("status") == "fail"
         ]
+        power = _metric_rows(base["run"], row["run"], _POWER)
+        power.extend(_optional_metric(base["run"], row["run"], "baseline_vram_mib", "Baseline VRAM (MiB)", 1))
         compared.append(
             {
                 "label": row["label"],
@@ -304,7 +394,11 @@ def build_delta_report(variants: list[dict], *, baseline: str, tolerance: float)
                 "failures": failures,
                 "accuracy": accuracy,
                 "speed": _metric_rows(base["run"], row["run"], _SPEED),
-                "power": _metric_rows(base["run"], row["run"], _POWER),
+                "power": power,
+                "vram_methods": {
+                    "baseline": _vram_method_label(base["run"]),
+                    "variant": _vram_method_label(row["run"]),
+                },
             }
         )
     verdicts = [row["verdict"] for row in compared]
@@ -348,7 +442,7 @@ def render_markdown(report: dict) -> str:
         f"Tolerance: {report.get('tolerance')}. Verdict: {report.get('verdict')}.",
         "",
         "Accuracy deltas are the variant minus the baseline. A drop larger than the tolerance fails.",
-        "n is the item count. A note of within ±1 item, or within the 95% binomial interval, means the delta is inside sampling noise. The note does not change the verdict.",
+        "n is the item count. A note of within +/- 1 item, or within the 95% binomial interval, means the delta is inside sampling noise. The note does not change the verdict.",
         "Speed and power deltas are reported from the edge metrics and do not change the verdict.",
         "",
     ]
@@ -366,7 +460,7 @@ def render_markdown(report: dict) -> str:
             lines.append(f"### {title}")
             lines.append("")
             if not rows:
-                lines.append("No rows.")
+                lines.append(_empty_accuracy(key, variant))
                 lines.append("")
                 continue
             lines.append(
@@ -407,7 +501,22 @@ def render_markdown(report: dict) -> str:
                 )
             )
             lines.append("")
+            if key == "power":
+                lines.extend(_vram_method_lines(report, variant))
     return "\n".join(lines).rstrip() + "\n"
+
+
+def _vram_method_lines(report: dict, variant: dict) -> list[str]:
+    methods = variant.get("vram_methods") or {}
+    baseline = str(methods.get("baseline") or "").strip()
+    other = str(methods.get("variant") or "").strip()
+    if not baseline and not other:
+        return []
+    return [
+        f"VRAM method ({report.get('baseline')}): {baseline or 'n/a'}.",
+        f"VRAM method ({variant.get('label')}): {other or 'n/a'}.",
+        "",
+    ]
 
 
 def _count_text(passed, n) -> str:
@@ -447,7 +556,7 @@ def render_html(report: dict) -> str:
                 "</tr>"
                 for row in rows
             )
-            empty = "<tr><td colspan=\"8\">No rows.</td></tr>" if not rows else body
+            empty = f"<tr><td colspan=\"8\">{escape(_empty_accuracy(key, variant))}</td></tr>" if not rows else body
             blocks.append(
                 "<h3>"
                 + escape(title)
@@ -469,6 +578,11 @@ def render_html(report: dict) -> str:
             blocks.append(
                 f"<h3>{escape(title)}</h3><table><tr><th>Metric</th><th>Baseline</th><th>Variant</th><th>Delta</th></tr>{body}</table>"
             )
+            if key == "power":
+                for line in _vram_method_lines(report, variant):
+                    text = line.strip()
+                    if text:
+                        blocks.append(f"<p>{escape(text)}</p>")
         sections.append("".join(blocks))
     css = report_css()
     return f"""<!DOCTYPE html>
@@ -488,7 +602,7 @@ def render_html(report: dict) -> str:
 <h1>Quantization comparison</h1>
 <p>Baseline: {escape(str(report.get('baseline')))} ({escape(str(report.get('baseline_model') or ''))}).</p>
 <p>Tolerance: {escape(str(report.get('tolerance')))}. Verdict: {escape(str(report.get('verdict')))}.</p>
-<p>Accuracy deltas are the variant minus the baseline. A drop larger than the tolerance fails. n is the item count. A noise note means the delta is within ±1 item or inside the 95% binomial interval, and that note does not change the verdict. Speed and power are reported and do not change the verdict.</p>
+<p>Accuracy deltas are the variant minus the baseline. A drop larger than the tolerance fails. n is the item count. A noise note means the delta is within +/- 1 item or inside the 95% binomial interval, and that note does not change the verdict. Speed and power are reported and do not change the verdict.</p>
 {''.join(sections)}
 </main>
 </body>
