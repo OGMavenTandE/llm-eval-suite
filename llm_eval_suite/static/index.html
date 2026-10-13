@@ -345,7 +345,7 @@
           <div class="panel">
             <div class="field">
               <label for="chairman">Chairman model name</label>
-              <input id="chairman" placeholder="qwen2.5:3b-instruct" spellcheck="false">
+              <input id="chairman" placeholder="phi4-mini" spellcheck="false">
             </div>
             <div class="field">
               <label for="judge-timeout">Judge timeout (seconds)</label>
@@ -358,7 +358,7 @@
             <p class="hint">The chairman writes the final summary from the judges' reviews. The timeout is how long each judge call may take before the template summary is used. Reply length is the token cap for that call. Judge calls send think off.</p>
           </div>
           <div class="panel panel-quiet">
-            <p class="hint">Suggested local judges, if you have them in Ollama: <code>qwen2.5:3b-instruct</code> and <code>llama3.2:3b</code>. Cloud judges stay off unless you type a cloud URL.</p>
+            <p class="hint">Suggested local judges, if you have them in Ollama: <code>phi4-mini</code> (MIT) and <code>granite4:micro</code> (Apache-2.0). A judge does not grade a model from its own family. When the model under test is Phi or Granite, <code>llama3.2:3b</code> grades in its place. Cloud judges stay off unless you type a cloud URL.</p>
           </div>
         </div>
       </div>

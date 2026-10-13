@@ -24,7 +24,7 @@ That writes one tarball, `llm-eval-offline.tar.gz`. Inside it:
 - `NOTICE`, which says Built with Llama.
 - `third_party/certifi/` and `third_party/tqdm/`, each with that package's license and the Mozilla Public License 2.0 text.
 
-`qwen2.5:3b-instruct` and `llama3.2:3b` are about 2 GB each, about 4 GB together. Leaving them out keeps the tarball to the wheelhouse plus the kit (the kit itself is about 5 MB). Pass `--judges-dir` to copy a model directory in. On the closed network, the same flag on `doctor` points at judges that traveled on separate media.
+`phi4-mini` and `granite4:micro` are about 2 GB each, about 4 GB together. `llama3.2:3b` is the cover when the model under test is Phi or Granite, and it is about 2 GB. Leaving them out keeps the tarball to the wheelhouse plus the kit (the kit itself is about 5 MB). Pass `--judges-dir` to copy a model directory in. On the closed network, the same flag on `doctor` points at judges that traveled on separate media.
 
 The DistilBERT refutation detector is about 260 MB. The RoBERTa NLI detector is about 1.4 GB. Copy both into `models/garak_detectors` before the build if Government T&E will run the misleading probes. Empty folders are not packed. `garak_detectors/DETECTORS.json` still names the repo, the revision, and the file list, and `doctor` fails the detector check until the files are present. The command does not download those weights.
 

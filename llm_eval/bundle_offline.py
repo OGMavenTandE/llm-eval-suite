@@ -5,8 +5,9 @@ Windows wheelhouse when those wheels can be downloaded, the standard
 capability kit, garak detector files when they are already on disk, and
 either the local judge files or a manifest that names them.
 
-Judge weights stay out unless ``--judges-dir`` is set. The two default
-council judges are about 2 GB each.
+Judge weights stay out unless ``--judges-dir`` is set. The default
+council is phi4-mini and granite4:micro, about 2 GB each. llama3.2:3b
+is the cover for a Phi or Granite model under test.
 """
 
 from __future__ import annotations
@@ -54,11 +55,13 @@ DETECTOR_SIZE_NOTES = {
     "roberta_nli": "about 1.4 GB",
 }
 JUDGE_SIZE_NOTES = {
-    "qwen2.5:3b-instruct": "about 2 GB as an Ollama tag",
+    "phi4-mini": "about 2 GB as an Ollama tag",
+    "granite4:micro": "about 2 GB as an Ollama tag",
     "llama3.2:3b": "about 2 GB as an Ollama tag",
 }
 JUDGE_TRADEOFF = (
-    "qwen2.5:3b-instruct and llama3.2:3b are about 2 GB each, about 4 GB together. "
+    "phi4-mini and granite4:micro are about 2 GB each, about 4 GB together. "
+    "llama3.2:3b covers a Phi or Granite model under test, and it is about 2 GB. "
     "They are left out of the tarball unless --judges-dir is set, so the bundle stays "
     "a wheelhouse plus the capability kit. On the closed network, pass that same "
     "directory to python -m llm_eval doctor --judges-dir."

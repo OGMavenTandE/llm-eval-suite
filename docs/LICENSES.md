@@ -23,3 +23,9 @@ SWE-bench is out of scope and is not fetched.
 The HumanEval+ and MBPP+ files in the kit include the reference solution for each task, under the same license as that suite. `python -m standard_bench verify-reference` runs those solutions on the pinned tests and requires every checked one to pass. Three tasks are excluded. HumanEval/32 is excluded because its plus test star-unpacks the float returned by `find_zero` (`_poly(*candidate(*inp), inp)`), which raises TypeError. The reference solution passes the base tests. MBPP+ task 255 is excluded because the plus test and the reference solution both build `combinations_with_replacement` for a length-77 sequence, which exceeds the 1 GB address space. The base tests pass. MBPP+ task 596 is excluded because the plus results are frozen `sys.getsizeof` integers. The same object is 88 bytes on Linux and 96 bytes on Windows. The base tests call `sys.getsizeof` on both sides, so they match. A scan of the pinned HumanEval+ and MBPP+ rows for `sys.getsizeof`, `id(`, `hash(`, and memory-address expectations found no other task to exclude. Those three rows stay in the files. Suite metrics record them in `reference_exclusions`.
 
 JSONL readers split on newline only. `str.splitlines()` also splits on U+0085, and MMLU-Pro question 5215 contains that character.
+
+## Council judges
+
+The default council is `phi4-mini` (MIT) and `granite4:micro` (Apache-2.0). A judge does not grade a model from its own family. When the model under test is Phi or Granite, `llama3.2:3b` grades in place of that judge.
+
+The Qwen Research License does not allow commercial use, so Qwen is not a default judge.
