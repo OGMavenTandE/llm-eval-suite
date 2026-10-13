@@ -19,7 +19,15 @@ def _get_model_class(provider: str):
 
     model_cls = MODEL_REGISTRY.get(provider)
     if model_cls is None:
-        supported = ", ".join(SUPPORTED_PROVIDERS)
+        from llm_eval.plugins import find, note_ran
+
+        plugin = find("connectors", provider)
+        if plugin is not None and isinstance(plugin.target, type):
+            note_ran(plugin)
+            return plugin.target
+        from llm_eval.plugins import compatible_names
+
+        supported = ", ".join([*SUPPORTED_PROVIDERS, *compatible_names("connectors")])
         raise ValueError(f"Unknown model provider: '{provider}'. Supported: {supported}")
     return model_cls
 
@@ -45,9 +53,14 @@ def _get_evaluator_class(name: str):
         from llm_eval.evaluators.cost import CostEvaluator
         return CostEvaluator
     else:
-        raise ValueError(
-            f"Unknown evaluator: '{name}'. Supported: correctness, latency, robustness, consistency, cost"
-        )
+        from llm_eval.plugins import compatible_names, find, note_ran
+
+        plugin = find("scorers", name)
+        if plugin is not None and isinstance(plugin.target, type):
+            note_ran(plugin)
+            return plugin.target
+        supported = ", ".join(["correctness", "latency", "robustness", "consistency", "cost", *compatible_names("scorers")])
+        raise ValueError(f"Unknown evaluator: '{name}'. Supported: {supported}")
 
 
 # ---------------------------------------------------------------------------
@@ -238,6 +251,9 @@ class EvalRunner:
             logger.info(f"Detailed results: {detailed_path}")
             logger.info(f"Summary CSV:      {summary_path}")
             reporter.print_summary()
+            from llm_eval.plugins import emit_reporters
+
+            emit_reporters(str(reporter.run_dir), {"model_name": model_name, "summary_path": str(summary_path)})
 
             model_reporters[model_name] = reporter
             model_run_results.append(

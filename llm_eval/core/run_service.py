@@ -300,6 +300,7 @@ class RunService:
             dataset_path=audit.dataset_path,
             model_names=audit.model_names,
             evaluator_names=audit.evaluator_names,
+            plugins=list(audit.plugins or []),
         )
 
         return result.model_copy(update={"audit": audit})

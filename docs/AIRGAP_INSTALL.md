@@ -30,6 +30,8 @@ The DistilBERT refutation detector is about 260 MB. The RoBERTa NLI detector is 
 
 The closed network needs the Python version in `manifest.json` (default 3.11). Wheels are tagged for that version.
 
+Private wheels that are not on a public index are copied in with `--extra-wheels path/to/package.whl`. Repeat the flag for each wheel or each directory of wheels. `manifest.json` lists them under `extra_wheels`. Installer profiles registered on the `llm_eval.installers` entry-point group are recorded under `installers`.
+
 To pack files you already have, without a package index or a dataset fetch:
 
 ```bash

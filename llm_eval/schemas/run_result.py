@@ -65,6 +65,7 @@ class AuditMetadata(BaseModel):
     artifact_paths: RunArtifactPaths | None = None
     audit_path: str | None = None
     error_message: str | None = None
+    plugins: list[dict] = Field(default_factory=list)
 
 
 from llm_eval.schemas.run_request import RunValidationResult  # noqa: E402

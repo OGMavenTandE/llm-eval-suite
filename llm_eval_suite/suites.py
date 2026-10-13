@@ -536,6 +536,20 @@ def _partial(name: str, items: list[dict], total: int, done: int, *, source: str
     }
 
 
+def runner_for(name: str):
+    """Built-in suite, or a compatible suite plugin. The plugin is recorded on the run manifest."""
+    runner = RUNNERS.get(name)
+    if runner is not None:
+        return runner
+    from llm_eval.plugins import find, note_ran
+
+    plugin = find("suites", name)
+    if plugin is None:
+        raise KeyError(name)
+    note_ran(plugin)
+    return plugin.target
+
+
 RUNNERS: dict[str, SuiteRunner] = {
     "factcheck": FactcheckRunner(),
     "robustness": RobustnessRunner(),

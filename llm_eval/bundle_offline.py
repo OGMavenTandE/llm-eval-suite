@@ -315,6 +315,43 @@ def _platform_for_filename(name: str, default: str) -> str:
     return default
 
 
+def stage_extra_wheels(paths: list[Path], dest_root: Path) -> list[str]:
+    """Copy private wheels into the wheelhouse. A directory contributes every ``.whl`` in it."""
+    copied: list[str] = []
+    for item in paths:
+        if item.is_dir():
+            files = sorted(path for path in item.iterdir() if path.is_file() and path.suffix == ".whl")
+            if not files:
+                raise BundleOfflineError(f"No wheels in {item}.")
+        elif item.is_file() and item.suffix == ".whl":
+            files = [item]
+        else:
+            raise BundleOfflineError(f"Extra wheels must be a .whl file or a directory of wheels: {item}.")
+        for path in files:
+            bucket = _platform_for_filename(path.name, "common")
+            if bucket not in {"linux-x86_64", "win-amd64", "common"}:
+                bucket = "common"
+            target = dest_root / bucket
+            target.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, target / path.name)
+            copied.append(f"{bucket}/{path.name}")
+    return copied
+
+
+def _refresh_platform_counts(dest_root: Path, reports: dict) -> dict:
+    updated = dict(reports)
+    for name in ("linux-x86_64", "win-amd64", "common"):
+        count = _package_count(dest_root / name)
+        if not count:
+            continue
+        current = dict(updated.get(name) or {})
+        current["present"] = True
+        current["packages"] = count
+        current.setdefault("mode", "extra")
+        updated[name] = current
+    return updated
+
+
 def stage_supplied_wheelhouse(source: Path, dest_root: Path) -> dict:
     if not source.is_dir():
         raise BundleOfflineError(f"No wheelhouse directory at {source}.")
@@ -601,6 +638,8 @@ def build_offline_bundle(
     judges_dir: str | Path | None = None,
     suite_data: str | Path | None = None,
     runner=None,
+    extra_wheels: list[str | Path] | None = None,
+    installer_entry_points=None,
 ) -> dict:
     """Stage the bundle and write one gzipped tarball. Returns a short summary."""
     root = Path(repo_root) if repo_root else Path(__file__).resolve().parents[1]
@@ -622,6 +661,9 @@ def build_offline_bundle(
             platform_report = stage_supplied_wheelhouse(wheel_source, wheel_root)
         else:
             platform_report = download_wheelhouses(wheel_root, chosen, python_version, root, runner=runner)
+        extra_copied = stage_extra_wheels([Path(item) for item in (extra_wheels or [])], wheel_root)
+        if extra_copied:
+            platform_report = _refresh_platform_counts(wheel_root, platform_report)
         kit_info = _resolve_kit(
             staging / "kit",
             repo_root=root,
@@ -637,6 +679,8 @@ def build_offline_bundle(
             Path(judges_dir) if judges_dir else None,
             _judge_rows(Path(suite_data) if suite_data else None),
         )
+        from llm_eval.plugins import installer_rows
+
         script = staging / "install.sh"
         script.write_text(render_install_sh(), encoding="utf-8", newline="\n")
         script.chmod(0o755)
@@ -660,6 +704,8 @@ def build_offline_bundle(
                 "tradeoff": judge_payload["tradeoff"],
                 "models": [row["name"] for row in judge_payload["models"]],
             },
+            "extra_wheels": extra_copied,
+            "installers": installer_rows(installer_entry_points),
         }
         _write_manifest(staging, manifest)
         file_count = write_sha256sums(staging)
@@ -704,6 +750,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--output", default="dist/llm-eval-offline.tar.gz")
     parser.add_argument("--wheelhouse", default="", help="Directory of wheels already downloaded. Skips pip download.")
+    parser.add_argument(
+        "--extra-wheels",
+        action="append",
+        default=[],
+        help="Private wheel or a directory of wheels to copy into the wheelhouse. Repeat for each path.",
+    )
     parser.add_argument("--no-download", action="store_true", help="Do not contact a package index.")
     parser.add_argument("--platforms", default="linux-x86_64,win-amd64")
     parser.add_argument("--python-version", default="3.11")
@@ -745,6 +797,7 @@ def main(argv: list[str] | None = None) -> None:
             detectors=args.detectors or None,
             judges_dir=args.judges_dir or None,
             suite_data=args.suite_data or None,
+            extra_wheels=args.extra_wheels or None,
         )
     except BundleOfflineError as exc:
         print(f"Error: {exc}", file=sys.stderr)

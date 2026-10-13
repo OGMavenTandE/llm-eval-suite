@@ -51,6 +51,7 @@ class RunIndex:
         dataset_path: str | None = None,
         model_names: list[str] | None = None,
         evaluator_names: list[str] | None = None,
+        plugins: list[dict] | None = None,
     ) -> dict:
         """Add or update a run entry in the index."""
         entries = self._load()
@@ -71,6 +72,7 @@ class RunIndex:
             "dataset_path": dataset_path,
             "model_names": model_names or [],
             "evaluator_names": evaluator_names or [],
+            "plugins": plugins or [],
         }
 
         updated = False

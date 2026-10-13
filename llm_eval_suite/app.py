@@ -346,6 +346,12 @@ def create_app(
         result["dataset_id"] = dataset_id if result.get("ok") else None
         return result
 
+    @app.get("/api/plugins")
+    def get_plugins():
+        from llm_eval.plugins import GROUPS, PLUGIN_API_VERSION, panels
+
+        return {"api_version": PLUGIN_API_VERSION, "groups": GROUPS, "panels": panels()}
+
     @app.get("/api/judges")
     def get_judges():
         return app.state.store.judges()
