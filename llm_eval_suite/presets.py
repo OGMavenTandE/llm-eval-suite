@@ -309,5 +309,6 @@ def expand_preset(preset_id: str, path: str | Path | None = None) -> dict:
         "description": body.get("description", ""),
         "warning": warning,
         "offline": bool(body.get("offline")),
+        "edge": dict(body.get("edge") or {}),
         "suites": suites,
     }

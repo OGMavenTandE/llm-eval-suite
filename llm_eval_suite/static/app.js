@@ -769,6 +769,59 @@ function td(value, cls) {
   return "<td" + (cls ? ' class="' + cls + '"' : "") + ">" + escapeHtml(text) + "</td>";
 }
 
+function metricCell(cell) {
+  if (!cell || typeof cell !== "object") return { text: "n/a", reason: "" };
+  if (cell.value === "n/a" || cell.value == null) return { text: "n/a", reason: cell.reason || "" };
+  return { text: String(cell.value), reason: "" };
+}
+
+function metricPair(node) {
+  if (!node || typeof node !== "object") return { text: "n/a", reason: "" };
+  if (node.value === "n/a") return metricCell(node);
+  if (node.p50 || node.p95) {
+    const p50 = metricCell(node.p50);
+    const p95 = metricCell(node.p95);
+    return { text: "p50 " + p50.text + " / p95 " + p95.text, reason: p50.reason || p95.reason || "" };
+  }
+  return metricCell(node);
+}
+
+function edgeCell(label, shown) {
+  const reason = shown.reason ? '<span class="r">' + escapeHtml(shown.reason) + "</span>" : "";
+  return '<div class="edge-cell"><span class="k">' + escapeHtml(label) + '</span><span class="v">' +
+    escapeHtml(shown.text) + "</span>" + reason + "</div>";
+}
+
+function renderEdge(run) {
+  const root = $("edge-metrics");
+  if (!root) return;
+  const metrics = run.edge_metrics || (run.scorecard || {}).edge;
+  if (!metrics) {
+    root.innerHTML = '<p class="hint">This run has no edge metrics.</p>';
+    return;
+  }
+  const hardware = metrics.hardware || run.hardware || {};
+  const cells = [
+    ["TTFT (ms)", metricPair(metrics.ttft_ms)],
+    ["Output tokens/s", metricCell(metrics.output_tokens_per_second)],
+    ["Latency (ms)", metricPair(metrics.latency_ms)],
+    ["Concurrency", { text: metrics.concurrency == null ? "n/a" : String(metrics.concurrency), reason: "" }],
+    ["Peak VRAM (MiB)", metricCell(metrics.peak_vram_mib)],
+    ["Peak RAM (MiB)", metricCell(metrics.peak_ram_mib)],
+    ["Average watts", metricCell(metrics.power_watts_average)],
+    ["Peak watts", metricCell(metrics.power_watts_peak)],
+    ["Joules / output token", metricCell(metrics.joules_per_output_token)],
+    ["GPU", metricCell(hardware.gpu)],
+    ["Driver", metricCell(hardware.driver)],
+    ["CUDA", metricCell(hardware.cuda)],
+    ["CPU", metricCell(hardware.cpu)],
+    ["RAM (MiB)", metricCell(hardware.ram_mib)],
+    ["OS", metricCell(hardware.os)],
+    ["Power mode", metricCell(hardware.power_mode)],
+  ];
+  root.innerHTML = '<div class="edge-grid">' + cells.map((row) => edgeCell(row[0], row[1])).join("") + "</div>";
+}
+
 let resultsGeneration = 0;
 
 async function showResults() {
@@ -807,6 +860,7 @@ async function showResults() {
     const note = row.category === "security_jailbreak" ? garakMeterNote(run, row) : "";
     return meterRow(row, bar, note);
   }).join("");
+  renderEdge(run);
 
   const suites = run.suites || [];
   $("suite-list").innerHTML = suites.length

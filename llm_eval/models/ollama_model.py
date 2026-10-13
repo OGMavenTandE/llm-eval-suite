@@ -86,6 +86,11 @@ class OllamaModel(BaseModel):
         }
         if "think" not in payload:
             payload["think"] = False
+        edge_stream = bool(payload.pop("edge_stream", False))
+        if edge_stream:
+            from llm_eval.edge.streaming import ollama_stream_generate
+
+            return ollama_stream_generate(self.base_url, payload)
 
         url = f"{self.base_url}/api/generate"
         refuse_remote_http(self.base_url, what="remote Ollama")

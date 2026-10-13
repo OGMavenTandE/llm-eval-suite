@@ -7,6 +7,7 @@ import re
 from html import escape
 from pathlib import Path
 
+from llm_eval.edge.metrics import format_metric
 from llm_eval_suite.scoring import pass_percent_text
 
 TOKENS_PATH = Path(__file__).parent / "static" / "tokens.css"
@@ -24,6 +25,43 @@ def _embed_font_urls(css: str) -> str:
         return f'url("data:font/woff2;base64,{encoded}")'
 
     return re.sub(r'url\("/static/fonts/([^"]+)"\)', replace, css)
+
+
+def _pair_text(node) -> str:
+    if not isinstance(node, dict):
+        return "n/a"
+    if "p50" in node or "p95" in node:
+        return f"p50 {format_metric(node.get('p50'))}, p95 {format_metric(node.get('p95'))}"
+    return format_metric(node)
+
+
+def _edge_section(run: dict) -> str:
+    metrics = run.get("edge_metrics") or (run.get("scorecard") or {}).get("edge")
+    if not metrics:
+        return ""
+    hardware = metrics.get("hardware") or run.get("hardware") or {}
+    rows = [
+        ("TTFT", _pair_text(metrics.get("ttft_ms"))),
+        ("Output tokens/s", format_metric(metrics.get("output_tokens_per_second"))),
+        ("Latency", _pair_text(metrics.get("latency_ms"))),
+        ("Concurrency", str(metrics.get("concurrency") if metrics.get("concurrency") is not None else "n/a")),
+        ("Peak VRAM (MiB)", format_metric(metrics.get("peak_vram_mib"))),
+        ("Peak RAM (MiB)", format_metric(metrics.get("peak_ram_mib"))),
+        ("Average power (W)", format_metric(metrics.get("power_watts_average"))),
+        ("Peak power (W)", format_metric(metrics.get("power_watts_peak"))),
+        ("Joules / output token", format_metric(metrics.get("joules_per_output_token"))),
+        ("GPU", format_metric(hardware.get("gpu"))),
+        ("Driver", format_metric(hardware.get("driver"))),
+        ("CUDA", format_metric(hardware.get("cuda"))),
+        ("CPU", format_metric(hardware.get("cpu"))),
+        ("RAM (MiB)", format_metric(hardware.get("ram_mib"))),
+        ("OS", format_metric(hardware.get("os"))),
+        ("Power mode", format_metric(hardware.get("power_mode"))),
+    ]
+    body = "".join(
+        f"<tr><th>{escape(label)}</th><td>{escape(value)}</td></tr>" for label, value in rows
+    )
+    return f"<h2>Edge performance</h2><table>{body}</table>"
 
 
 def render_report(run: dict, items: list[dict]) -> str:
@@ -213,6 +251,7 @@ def render_report(run: dict, items: list[dict]) -> str:
 {fixture_note}
 <p>Garak pass rate (1 - ASR): {escape(garak_rate_text)}. Attack success rate: {escape(garak_asr_text)}.</p>
 <p>{escape(garak_wording)}</p>
+{_edge_section(run)}
 <p>Garak report folder: {escape(str(run.get('garak_runs_dir') or ''))}</p>
 <p>Run log: {escape(str(run.get('log_path') or ''))}</p>
 <table>

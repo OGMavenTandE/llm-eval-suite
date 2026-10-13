@@ -26,6 +26,25 @@ from llm_eval_suite.worker import build_worker_command
 
 logger = logging.getLogger("llm_eval_suite.runs")
 
+
+def _hardware_stamp(connection: dict) -> dict:
+    try:
+        from llm_eval.edge.hardware import hardware_stamp
+
+        return hardware_stamp(connection)
+    except Exception as exc:  # noqa: BLE001 - a stamp failure must not block the run
+        return {"error": str(exc)}
+
+
+def _edge_summary(edge) -> dict | None:
+    if edge is None:
+        return None
+    try:
+        return edge.finish()
+    except Exception as exc:  # noqa: BLE001 - metrics are recorded, not fatal
+        logger.warning("edge metrics failed: %s", exc)
+        return {"error": str(exc)}
+
 # Half or more empty fact-check answers is an invalid run. A thinking model
 # that spends max_tokens inside <think> and returns no answer trips this.
 FACTCHECK_EMPTY_INVALID_RATE = 0.5
@@ -277,6 +296,8 @@ class RunManager:
         record["log_path"] = str(run_dir / "run.log")
         record["validity"] = "ok"
         record["validity_reason"] = ""
+        if not record.get("hardware"):
+            record["hardware"] = _hardware_stamp(connection)
         self._write_run(run_dir, record)
         if in_process is None:
             in_process = self.model_factory is not None
@@ -469,6 +490,7 @@ class RunManager:
         started = time.perf_counter()
         new_live = 0
         model = None
+        edge = None
         self._append_log(run_dir, f"Run {run_id} started.")
         if watch_cancel:
             threading.Thread(target=self._watch_cancel, args=(run_dir, cancel), daemon=True).start()
@@ -479,6 +501,11 @@ class RunManager:
                 from llm_eval_suite.connections import build_model
 
                 model = build_model(connection)
+            from llm_eval.edge.session import EdgeSession, edge_concurrency
+
+            edge = EdgeSession(connection, concurrency=edge_concurrency(expanded, connection))
+            model = edge.wrap(model)
+            edge.start()
             for suite in expanded["suites"]:
                 if cancel.is_set():
                     break
@@ -568,9 +595,19 @@ class RunManager:
                         )
                 self._append_log(run_dir, f"{result['name']} finished ({result.get('source')}).")
                 self._update_progress(run_dir, progress, suites)
+            if edge is not None and not cancel.is_set():
+                edge.probe()
             status = "cancelled" if cancel.is_set() else "completed"
             self._finalize(
-                run_dir, items, suites, status, error=None, started=started, new_live=new_live, model=model
+                run_dir,
+                items,
+                suites,
+                status,
+                error=None,
+                started=started,
+                new_live=new_live,
+                model=model,
+                edge=_edge_summary(edge),
             )
         except Exception as exc:  # noqa: BLE001 - stored on the run record
             self._append_log(run_dir, f"Run failed: {exc}")
@@ -583,6 +620,7 @@ class RunManager:
                 started=started,
                 new_live=new_live,
                 model=model,
+                edge=_edge_summary(edge),
             )
 
     def _finalize(
@@ -595,6 +633,7 @@ class RunManager:
         started: float | None = None,
         new_live: int = 0,
         model=None,
+        edge: dict | None = None,
     ):
         record = self._read_run(run_dir) or {}
         record["status"] = status
@@ -686,6 +725,14 @@ class RunManager:
             record["scorecard"] = withhold_category_scores(record.get("scorecard") or {})
             record["garak_pass_rate"] = None
             record["garak_attack_success_rate"] = None
+        if edge:
+            from llm_eval.edge.metrics import scorecard_edge
+
+            record["edge_metrics"] = edge
+            if edge.get("hardware"):
+                record["hardware"] = edge["hardware"]
+            record["scorecard"] = record.get("scorecard") or {}
+            record["scorecard"]["edge"] = scorecard_edge(edge)
         self._write_run(run_dir, record)
         self._write_manifest(run_dir, record)
 
