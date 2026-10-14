@@ -461,6 +461,39 @@ def test_worker_command_is_a_list(tmp_path: Path):
     assert "AI Eval" in command[-1]
 
 
+def _wait_for_demo_run(client, run_id: str, *, timeout_seconds: float = 30.0) -> dict:
+    """Poll until the demo run leaves ``running``.
+
+    A loaded CI runner can spend longer than a couple of seconds on two quick
+    preset runs. The deadline is long enough for that work. A run that is
+    still going fails with its error and the tail of its log.
+    """
+    deadline = time.monotonic() + timeout_seconds
+    payload: dict = {}
+    while True:
+        response = client.get(f"/api/runs/{run_id}")
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        if payload["status"] not in {"running", "cancel_requested", "pending"}:
+            return payload
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(0.05)
+    log_tail = ""
+    log_path = payload.get("log_path")
+    if log_path:
+        try:
+            log_tail = Path(log_path).read_text(encoding="utf-8", errors="replace")[-2000:]
+        except OSError as exc:
+            log_tail = f"(could not read {log_path}: {exc})"
+    raise AssertionError(
+        f"Run {run_id} still {payload.get('status')} after {timeout_seconds:.0f}s. "
+        f"error={payload.get('error')!r} "
+        f"validity={payload.get('validity')!r} "
+        f"reason={payload.get('validity_reason')!r}\n{log_tail}"
+    )
+
+
 def test_demo_start_uses_the_same_preset(tmp_path: Path, monkeypatch):
     pytest.importorskip("fastapi")
     pytest.importorskip("httpx")
@@ -502,14 +535,9 @@ def test_demo_start_uses_the_same_preset(tmp_path: Path, monkeypatch):
     assert body["runs"][0]["model"] == "hf-dow-news"
     assert body["runs"][1]["model"] == "gpt2-medium"
     for row in body["runs"]:
-        current = None
-        for _ in range(50):
-            current = client.get(f"/api/runs/{row['run_id']}")
-            if current.json()["status"] not in {"running", "cancel_requested"}:
-                break
-            time.sleep(0.05)
-        assert current.json()["status"] in {"completed", "invalid"}
-        assert current.json()["preset"] == "quick"
+        current = _wait_for_demo_run(client, row["run_id"])
+        assert current["status"] in {"completed", "invalid"}
+        assert current["preset"] == "quick"
     page = client.get("/")
     assert "Demo: DVIDS fine-tune vs base" in page.text
     presets = client.get("/api/presets")
