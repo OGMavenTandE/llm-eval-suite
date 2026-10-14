@@ -11,6 +11,7 @@ import time
 
 import requests
 
+from llm_eval.http_policy import check_base_url, tls_verify
 from llm_eval.models.base import ModelResponse
 from llm_eval.models.context import strip_think_blocks
 from llm_eval.offline import refuse_remote_http
@@ -88,8 +89,9 @@ def _response(text: str, latency_ms: float, tokens, metadata: dict) -> ModelResp
 
 def ollama_stream_generate(base_url: str, payload: dict, timeout: int = 120) -> ModelResponse:
     """Stream ``/api/generate``. On a bad stream body, one non-streaming call is used."""
+    base_url = check_base_url(base_url)
     refuse_remote_http(base_url, what="remote Ollama")
-    url = f"{base_url.rstrip('/')}/api/generate"
+    url = f"{base_url}/api/generate"
     body = {key: value for key, value in payload.items() if key != "edge_stream"}
     body["stream"] = True
     model = body.get("model") or ""
@@ -176,8 +178,9 @@ def openai_stream_generate(
     what: str = "OpenAI cloud API",
 ) -> ModelResponse:
     """Stream chat or completions. A rejected stream falls back to one blocking call."""
+    base_url = check_base_url(base_url)
     refuse_remote_http(base_url, what=what)
-    url = f"{base_url.rstrip('/')}/completions" if mode == "completions" else f"{base_url.rstrip('/')}/chat/completions"
+    url = f"{base_url}/completions" if mode == "completions" else f"{base_url}/chat/completions"
     body = {key: value for key, value in payload.items() if key != "edge_stream"}
     body["stream"] = True
     if mode != "completions":
@@ -212,11 +215,12 @@ def openai_stream_generate(
 
 
 def _post_stream(url: str, body: dict, headers: dict, timeout: int, model: str):
-    resp = requests.post(url, json=body, headers=headers, timeout=timeout, stream=True)
+    verify = tls_verify()
+    resp = requests.post(url, json=body, headers=headers, timeout=timeout, stream=True, verify=verify)
     if resp.status_code >= 400 and "stream_options" in body:
         reduced = {key: value for key, value in body.items() if key != "stream_options"}
         resp.close()
-        resp = requests.post(url, json=reduced, headers=headers, timeout=timeout, stream=True)
+        resp = requests.post(url, json=reduced, headers=headers, timeout=timeout, stream=True, verify=verify)
     try:
         resp.raise_for_status()
     except requests.exceptions.HTTPError as exc:
@@ -238,7 +242,7 @@ def _openai_blocking(
     body = {key: value for key, value in payload.items() if key not in {"stream", "stream_options", "edge_stream"}}
     start = time.perf_counter()
     try:
-        resp = requests.post(url, json=body, headers=headers, timeout=timeout)
+        resp = requests.post(url, json=body, headers=headers, timeout=timeout, verify=tls_verify())
         latency_ms = (time.perf_counter() - start) * 1000
         resp.raise_for_status()
     except requests.exceptions.ConnectionError:

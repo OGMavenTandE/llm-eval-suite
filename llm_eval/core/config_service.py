@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 from llm_eval.datasets.loader import load_dataset
+from llm_eval.http_policy import check_base_url, tls_verify
 from llm_eval.schemas.dataset_info import DatasetInfo
 from llm_eval.schemas.model_info import ModelInfo
 from llm_eval.schemas.run_request import RunRequest, RunValidationResult
@@ -109,6 +110,18 @@ class ConfigService:
                     f"Model entry {i + 1} has unknown provider '{model['provider']}'. "
                     f"Supported: {', '.join(_known_providers())}."
                 )
+            params = model.get("params") if isinstance(model.get("params"), dict) else {}
+            base_url = params.get("base_url")
+            if isinstance(base_url, str) and base_url.strip():
+                try:
+                    check_base_url(base_url)
+                except ValueError as exc:
+                    errors.append(f"Model entry {i + 1}: {exc}")
+            if "verify" in params or params.get("ca_bundle"):
+                try:
+                    tls_verify(params.get("ca_bundle"), verify=params.get("verify"))
+                except ValueError as exc:
+                    errors.append(f"Model entry {i + 1}: {exc}")
 
         evaluators = config.get("evaluators", [])
         if not isinstance(evaluators, list) or not evaluators:

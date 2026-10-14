@@ -17,6 +17,7 @@ from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from llm_eval.http_policy import check_base_url
 from llm_eval.models.nanogpt_convert import convert_nanogpt_to_hf
 from llm_eval.offline import (
     load_settings,
@@ -282,7 +283,10 @@ def create_app(
 
     @app.get("/api/ollama/tags")
     def ollama_tags(base_url: str = "http://127.0.0.1:11434"):
-        root = base_url.rstrip("/")
+        try:
+            root = check_base_url(base_url)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         if root.endswith("/v1"):
             root = root[:-3]
         try:
@@ -358,7 +362,10 @@ def create_app(
 
     @app.put("/api/judges")
     def put_judges(body: JudgesIn):
-        return app.state.store.save_judges(body.model_dump())
+        try:
+            return app.state.store.save_judges(body.model_dump())
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.post("/api/runs")
     def start_run(body: RunIn):

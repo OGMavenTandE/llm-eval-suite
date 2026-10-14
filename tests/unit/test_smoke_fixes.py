@@ -340,7 +340,7 @@ def test_ollama_sends_think_false_and_retries_when_rejected(monkeypatch):
         def json(self):
             return self._body
 
-    def fake_post(url, json=None, headers=None, timeout=None):  # noqa: A002
+    def fake_post(url, json=None, headers=None, timeout=None, **kwargs):  # noqa: A002
         payloads.append(dict(json))
         if "think" in json:
             return Response(400, {"error": {"message": "unknown field think"}})

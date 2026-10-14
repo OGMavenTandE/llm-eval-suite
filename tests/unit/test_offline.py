@@ -108,7 +108,7 @@ def test_local_openai_endpoint_still_runs_when_offline(monkeypatch):
         def json(self):
             return {"choices": [{"text": "pong"}], "usage": {"total_tokens": 1}}
 
-    def fake_post(url, json=None, headers=None, timeout=None):  # noqa: A002
+    def fake_post(url, json=None, headers=None, timeout=None, **kwargs):  # noqa: A002
         calls.append(url)
         return Response()
 

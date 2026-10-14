@@ -1,5 +1,8 @@
+import csv
+
 from llm_eval.core.result_service import ResultService
 from llm_eval.evaluators.base import EvalResult
+from llm_eval.reporting.comparison import ComparisonReporter
 from llm_eval.reporting.reporter import EvalReporter
 from llm_eval.storage.artifacts import find_model_artifacts, standard_artifact_names
 
@@ -73,3 +76,54 @@ def test_result_service_loads_reporter_outputs(tmp_path):
     resolved = result_service.resolve_model_artifacts(reporter.run_dir)
     assert resolved["summary_path"] == summary_path
     assert resolved["detailed_path"] == detailed_path
+
+
+def test_summary_and_comparison_keep_rounded_scores(tmp_path, capsys):
+    reporter = EvalReporter(output_dir=str(tmp_path / "results"), run_name="agg")
+    scores = [1.0, 2 / 3]
+    passed = [True, False]
+    for index, (score, ok) in enumerate(zip(scores, passed)):
+        reporter.record_result(
+            sample_idx=index,
+            prompt="q",
+            expected="a",
+            model_response_text="a",
+            latency_ms=1.0,
+            eval_results=[_make_eval_result("correctness", score, ok)],
+        )
+    summary_path = reporter.save_summary()
+    rows = list(csv.DictReader(summary_path.open(encoding="utf-8")))
+    mean = sum(scores) / len(scores)
+    rate = sum(passed) / len(passed)
+    assert rows == [
+        {
+            "metric_name": "correctness",
+            "mean_score": str(round(mean, 4)),
+            "pass_rate": str(round(rate, 4)),
+            "sample_count": "2",
+        }
+    ]
+    reporter.print_summary()
+    printed = capsys.readouterr().out
+    assert f"{mean:.4f}" in printed
+    assert f"{rate:.1%}" in printed
+
+    other = EvalReporter(output_dir=str(tmp_path / "results"), run_name="agg-b")
+    other.record_result(
+        sample_idx=0,
+        prompt="q",
+        expected="a",
+        model_response_text="b",
+        latency_ms=2.0,
+        eval_results=[_make_eval_result("correctness", 0.0, False)],
+    )
+    comparison = ComparisonReporter(str(tmp_path / "cmp"), "agg", ["left", "right"])
+    comparison.add_model_results("left", reporter._results)
+    comparison.add_model_results("right", other._results)
+    summary, _detailed = comparison.save_comparison()
+    compared = list(csv.DictReader(summary.open(encoding="utf-8")))
+    assert compared[0]["model_name"] == "left"
+    assert compared[0]["mean_score"] == str(round(mean, 4))
+    assert compared[0]["pass_rate"] == str(round(rate, 4))
+    assert compared[1]["mean_score"] == "0.0"
+    assert compared[1]["pass_rate"] == "0.0"

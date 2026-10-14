@@ -236,7 +236,7 @@ Think of the provider as the "adapter" that tells the tool how to talk to the mo
 
 - **`max_tokens`** — The maximum number of "tokens" (roughly, word fragments) the model can produce in a single response. `512` is a reasonable default for factual Q&A tasks. Increase this for tasks that require longer responses (e.g., `1024` or `2048` for summaries or explanations).
 
-- **`base_url`** — The network address where Ollama is running. The default `http://localhost:11434` is correct for a standard local installation. Only change this if Ollama is running on a different machine or port.
+- **`base_url`** — The network address where Ollama is running. The default `http://localhost:11434` is correct for a standard local installation. Only change this if Ollama is running on a different machine or port. The address must be http or https. Link-local and metadata hosts, including 169.254.0.0/16, are rejected. localhost, 127.0.0.1, and ::1 remain valid for Ollama on this machine. For an OpenAI-compatible server that uses a private CA, set `ca_bundle` to the PEM file or set `LLM_EVAL_CA_BUNDLE`. Certificate verification stays on.
 
 ### `evaluators`
 

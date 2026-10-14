@@ -5,6 +5,7 @@ from urllib.parse import urlparse
 
 import requests
 
+from llm_eval.http_policy import check_base_url, tls_verify
 from llm_eval.models.base import BaseModel, ModelResponse
 from llm_eval.offline import refuse_remote_http
 from llm_eval.models.context import clamp_prompt_and_new_tokens, strip_think_blocks
@@ -28,6 +29,8 @@ _CONNECTION_KEYS = {
     "stream",
     "remote_what",
     "edge_stream",
+    "ca_bundle",
+    "verify",
 }
 
 
@@ -36,7 +39,8 @@ class OpenAIModel(BaseModel):
 
     def __init__(self, name: str, params: dict):
         super().__init__(name, params)
-        self.base_url = params.get("base_url", "https://api.openai.com/v1").rstrip("/")
+        self.base_url = check_base_url(params.get("base_url", "https://api.openai.com/v1"))
+        self.verify = tls_verify(params.get("ca_bundle"), verify=params.get("verify"))
         if params.get("api_key"):
             self.api_key = params["api_key"]
         elif "api_key" in params or _is_local_base_url(self.base_url):
@@ -127,7 +131,9 @@ class OpenAIModel(BaseModel):
         if allow_options_retry:
             body["stream_options"] = {"include_usage": True}
         try:
-            resp = requests.post(url, json=body, headers=headers, timeout=self.timeout, stream=True)
+            resp = requests.post(
+                url, json=body, headers=headers, timeout=self.timeout, stream=True, verify=self.verify
+            )
         except requests.exceptions.ConnectionError:
             raise RuntimeError(
                 f"Could not connect to OpenAI-compatible API at {self.base_url}."
@@ -184,7 +190,9 @@ class OpenAIModel(BaseModel):
 
     def _post_once(self, url: str, payload: dict, headers: dict):
         try:
-            resp = requests.post(url, json=payload, headers=headers, timeout=self.timeout)
+            resp = requests.post(
+                url, json=payload, headers=headers, timeout=self.timeout, verify=self.verify
+            )
             resp.raise_for_status()
             return resp
         except requests.exceptions.ConnectionError:
