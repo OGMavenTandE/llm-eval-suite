@@ -339,6 +339,25 @@ def _empty_accuracy(kind: str, variant: dict) -> str:
     return "No rows."
 
 
+def _decision_note(accuracy_rows: list[dict]) -> str:
+    """Say when a failed row is still inside sampling noise.
+
+    The verdict stays fail. The sentence tells a reader that 20 items are
+    too few to treat that fail as decision-grade.
+    """
+    names = []
+    for row in accuracy_rows:
+        if row.get("status") == "fail" and row.get("within_noise"):
+            names.append(str(row.get("label") or row.get("name") or "row"))
+    if not names:
+        return ""
+    listed = ", ".join(names)
+    return (
+        f"{listed}: this fail is within the 95% interval. "
+        "Use a larger item count before treating it as decision-grade."
+    )
+
+
 def _verdict(accuracy_rows: list[dict]) -> str:
     if any(row.get("status") == "fail" for row in accuracy_rows):
         return "fail"
@@ -383,6 +402,7 @@ def build_delta_report(variants: list[dict], *, baseline: str, tolerance: float)
             for item in accuracy_rows
             if item.get("status") == "fail"
         ]
+        decision_note = _decision_note(accuracy_rows)
         power = _metric_rows(base["run"], row["run"], _POWER)
         power.extend(_optional_metric(base["run"], row["run"], "baseline_vram_mib", "Baseline VRAM (MiB)", 1))
         compared.append(
@@ -392,6 +412,7 @@ def build_delta_report(variants: list[dict], *, baseline: str, tolerance: float)
                 "run_id": (row.get("run") or {}).get("run_id"),
                 "verdict": verdict,
                 "failures": failures,
+                "decision_note": decision_note,
                 "accuracy": accuracy,
                 "speed": _metric_rows(base["run"], row["run"], _SPEED),
                 "power": power,
@@ -454,6 +475,10 @@ def render_markdown(report: dict) -> str:
             lines.append("")
             for failure in variant["failures"]:
                 lines.append(f"- {failure}")
+        decision = str(variant.get("decision_note") or "").strip()
+        if decision:
+            lines.append("")
+            lines.append(decision)
         lines.append("")
         for title, key in (("Accuracy by category", "categories"), ("Accuracy by benchmark", "benchmarks")):
             rows = (variant.get("accuracy") or {}).get(key) or []
@@ -541,6 +566,9 @@ def render_html(report: dict) -> str:
         if variant.get("failures"):
             items = "".join(f"<li>{escape(str(item))}</li>" for item in variant["failures"])
             blocks.append(f"<ul>{items}</ul>")
+        decision = str(variant.get("decision_note") or "").strip()
+        if decision:
+            blocks.append(f"<p>{escape(decision)}</p>")
         for title, key in (("Accuracy by category", "categories"), ("Accuracy by benchmark", "benchmarks")):
             rows = (variant.get("accuracy") or {}).get(key) or []
             body = "".join(

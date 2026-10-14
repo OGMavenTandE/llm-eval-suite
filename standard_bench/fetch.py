@@ -1,7 +1,10 @@
 """One-time dataset fetch. This is the only path that opens a network connection.
 
-The runner never calls this module. A closed machine copies the directory
-``fetch`` wrote and checks the manifest hashes.
+HTTP 429 and 500, 502, 503, and 504 are retried up to five times. A numeric
+``Retry-After`` is the wait, capped at 30 seconds. Otherwise the wait doubles
+from half a second and stops at 30 seconds. When the limit persists, copy a
+directory fetched on another machine and pass it as ``--data``. The runner
+never calls this module. A closed machine checks the manifest hashes.
 """
 
 from __future__ import annotations
