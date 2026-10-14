@@ -66,7 +66,7 @@ def _patch_garak_off(monkeypatch) -> None:
 def test_openai_optional_key_and_context(monkeypatch):
     seen = {}
 
-    def fake_post(url, json=None, headers=None, timeout=None):  # noqa: A002
+    def fake_post(url, json=None, headers=None, timeout=None, **kwargs):  # noqa: A002
         seen["url"] = url
         seen["json"] = json
         seen["headers"] = headers

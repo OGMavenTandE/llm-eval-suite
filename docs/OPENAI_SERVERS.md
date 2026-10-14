@@ -35,3 +35,9 @@ models:
 Use type `openai` (YAML provider `openai`). Point the base URL at the local OpenAI port, usually `http://127.0.0.1:8000/v1`. Leave the API key blank unless the container was started with one.
 
 NIM readiness is `GET /v1/health/ready` on that host. Model listing is `GET /v1/models`. There is no separate NIM or TensorRT-LLM connector. The OpenAI-compatible client already posts chat completions to whatever base URL you save.
+
+## URL and TLS
+
+A configured base URL must use http or https. Link-local and metadata hosts are rejected, including the range 169.254.0.0/16 and IPv6 link-local addresses (fe80::/10). localhost, 127.0.0.1, and ::1 stay allowed, so Ollama on this machine still connects. A private-network address such as 10.0.0.0/8 or 192.168.0.0/16 is allowed. The check reads the host in the URL. It does not resolve DNS.
+
+OpenAI-compatible requests verify the server certificate. There is no switch to turn verification off. On a closed network with a private CA, set `ca_bundle` in the model params, or set `LLM_EVAL_CA_BUNDLE` to the PEM file. That path is the trust store for those requests.

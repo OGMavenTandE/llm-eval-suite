@@ -16,6 +16,7 @@ from urllib.parse import urlparse
 
 import requests
 
+from llm_eval.http_policy import check_base_url, tls_verify
 from llm_eval.models.base import ModelResponse
 from llm_eval.models.openai_model import OpenAIModel
 from llm_eval.offline import refuse_remote_http
@@ -103,12 +104,13 @@ def api_root(base_url: str) -> str:
 
 def check_health(base_url: str, health_path: str = "/health", timeout: float = 5) -> dict:
     """GET the server health URL. A connection failure is ``ok: False``, not a raise."""
+    check_base_url(base_url)
     origin = server_origin(base_url)
     path = health_path if health_path.startswith("/") else f"/{health_path}"
     url = origin + path
     refuse_remote_http(url, what="remote endpoint")
     try:
-        resp = requests.get(url, timeout=timeout)
+        resp = requests.get(url, timeout=timeout, verify=tls_verify())
     except requests.RequestException as exc:
         return {"ok": False, "url": url, "status_code": None, "body": None, "error": str(exc)}
     body = _body(resp)
@@ -128,10 +130,11 @@ def check_health(base_url: str, health_path: str = "/health", timeout: float = 5
 
 def list_models(base_url: str, timeout: float = 5) -> dict:
     """GET ``/v1/models`` and return the ids."""
+    check_base_url(base_url)
     url = api_root(base_url) + "/models"
     refuse_remote_http(url, what="remote endpoint")
     try:
-        resp = requests.get(url, timeout=timeout)
+        resp = requests.get(url, timeout=timeout, verify=tls_verify())
         resp.raise_for_status()
         payload = resp.json()
     except requests.RequestException as exc:

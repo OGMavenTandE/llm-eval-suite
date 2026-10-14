@@ -3,6 +3,8 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+from llm_eval.reporting.metrics import group_scores, mean_pass_rate
+
 
 class EvalReporter:
     """
@@ -57,15 +59,7 @@ class EvalReporter:
         Write summary CSV with per-evaluator stats:
         metric_name, mean_score, pass_rate, sample_count
         """
-        # Aggregate per-metric
-        metric_data: dict[str, dict] = {}
-        for record in self._results:
-            for ev in record["evaluations"]:
-                name = ev["metric_name"]
-                if name not in metric_data:
-                    metric_data[name] = {"scores": [], "passed": []}
-                metric_data[name]["scores"].append(ev["score"])
-                metric_data[name]["passed"].append(ev["passed"])
+        metric_data = group_scores(self._results)
 
         out_path = self.run_dir / "results_summary.csv"
         with open(out_path, "w", newline="", encoding="utf-8") as f:
@@ -75,11 +69,7 @@ class EvalReporter:
             )
             writer.writeheader()
             for metric_name, data in metric_data.items():
-                scores = data["scores"]
-                passed = data["passed"]
-                sample_count = len(scores)
-                mean_score = sum(scores) / sample_count if sample_count else 0.0
-                pass_rate = sum(passed) / sample_count if sample_count else 0.0
+                mean_score, pass_rate, sample_count = mean_pass_rate(data["scores"], data["passed"])
                 writer.writerow(
                     {
                         "metric_name": metric_name,
@@ -93,15 +83,7 @@ class EvalReporter:
 
     def print_summary(self):
         """Print a clean summary table to stdout."""
-        # Aggregate per-metric
-        metric_data: dict[str, dict] = {}
-        for record in self._results:
-            for ev in record["evaluations"]:
-                name = ev["metric_name"]
-                if name not in metric_data:
-                    metric_data[name] = {"scores": [], "passed": []}
-                metric_data[name]["scores"].append(ev["score"])
-                metric_data[name]["passed"].append(ev["passed"])
+        metric_data = group_scores(self._results)
 
         if not metric_data:
             print("No evaluation results recorded.")
@@ -123,11 +105,7 @@ class EvalReporter:
         print(f"  {divider}")
 
         for metric_name, data in metric_data.items():
-            scores = data["scores"]
-            passed = data["passed"]
-            n = len(scores)
-            mean_score = sum(scores) / n if n else 0.0
-            pass_rate = sum(passed) / n if n else 0.0
+            mean_score, pass_rate, n = mean_pass_rate(data["scores"], data["passed"])
             row = (
                 f"{metric_name:<{col_widths['metric']}}"
                 f"{mean_score:>{col_widths['mean_score']}.4f}"

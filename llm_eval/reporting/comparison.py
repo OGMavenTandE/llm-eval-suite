@@ -2,6 +2,8 @@ import csv
 import json
 from pathlib import Path
 
+from llm_eval.reporting.metrics import group_scores, mean_pass_rate
+
 
 class ComparisonReporter:
     """
@@ -36,23 +38,13 @@ class ComparisonReporter:
         """
         agg = {}
         for model_name, results in self._model_results.items():
-            metric_data = {}
-            for record in results:
-                for ev in record.get("evaluations", []):
-                    name = ev["metric_name"]
-                    if name not in metric_data:
-                        metric_data[name] = {"scores": [], "passed": []}
-                    metric_data[name]["scores"].append(ev["score"])
-                    metric_data[name]["passed"].append(ev["passed"])
-
+            metric_data = group_scores(results)
             agg[model_name] = {}
             for metric_name, data in metric_data.items():
-                scores = data["scores"]
-                passed = data["passed"]
-                n = len(scores)
+                mean_score, pass_rate, n = mean_pass_rate(data["scores"], data["passed"])
                 agg[model_name][metric_name] = {
-                    "mean_score": round(sum(scores) / n, 4) if n else 0.0,
-                    "pass_rate": round(sum(passed) / n, 4) if n else 0.0,
+                    "mean_score": round(mean_score, 4) if n else 0.0,
+                    "pass_rate": round(pass_rate, 4) if n else 0.0,
                     "sample_count": n,
                 }
 

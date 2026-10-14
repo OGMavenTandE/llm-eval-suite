@@ -95,6 +95,8 @@ set HF_HUB_DISABLE_TELEMETRY=1
 
 `LLM_EVAL_OFFLINE=1` is the runtime switch. `LLM_EVAL_AIRGAP_BUILD=1` hard-disables the Hugging Face hub branch even if a preset or a saved connection still names a hub repo. The same switch can be saved from the Connect screen, or set with `"offline": true` on a preset. A preset that sets it refuses weight downloads and blocks the OpenAI cloud API for that run. A model on this computer (Ollama, a local OpenAI-compatible server, or a Hugging Face folder) still runs.
 
+OpenAI-compatible calls verify the server certificate. To trust a private CA, set `LLM_EVAL_CA_BUNDLE` to the PEM file on the closed network, or set `ca_bundle` on the model params. There is no switch to disable verification. Configured base URLs must be http or https. Link-local and metadata hosts, including 169.254.0.0/16, are rejected. localhost stays allowed for Ollama.
+
 The app serves its own fonts from `llm_eval_suite/static/fonts/`. It does not load a font CDN.
 
 ## Public capability kit

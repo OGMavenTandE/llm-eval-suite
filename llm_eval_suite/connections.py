@@ -9,6 +9,7 @@ import uuid
 from pathlib import Path
 from urllib.parse import urlparse
 
+from llm_eval.http_policy import check_base_url
 from llm_eval.models.base import BaseModel
 from llm_eval.models.hf_folder import HuggingFaceFolderModel
 from llm_eval.models.nanogpt_convert import describe_model_path
@@ -156,6 +157,8 @@ class ConnectionStore:
             raise ValueError("A Hugging Face folder path is required.")
         if profile["hub"] and not hub_allowed():
             raise ValueError(hub_refused_message(profile["folder"] or profile["model"] or "unknown model"))
+        if profile["base_url"]:
+            profile["base_url"] = check_base_url(profile["base_url"])
         replaced = False
         for index, row in enumerate(rows):
             if row.get("id") == profile_id:
@@ -193,7 +196,7 @@ class ConnectionStore:
     def save_judges(self, payload: dict) -> dict:
         judges = []
         for row in payload.get("judges") or []:
-            base_url = (row.get("base_url") or "http://127.0.0.1:11434").rstrip("/")
+            base_url = check_base_url(row.get("base_url") or "http://127.0.0.1:11434")
             judges.append(
                 {
                     "name": row.get("name") or row.get("model") or "judge",
@@ -235,6 +238,13 @@ _SERVER_ROOTS = {
     "vllm": "http://127.0.0.1:8000",
     "llama_cpp": "http://127.0.0.1:8080",
 }
+
+
+def _copy_tls(profile: dict, params: dict) -> None:
+    if profile.get("ca_bundle"):
+        params["ca_bundle"] = profile["ca_bundle"]
+    if "verify" in profile:
+        params["verify"] = profile["verify"]
 
 
 def openai_base_url(profile: dict) -> str:
@@ -324,6 +334,7 @@ def build_model(profile: dict) -> BaseModel:
         }
         if profile.get("max_context"):
             params["max_context"] = int(profile["max_context"])
+        _copy_tls(profile, params)
         refuse_remote_http(params["base_url"], what="remote endpoint")
         return model_for(kind)(profile.get("model") or "model", params)
     params = {
@@ -337,6 +348,7 @@ def build_model(profile: dict) -> BaseModel:
     if profile.get("max_context"):
         params["max_context"] = int(profile["max_context"])
         params["max_new_tokens"] = int(profile.get("max_new_tokens") or 64)
+    _copy_tls(profile, params)
     what = "OpenAI cloud API" if kind == "openai" else "remote endpoint"
     refuse_remote_http(params["base_url"], what=what)
     return OpenAIModel(profile.get("model") or "model", params)
