@@ -28,13 +28,21 @@ The standard preset reads benchmark files from disk. It does not download them d
 python -m standard_bench fetch --dest datasets/standard
 ```
 
-Pass that directory as `--data datasets/standard`, or set `LLM_EVAL_STANDARD_DATA` to the same path. `quant-compare` checks the directory and the suite hashes before it calls a model. If the directory is missing, it stops immediately and exits nonzero with:
+Hugging Face sometimes answers that fetch with HTTP 429. Fetch retries 429, and also 500, 502, 503, and 504, up to five times. When the response includes a numeric `Retry-After`, fetch waits that many seconds, capped at 30. Otherwise it waits with exponential backoff, starting at half a second and capping at 30 seconds. If the rate limit is still in place after those attempts, fetch the directory on another machine, or wait and run the same command again, and copy the directory across. Point the run at that pre-fetched copy with `--data` or `LLM_EVAL_STANDARD_DATA`. That copied directory is also the path on a closed network. Nothing is downloaded during a run.
+
+Pass that directory as `--data datasets/standard`, or set `LLM_EVAL_STANDARD_DATA` to the same path. `quant-compare` checks the directory and the suite hashes before it calls a model. If the path is unset, it stops immediately and exits nonzero with:
 
 ```
 No standard benchmark directory. Set LLM_EVAL_STANDARD_DATA or pass --data.
 ```
 
-Nothing is downloaded to repair a missing or mismatched file.
+If the path is set and the directory is not there, the error text is:
+
+```
+Standard benchmark directory does not exist: ...
+```
+
+The full line names the missing path, then says to set `LLM_EVAL_STANDARD_DATA` or pass `--data`. Nothing is downloaded to repair a missing or mismatched file.
 
 ## Two-minute smoke
 
@@ -58,7 +66,9 @@ For the demo, cap each suite at 20 items. That is 120 items per quantization, 24
 python -m llm_eval.edge quant-compare --provider ollama --base-url http://127.0.0.1:11434 --baseline fp16=llama3.2:3b-instruct-fp16 --variant q4=llama3.2:3b-instruct-q4_K_M --preset standard_capability_quick --per-suite 20 --data datasets/standard --tolerance 0.05 --out runs/quant-compare
 ```
 
-Omit `--per-suite` to score the full quick50 subset. Add a Q8 variant with another `--variant q8=llama3.2:3b-instruct-q8_0`. `--data` can be omitted when `LLM_EVAL_STANDARD_DATA` is already set.
+At `--per-suite 20` the run-to-run noise is large. One dry run scored 51 against 50. Another scored 44 against 55, and MATH-500 went from 6 to 3, which failed that row. A fail inside the 95% interval is sampling noise. The report states that the fail is within the 95% interval, and it says to use a larger item count before treating it as decision-grade. For a decision-grade demo, omit `--per-suite` and score the full quick50 subset, 50 items per suite.
+
+Add a Q8 variant with another `--variant q8=llama3.2:3b-instruct-q8_0`. `--data` can be omitted when `LLM_EVAL_STANDARD_DATA` is already set.
 
 Optional load probe, after the scored items:
 
@@ -75,7 +85,7 @@ That records p50 and p95 from four parallel calls. The scored answers stay seque
 `runs/quant-compare/report.md`, `report.html`, and `report.json`.
 
 - Per-category and per-benchmark accuracy delta against FP16. Standard-suite rows are the pass rates stored on each run. Each row shows the pass rate, the passed count, and n.
-- A noise note when the passed counts differ by at most one item, or when the 95% binomial intervals overlap. The note does not change the verdict. A drop larger than `--tolerance` (0.05 here) still fails that row. The note is written `within +/- 1 item`.
+- A noise note when the passed counts differ by at most one item, or when the 95% binomial intervals overlap. The note does not change the verdict. A drop larger than `--tolerance` (0.05 here) still fails that row. When that fail is inside the interval, the report states that the fail is within the 95% interval and that a larger item count is needed before the comparison is decision-grade. The one-item note is written `within +/- 1 item`.
 - Speed from the edge metrics: TTFT p50 and p95, output tokens per second, and latency p50 and p95.
 - Power from the same run: average watts, peak watts, joules per output token, peak VRAM, and peak RAM. These numbers are whatever the 4070 Super reports during the run. They are not a fixed table.
 - Peak VRAM for Ollama is the card reading after other models are unloaded (`keep_alive` 0). The report records the baseline and labels the method `card peak after unloading other models`. llama.cpp and vLLM use per-process memory of compute apps that were not already running, labeled `per-process`, when `nvidia-smi` lists them. If that isolation is unavailable, the peak is the whole card and the label says `card`.

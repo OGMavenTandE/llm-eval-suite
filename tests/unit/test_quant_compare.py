@@ -123,6 +123,10 @@ def test_accuracy_tolerance_and_power_deltas():
     assert "3/4" in text
     assert "within +/- 1 item" in text
     assert "within +/- 1 item" in html
+    assert "gsm8k: this fail is within the 95% interval." in text
+    assert "larger item count" in text
+    assert "gsm8k: this fail is within the 95% interval." in html
+    assert benched["variants"][0]["decision_note"].startswith("gsm8k:")
     assert "\u00b1" not in text
     assert "\u00b1" not in html
     speed = {row["name"]: row for row in variant["speed"]}
@@ -191,6 +195,9 @@ def test_benchmark_noise_uses_item_counts_and_the_binomial_interval():
     assert noisy["within_noise"] is True
     assert noisy["status"] == "fail"
     assert overlap["verdict"] == "fail"
+    overlap_text = render_markdown(overlap)
+    assert "this fail is within the 95% interval." in overlap_text
+    assert "larger item count" in overlap_text
 
 
 def test_per_suite_caps_standard_quick_and_leaves_quant_quick_at_five():

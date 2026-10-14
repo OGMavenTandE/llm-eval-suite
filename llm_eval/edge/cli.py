@@ -247,6 +247,10 @@ def main(argv=None) -> None:
         sys.exit(0)
     for line in result.get("failures") or []:
         print(line, file=sys.stderr)
+    for variant in result.get("variants") or []:
+        note = str(variant.get("decision_note") or "").strip()
+        if note:
+            print(note)
     print(f"Verdict: {result.get('verdict')}")
     files = result.get("files") or {}
     for kind in ("json", "markdown", "html"):

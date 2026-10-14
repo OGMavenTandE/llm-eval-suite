@@ -11,7 +11,8 @@ def build_parser() -> argparse.ArgumentParser:
         description="LLM Evaluation Suite — run evaluations from a YAML config.",
         epilog=(
             "Offline bundle: python -m llm_eval bundle-offline. "
-            "Air-gap check: python -m llm_eval doctor."
+            "Air-gap check: python -m llm_eval doctor. "
+            "Offline install check: python -m llm_eval verify-offline."
         ),
     )
     parser.add_argument(
@@ -65,6 +66,11 @@ def main(argv=None):
         from llm_eval.doctor import main as doctor_main
 
         doctor_main(argv[1:])
+        return
+    if argv and argv[0] == "verify-offline":
+        from llm_eval.verify_offline import main as verify_main
+
+        verify_main(argv[1:])
         return
 
     parser = build_parser()
