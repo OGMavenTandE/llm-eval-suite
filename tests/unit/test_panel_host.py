@@ -193,7 +193,9 @@ def test_empty_shell_reserves_toolkit_slots(tmp_path: Path):
         assert nav[slot_id]["tag"] == "Not installed"
         assert nav[slot_id]["command"].startswith("pip install --no-index --find-links ")
         assert "It runs on this computer only." == nav[slot_id]["local_note"]
+    wheels = str(Path("/opt/ai-toolkit") / "wheels")
     assert nav["finetune"]["command"].endswith("airgap-ai-toolkit[finetune]")
+    assert wheels in nav["finetune"]["command"]
     assert nav["models"]["command"].endswith("airgap-ai-toolkit")
     assert "[rag]" in nav["knowledge"]["command"]
     assert "[safety]" in nav["safety"]["command"]
@@ -275,7 +277,8 @@ def test_settings_toolkit_folder_changes_the_install_command(tmp_path: Path):
     assert saved.json()["toolkit_root"] == "/opt/lab/toolkit"
     body = client.get("/api/plugins").json()
     finetune = next(slot for slot in body["nav"] if slot["id"] == "finetune")
-    assert "/opt/lab/toolkit/wheels" in finetune["command"]
+    wheels = str(Path("/opt/lab/toolkit") / "wheels")
+    assert wheels in finetune["command"]
     assert body["classification"]["text"] == "UNCLASSIFIED"
     assert body["classification"]["enabled"] is True
     refused = client.put("/api/settings", json={"toolkit_root": "https://example.com/wheels"})

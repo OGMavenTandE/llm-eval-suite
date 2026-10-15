@@ -124,7 +124,8 @@ def test_shell_shows_not_installed_and_mounts_the_sample_panel(tmp_path: Path):
         assert "comes with the Air-Gap AI Toolkit" in card
         assert "runs on this computer only" in card
         assert "Install from the local wheel folder" in card
-        assert "pip install --no-index --find-links /opt/ai-toolkit/wheels airgap-ai-toolkit[rag]" in card
+        wheels = str(Path("/opt/ai-toolkit") / "wheels")
+        assert f"pip install --no-index --find-links {wheels} airgap-ai-toolkit[rag]" in card
         assert "Check again" in card
         assert "Last checked" in card and "Found: none." in card
         assert "What else is available" in card
