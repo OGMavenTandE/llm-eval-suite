@@ -26,7 +26,7 @@ Read [docs/LESSONS_LEARNED.md](docs/LESSONS_LEARNED.md) before changing garak sc
 - `docs/`: tutorial, dashboard, smoke notes, lessons
 - `dashboard.html`: single-file viewer for engine JSON. It embeds Public Sans and uses the same palette as the exported report
 - `run_app.bat`: Windows launcher. Creates `.venv-eval` and pins torch, garak, and transformers
-- `pyproject.toml`: package metadata. Version 0.1.0
+- `pyproject.toml`: package metadata. Version 0.2.0
 
 ## Setup
 
