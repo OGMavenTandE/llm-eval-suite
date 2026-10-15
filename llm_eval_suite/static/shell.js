@@ -381,12 +381,59 @@ function paintEnvironment() {
 function paintBanner() {
   const banner = (shell.payload && shell.payload.classification) || {};
   const on = !!(banner.enabled && banner.text);
+  const frame = document.querySelector(".shell");
+  if (frame) frame.classList.toggle("has-banner", on);
   ["class-banner-top", "class-banner-bottom"].forEach((id) => {
     const el = document.getElementById(id);
     if (!el) return;
-    el.textContent = banner.text || "";
+    el.textContent = on ? (banner.text || "") : "";
     el.dataset.color = banner.color || "green";
     el.classList.toggle("is-on", on);
+  });
+}
+
+function railTagCrowded(button) {
+  const rail = button.closest(".rail");
+  if (!rail) return false;
+  const railBox = rail.getBoundingClientRect();
+  const pad = parseFloat(getComputedStyle(rail).paddingRight) || 0;
+  if (button.getBoundingClientRect().right > railBox.right - pad + 1) return true;
+  const label = button.querySelector(".nav-label");
+  const tag = button.querySelector(".nav-tag");
+  if (label && label.scrollWidth > label.clientWidth + 1) return true;
+  if (label && tag && !tag.classList.contains("hidden")) {
+    if (label.getBoundingClientRect().right > tag.getBoundingClientRect().left + 0.5) return true;
+  }
+  return false;
+}
+
+function shortenRailTags() {
+  document.querySelectorAll("#side-nav .nav-tag").forEach((tag) => {
+    const full = tag.dataset.full || tag.textContent.replace(/\s+/g, " ").trim();
+    tag.dataset.full = full;
+    tag.textContent = full;
+    tag.removeAttribute("title");
+    const button = tag.closest(".nav-item");
+    if (button) button.removeAttribute("aria-label");
+  });
+  document.querySelectorAll("#side-nav .nav-item").forEach((button) => {
+    const label = button.querySelector(".nav-label");
+    const tag = button.querySelector(".nav-tag");
+    if (!label || !tag || tag.classList.contains("hidden")) return;
+    const full = tag.dataset.full || "";
+    if (full !== "Not installed") return;
+    if (!railTagCrowded(button)) return;
+    tag.textContent = "";
+    const short = document.createElement("span");
+    short.setAttribute("aria-hidden", "true");
+    short.textContent = "Off";
+    const long = document.createElement("span");
+    long.className = "visually-hidden";
+    long.textContent = full;
+    tag.title = full;
+    tag.append(short, long);
+    const name = (label.childNodes[0] && label.childNodes[0].textContent || label.textContent || "").trim();
+    button.setAttribute("aria-label", name + ", " + full);
   });
 }
 
@@ -412,8 +459,10 @@ function paintNav() {
     if (label) label.textContent = slot.title;
     const tag = button.querySelector(".nav-tag");
     if (tag) {
+      tag.dataset.full = slot.tag || "";
       tag.textContent = slot.tag || "";
       tag.classList.toggle("hidden", !slot.tag);
+      if (!slot.tag) tag.removeAttribute("title");
     }
     button.classList.toggle("is-muted", slot.availability === "not_installed");
     const dot = button.querySelector(".status-dot");
@@ -433,6 +482,7 @@ function paintNav() {
   });
   paintEnvironment();
   paintBanner();
+  shortenRailTags();
 }
 
 async function checkAgain() {
@@ -580,4 +630,7 @@ async function bootShell() {
   scheduleJobs();
 }
 
+shortenRailTags();
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => shortenRailTags());
+window.addEventListener("resize", () => shortenRailTags());
 bootShell();

@@ -35,6 +35,12 @@ html.app-shell .shell {
   --focus: #1c2430;
   background: var(--ground);
   color: var(--ink);
+  grid-template-columns: 220px minmax(0, 1fr);
+  margin-top: 0;
+  margin-bottom: 0;
+  min-height: 100vh;
+}
+html.app-shell .shell.has-banner {
   margin-top: 24px;
   margin-bottom: 24px;
   min-height: calc(100vh - 48px);
@@ -45,11 +51,16 @@ html.app-shell .rail {
   color: #565d68;
   border-right: 1px solid var(--rule);
   box-shadow: none;
-  padding: 16px 10px 12px;
+  padding: 16px 8px 12px;
   gap: 12px;
+  width: 220px;
+  height: 100vh;
+  top: 0;
+  overflow: hidden;
+}
+html.app-shell .shell.has-banner .rail {
   height: calc(100vh - 48px);
   top: 24px;
-  overflow: hidden;
 }
 html.app-shell #side-nav {
   flex: 1 1 auto;
@@ -63,12 +74,12 @@ html.app-shell .brand-sub { color: var(--muted); opacity: 1; }
 
 html.app-shell .nav-item {
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) max-content;
+  grid-template-columns: 18px max-content minmax(max-content, auto);
   align-items: center;
-  column-gap: 8px;
+  column-gap: 6px;
   width: 100%;
   margin: 0;
-  padding: 8px;
+  padding: 8px 6px;
   border: 0;
   border-radius: 8px;
   background: transparent;
@@ -101,21 +112,20 @@ html.app-shell .nav-item[aria-current="page"] {
 html.app-shell .nav-item[aria-current="page"] svg { color: var(--data); }
 html.app-shell .nav-item.is-muted { color: #565d68; }
 html.app-shell .nav-label {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  min-width: max-content;
+  overflow: visible;
   white-space: nowrap;
 }
 html.app-shell .nav-tag {
   justify-self: end;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
-  line-height: 1.4;
+  line-height: 16px;
   color: #565d68;
   background: transparent;
   border: 1px solid #565d68;
   border-radius: 999px;
-  padding: 1px 6px;
+  padding: 0 6px;
   white-space: nowrap;
 }
 html.app-shell .status-dot {
@@ -308,28 +318,36 @@ html.app-shell .toggle-row label {
 html.app-shell .toggle-row .hint { margin: 2px 0 0; color: #565d68; }
 html.app-shell .toggle-row input[type="checkbox"] {
   appearance: none;
-  width: 44px;
-  height: 24px;
-  margin: 0;
+  width: 36px;
+  height: 20px;
+  min-height: 0;
+  margin: 0 0 0 auto;
+  padding: 0;
   border: 0;
+  box-shadow: none;
   border-radius: 999px;
   background: #6b7380;
   position: relative;
   flex: none;
   cursor: pointer;
 }
+html.app-shell .toggle-row input[type="checkbox"]:hover,
+html.app-shell .toggle-row input[type="checkbox"]:focus {
+  border: 0;
+  box-shadow: none;
+}
 html.app-shell .toggle-row input[type="checkbox"]::after {
   content: "";
   position: absolute;
   top: 2px;
   left: 2px;
-  width: 20px;
-  height: 20px;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
   background: #ffffff;
 }
 html.app-shell .toggle-row input[type="checkbox"]:checked { background: #1c2430; }
-html.app-shell .toggle-row input[type="checkbox"]:checked::after { transform: translateX(20px); }
+html.app-shell .toggle-row input[type="checkbox"]:checked::after { transform: translateX(16px); }
 html.app-shell .toggle-row input[type="checkbox"]:disabled { cursor: not-allowed; opacity: 0.6; }
 html.app-shell .plugin-card { max-width: 760px; }
 html.app-shell .command {
@@ -359,8 +377,8 @@ html.app-shell .class-banner {
   position: fixed;
   left: 0;
   right: 0;
-  height: 24px;
-  line-height: 24px;
+  height: 0;
+  line-height: 0;
   z-index: 4;
   visibility: hidden;
   overflow: hidden;
@@ -372,7 +390,11 @@ html.app-shell .class-banner {
 }
 html.app-shell #class-banner-top { top: 0; }
 html.app-shell #class-banner-bottom { bottom: 0; }
-html.app-shell .class-banner.is-on { visibility: visible; }
+html.app-shell .class-banner.is-on {
+  height: 24px;
+  line-height: 24px;
+  visibility: visible;
+}
 html.app-shell .class-banner[data-color="green"] { background: #007a33; color: #ffffff; }
 html.app-shell .class-banner[data-color="blue"] { background: #0033a0; color: #ffffff; }
 html.app-shell .class-banner[data-color="red"] { background: #c8102e; color: #ffffff; }
@@ -410,9 +432,13 @@ html.app-shell :focus-visible {
 }
 
 @media (max-width: 760px) {
+  html.app-shell .shell,
+  html.app-shell .shell.has-banner { grid-template-columns: minmax(0, 1fr); }
   html.app-shell main { padding: 24px 16px 48px; }
-  html.app-shell .rail {
+  html.app-shell .rail,
+  html.app-shell .shell.has-banner .rail {
     position: static;
+    width: auto;
     height: auto;
     top: auto;
     overflow: visible;
