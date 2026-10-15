@@ -1,0 +1,266 @@
+/* Shell for the click-through app. Offline. No remote fonts or icon files.
+   Tokens for the exported report stay in tokens.css. */
+
+html.app-shell { color-scheme: light; }
+
+html.app-shell .shell {
+  --navy: #1c2430;
+  --ink: #1a1e2e;
+  --muted: #565d68;
+  --data: #2c5282;
+  --tint: #f3f6fa;
+  --soft: #f4f5f7;
+  --rule: #e4e7ed;
+  --rule-strong: #c9ced8;
+  --rail: #ffffff;
+  --rail-ink: #565d68;
+  --rail-ink-strong: #1c2430;
+  --rail-accent: #2c5282;
+  --rail-hover: #f3f6fa;
+  --accent: #1c2430;
+  --accent-strong: #12181f;
+  --accent-ink: #ffffff;
+  --ground: #f4f5f7;
+  --surface: #ffffff;
+  --ink-2: #565d68;
+  --line: #e4e7ed;
+  --line-strong: #c9ced8;
+  --focus: #1c2430;
+  background: var(--ground);
+  color: var(--ink);
+}
+
+html.app-shell .rail {
+  background: #ffffff;
+  color: var(--muted);
+  border-right: 1px solid var(--rule);
+  box-shadow: none;
+  padding: 16px 12px 12px;
+  gap: 16px;
+}
+
+html.app-shell .brand h1,
+html.app-shell .brand-mark { color: var(--navy); }
+html.app-shell .brand-sub { color: var(--muted); opacity: 1; }
+
+html.app-shell .nav-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin: 0;
+  padding: 9px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--navy);
+  font: inherit;
+  font-weight: 500;
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+  min-height: 40px;
+}
+html.app-shell .nav-item svg {
+  width: 18px;
+  height: 18px;
+  flex: none;
+}
+html.app-shell .nav-item svg,
+html.app-shell .nav-item svg * {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+html.app-shell .nav-item:hover { background: var(--tint); }
+html.app-shell .nav-item[aria-current="page"] {
+  background: var(--tint);
+  color: var(--navy);
+}
+html.app-shell .nav-item[aria-current="page"] svg { color: var(--data); }
+html.app-shell .nav-item.is-muted { color: var(--muted); }
+html.app-shell .nav-label { flex: 1; min-width: 0; }
+html.app-shell .nav-tag {
+  flex: none;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--muted);
+  background: var(--soft);
+  border-radius: 999px;
+  padding: 0 6px;
+}
+html.app-shell .status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #8a5d00;
+  flex: none;
+}
+html.app-shell .nav-divider {
+  height: 1px;
+  background: var(--rule);
+  margin: 8px 12px;
+}
+html.app-shell .nav-scroll-hint { color: var(--muted); }
+
+html.app-shell .job-pill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 8px 10px;
+  background: var(--tint);
+  border-radius: 8px;
+  color: var(--navy);
+  font-size: 12px;
+  line-height: 1.3;
+}
+html.app-shell .job-pill[hidden] { display: none; }
+html.app-shell .job-pill-label { min-width: 0; }
+html.app-shell .job-pill-track {
+  flex: 1;
+  height: 6px;
+  background: var(--rule);
+  border-radius: 3px;
+  overflow: hidden;
+}
+html.app-shell .job-pill-bar {
+  display: block;
+  height: 100%;
+  width: 35%;
+  background: var(--data);
+  animation: shell-slide 1.4s ease-in-out infinite;
+}
+@keyframes shell-slide {
+  from { transform: translateX(-120%); }
+  to { transform: translateX(320%); }
+}
+
+html.app-shell main {
+  padding: 48px;
+  max-width: 1320px;
+}
+html.app-shell main h2 {
+  font-size: 28px;
+  line-height: 1.2;
+  font-weight: 700;
+}
+html.app-shell .page-head .lede { color: var(--muted); max-width: 62ch; }
+
+html.app-shell .subtabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  border-bottom: 1px solid var(--rule);
+  margin-bottom: 24px;
+}
+html.app-shell .subtabs .tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: auto;
+  min-height: 40px;
+  padding: 9px 12px;
+  border: 0;
+  border-radius: 8px 8px 0 0;
+  background: transparent;
+  color: var(--muted);
+  box-shadow: none;
+}
+html.app-shell .subtabs .tab svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+html.app-shell .subtabs .tab[aria-current="page"] {
+  background: var(--tint);
+  color: var(--navy);
+  box-shadow: inset 0 -2px 0 var(--navy);
+}
+
+html.app-shell .availability-card { max-width: 760px; }
+html.app-shell .command {
+  margin: 0 0 16px;
+  padding: 12px 14px;
+  background: var(--soft);
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  overflow-x: auto;
+  font-family: ui-monospace, "Cascadia Mono", "Segoe UI Mono", monospace;
+  font-size: 13px;
+  line-height: 1.45;
+}
+html.app-shell .command code {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+}
+html.app-shell .form-narrow { max-width: 640px; }
+html.app-shell .check-list { margin: 0; padding: 0; list-style: none; }
+html.app-shell .check-list li { margin: 0 0 8px; }
+
+html.app-shell .class-banner {
+  display: none;
+  height: 24px;
+  line-height: 24px;
+  text-align: center;
+  font-family: "Public Sans", "Segoe UI", system-ui, sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+html.app-shell .class-banner.is-on { display: block; }
+html.app-shell .class-banner[data-color="green"] { background: #007a33; color: #ffffff; }
+html.app-shell .class-banner[data-color="blue"] { background: #0033a0; color: #ffffff; }
+html.app-shell .class-banner[data-color="red"] { background: #c8102e; color: #ffffff; }
+html.app-shell .class-banner[data-color="purple"] { background: #502b85; color: #ffffff; }
+html.app-shell .class-banner[data-color="orange"] { background: #ff8c00; color: #1a1e2e; }
+html.app-shell .class-banner[data-color="yellow"] { background: #ffd100; color: #1a1e2e; }
+
+html.app-shell .skip-link {
+  position: absolute;
+  left: 8px;
+  top: -40px;
+  z-index: 5;
+  background: #ffffff;
+  color: #1c2430;
+  padding: 8px 12px;
+  border-radius: 8px;
+}
+html.app-shell .skip-link:focus { top: 8px; }
+
+html.app-shell .visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+html.app-shell :focus-visible {
+  outline: 2px solid #1c2430;
+  outline-offset: 2px;
+}
+
+@media (max-width: 760px) {
+  html.app-shell main { padding: 24px 16px 48px; }
+  html.app-shell .rail .nav-item { width: auto; padding: 8px 10px; }
+  html.app-shell .nav-tag { display: none; }
+  html.app-shell main h2 { font-size: 22px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html.app-shell .job-pill-bar { animation: none; width: 100%; opacity: 0.45; }
+}

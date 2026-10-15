@@ -52,8 +52,12 @@ function show(tab) {
     $(name).classList.toggle("hidden", name !== tab);
   }
   document.querySelectorAll(".tab").forEach((button) => {
-    if (button.dataset.tab === tab) button.setAttribute("aria-current", "page");
+    const on = button.dataset.tab === tab;
+    if (on) button.setAttribute("aria-current", "page");
     else button.removeAttribute("aria-current");
+    if (button.getAttribute("role") === "tab") {
+      button.setAttribute("aria-selected", on ? "true" : "false");
+    }
   });
   window.scrollTo(0, 0);
 }

@@ -1,13 +1,16 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="app-shell">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>LLM Eval Suite</title>
   <link rel="icon" href="/favicon.ico">
   <link rel="stylesheet" href="/static/tokens.css">
+  <link rel="stylesheet" href="/static/shell.css">
 </head>
 <body>
+<a class="skip-link" href="#main">Skip to content</a>
+<div id="class-banner-top" class="class-banner"></div>
 <div class="shell">
   <aside class="rail">
     <div class="brand">
@@ -21,36 +24,84 @@
         <p class="brand-sub">Offline test and evaluation</p>
       </div>
     </div>
-    <nav aria-label="Workbench sections">
-      <button class="tab" data-tab="connect" aria-current="page">
-        <span class="step-num">1</span>
-        Connect
+    <nav id="side-nav" aria-label="Workbench sections">
+      <button type="button" class="nav-item" data-slot="evaluate" data-route="#/evaluate" aria-current="page">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="11" width="3" height="6"/><rect x="8.5" y="7" width="3" height="10"/><rect x="14" y="3" width="3" height="14"/></svg>
+        <span class="nav-label">Evaluate</span>
+        <span class="nav-tag hidden"></span>
+        <span class="status-dot hidden" aria-hidden="true"></span>
       </button>
-      <button class="tab" data-tab="run">
-        <span class="step-num">2</span>
-        Run
+      <button type="button" class="nav-item is-muted" data-slot="models" data-route="#/models">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 7l7-3 7 3-7 3-7-3z"/><path d="M3 7v6l7 3 7-3V7"/><path d="M10 10v6"/></svg>
+        <span class="nav-label">Models</span>
+        <span class="nav-tag">Not installed</span>
+        <span class="status-dot hidden" aria-hidden="true"></span>
       </button>
-      <button class="tab" data-tab="results">
-        <span class="step-num">3</span>
-        Results
+      <button type="button" class="nav-item is-muted" data-slot="knowledge" data-route="#/knowledge">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 4h8a2 2 0 0 1 2 2v10H7a2 2 0 0 0-2 2z"/><path d="M5 4v12"/></svg>
+        <span class="nav-label">Knowledge</span>
+        <span class="nav-tag">Not installed</span>
+        <span class="status-dot hidden" aria-hidden="true"></span>
       </button>
-      <button class="tab" data-tab="compare">
-        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 6h9l-3-3M16 14H7l3 3"/></svg>
-        Compare
+      <button type="button" class="nav-item is-muted" data-slot="finetune" data-route="#/finetune">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 6h12M4 10h12M4 14h12"/><circle cx="8" cy="6" r="1.4"/><circle cx="13" cy="10" r="1.4"/><circle cx="7" cy="14" r="1.4"/></svg>
+        <span class="nav-label">Fine-tune</span>
+        <span class="nav-tag">Not installed</span>
+        <span class="status-dot hidden" aria-hidden="true"></span>
       </button>
-      <button class="tab" data-tab="judges">
-        <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="7" cy="7" r="2.5"/><circle cx="14" cy="8" r="2"/><path d="M2.5 16a4.5 4.5 0 0 1 9 0M11 16a3.5 3.5 0 0 1 6.5-1.8"/></svg>
-        Judges
+      <button type="button" class="nav-item is-muted" data-slot="safety" data-route="#/safety">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 3l6 2v5c0 3.5-2.4 5.8-6 7-3.6-1.2-6-3.5-6-7V5z"/></svg>
+        <span class="nav-label">Safety</span>
+        <span class="nav-tag">Not installed</span>
+        <span class="status-dot hidden" aria-hidden="true"></span>
+      </button>
+      <div class="nav-divider" role="separator"></div>
+      <button type="button" class="nav-item" data-slot="jobs" data-route="#/jobs">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 5h8M7 10h8M7 15h8"/><path d="M4 5h.01M4 10h.01M4 15h.01"/></svg>
+        <span class="nav-label">Jobs</span>
+        <span class="nav-tag hidden"></span>
+        <span class="status-dot hidden" aria-hidden="true"></span>
+      </button>
+      <button type="button" class="nav-item" data-slot="settings" data-route="#/settings">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="3"/><path d="M10 3v2M10 15v2M3 10h2M15 10h2M5.2 5.2l1.4 1.4M13.4 13.4l1.4 1.4M14.8 5.2l-1.4 1.4M6.6 13.4l-1.4 1.4"/></svg>
+        <span class="nav-label">Settings</span>
+        <span class="nav-tag hidden"></span>
+        <span class="status-dot hidden" aria-hidden="true"></span>
       </button>
     </nav>
     <p class="nav-scroll-hint">Scroll for more sections</p>
+    <p id="job-pill" class="job-pill" hidden></p>
+    <p class="rail-note" id="env-status">Checking this computer.</p>
     <p class="rail-note"><span class="local-dot" aria-hidden="true"></span><span id="rail-offline-note">Runs on this computer. Nothing leaves it unless you choose a cloud endpoint.</span></p>
     <p class="rail-note" id="llama-attribution">Built with Llama.</p>
   </aside>
 
-  <main>
+  <main id="main">
     <div id="offline-banner" class="banner hidden" role="status"></div>
-    <section id="connect" class="page">
+    <div id="view-evaluate">
+    <div class="subtabs" role="tablist" aria-label="Evaluate">
+      <button class="tab" role="tab" data-tab="connect" aria-current="page" aria-selected="true" aria-controls="connect">
+        <span class="step-num">1</span>
+        Connect
+      </button>
+      <button class="tab" role="tab" data-tab="run" aria-selected="false" aria-controls="run">
+        <span class="step-num">2</span>
+        Run
+      </button>
+      <button class="tab" role="tab" data-tab="results" aria-selected="false" aria-controls="results">
+        <span class="step-num">3</span>
+        Results
+      </button>
+      <button class="tab" role="tab" data-tab="compare" aria-selected="false" aria-controls="compare">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 6h9l-3-3M16 14H7l3 3"/></svg>
+        Compare
+      </button>
+      <button class="tab" role="tab" data-tab="judges" aria-selected="false" aria-controls="judges">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="7" cy="7" r="2.5"/><circle cx="14" cy="8" r="2"/><path d="M2.5 16a4.5 4.5 0 0 1 9 0M11 16a3.5 3.5 0 0 1 6.5-1.8"/></svg>
+        Judges
+      </button>
+    </div>
+    <section id="connect" class="page" role="tabpanel">
       <header class="page-head">
         <h2>Connect a model</h2>
         <p class="lede">Local servers do not need an API key. Leave it blank for Ollama, vLLM, llama.cpp server, and other OpenAI-compatible endpoints on this machine.</p>
@@ -363,8 +414,12 @@
         </div>
       </div>
     </section>
+    </div>
+    <div id="view-panel" class="hidden"></div>
   </main>
 </div>
+<div id="class-banner-bottom" class="class-banner"></div>
 <script src="/static/app.js"></script>
+<script src="/static/shell.js"></script>
 </body>
 </html>
