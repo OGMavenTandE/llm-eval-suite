@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Iterable
 from urllib.request import urlopen
 
-from llm_eval.offline import offline_active, read_settings, settings_path
+from llm_eval.offline import read_settings, settings_path
 from llm_eval.plugins import GROUPS, PLUGIN_API_VERSION, panel_catalog, usable
 
 DEFAULT_TOOLKIT_ROOT = "/opt/ai-toolkit"
@@ -170,11 +170,23 @@ def gpu_label() -> str:
     return "GPU: none (CPU)."
 
 
+def _runtime(toolkit_root: str) -> dict:
+    """One probe of this computer. The footer and the toolkit list both read it."""
+    ollama = ollama_running()
+    llama = llama_found(toolkit_root)
+    gpu = gpu_label()
+    environment = " ".join(
+        (
+            "Ollama running." if ollama else "Ollama not running.",
+            "llama.cpp found." if llama else "llama.cpp not found.",
+            gpu,
+        )
+    )
+    return {"ollama": ollama, "llama_cpp": llama, "gpu": gpu, "environment": environment}
+
+
 def environment_line(toolkit_root: str) -> str:
-    place = "Offline." if offline_active() else "Local."
-    ollama = "Ollama running." if ollama_running() else "Ollama not running."
-    llama = "llama.cpp found." if llama_found(toolkit_root) else "llama.cpp not found."
-    return f"{place} {ollama} {llama} {gpu_label()}"
+    return _runtime(toolkit_root)["environment"]
 
 
 def _package_version() -> str:
@@ -293,6 +305,74 @@ def build_nav(rows: list[dict], toolkit_root: str) -> list[dict]:
     return nav
 
 
+_BADGES = {
+    "ready": "Ready",
+    "partial": "Partly ready",
+    "not_installed": "Not installed",
+    "incompatible": "Update needed",
+    "error": "Error",
+    "missing": "Missing",
+}
+
+
+def _needs_package(extra: str | None) -> str:
+    package = PACKAGE if not extra else f"{PACKAGE}[{extra}]"
+    return f"Needs {package}"
+
+
+def _feature_detail(slot: dict, panels: list[dict]) -> str:
+    availability = str(slot.get("availability") or "")
+    if availability == "not_installed":
+        return _needs_package(slot.get("extra"))
+    if availability == "ready":
+        return "Installed"
+    if availability == "partial":
+        for panel in panels:
+            status = panel.get("status") if isinstance(panel.get("status"), dict) else None
+            for check in (status or {}).get("checks") or []:
+                if isinstance(check, dict) and not check.get("ok"):
+                    text = str(check.get("detail") or check.get("fix") or "").strip()
+                    if text:
+                        return text
+        return _needs_package(slot.get("extra"))
+    for panel in panels:
+        reason = str(panel.get("reason") or "").strip()
+        if reason:
+            return reason
+    return _needs_package(slot.get("extra"))
+
+
+def host_status(rows: list[dict], toolkit_root: str) -> tuple[list[dict], dict]:
+    """Nav plus one status object. Footer text and toolkit rows come from that object."""
+    checked_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    runtime = _runtime(toolkit_root)
+    nav = build_nav(rows, toolkit_root)
+    grouped = _by_slot(rows)
+    features = []
+    for slot in nav:
+        if slot.get("kind") != "toolkit":
+            continue
+        availability = str(slot.get("availability") or "not_installed")
+        features.append(
+            {
+                "id": slot["id"],
+                "title": slot["title"],
+                "availability": availability,
+                "badge": _BADGES.get(availability, "Not installed"),
+                "detail": _feature_detail(slot, grouped.get(slot["id"], [])),
+            }
+        )
+    found = [row["title"] for row in features if row["availability"] in {"ready", "partial"}]
+    status = {
+        "checked_at": checked_at,
+        "found": found,
+        "found_label": ", ".join(found) if found else "none",
+        "features": features,
+        **runtime,
+    }
+    return nav, status
+
+
 def public_catalog(rows: list[dict]) -> list[dict]:
     public = []
     for row in rows:
@@ -311,17 +391,19 @@ def shell_payload(data_dir: str | Path | None, entry_points: Iterable | None = N
     rows = panel_catalog(entry_points)
     settings = shell_settings(data_dir)
     catalog = public_catalog(rows)
+    nav, status = host_status(catalog, settings["toolkit_root"])
     return {
         "api_version": PLUGIN_API_VERSION,
         "groups": GROUPS,
         "panels": [row for row in catalog if row.get("compatible")],
         "catalog": catalog,
-        "nav": build_nav(catalog, settings["toolkit_root"]),
-        "checked_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+        "nav": nav,
+        "checked_at": status["checked_at"],
+        "status": status,
         "toolkit_root": settings["toolkit_root"],
         "classification": settings["classification"],
         "restart_note": RESTART_NOTE,
-        "environment": environment_line(settings["toolkit_root"]),
+        "environment": status["environment"],
         "app_version": _package_version(),
     }
 

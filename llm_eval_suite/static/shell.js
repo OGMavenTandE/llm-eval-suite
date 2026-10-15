@@ -1,6 +1,6 @@
 /* Hash router and panel host. Plugin scripts load from this app only. */
 
-const shell = { payload: null, jobTimer: null };
+const shell = { payload: null, jobTimer: null, route: "" };
 
 function shellEscape(value) {
   if (typeof escapeHtml === "function") return escapeHtml(value);
@@ -49,30 +49,35 @@ function findPanel(name) {
   return catalog.find((row) => row.name === name) || null;
 }
 
-function slotState(slot) {
-  if (slot.tag) return slot.tag;
-  if (slot.availability === "partial") return "Partly available";
-  if (slot.availability === "ready") return "Ready";
-  return "Ready";
+function hostStatus() {
+  return (shell.payload && shell.payload.status) || {};
+}
+
+function badgeKind(availability) {
+  if (availability === "ready") return "badge-ready";
+  if (availability === "partial") return "badge-partial";
+  return "badge-missing";
 }
 
 function othersTable(currentId) {
-  const rows = ((shell.payload && shell.payload.nav) || []).filter((slot) => slot.id !== currentId);
+  const rows = (hostStatus().features || []).filter((slot) => slot.id !== currentId);
   const body = rows.map((slot) => (
-    "<tr><td>" + shellEscape(slot.title) + "</td><td>" + shellEscape(slotState(slot)) + "</td></tr>"
+    "<tr><td>" + shellEscape(slot.title) + "</td><td><span class=\"badge " + badgeKind(slot.availability) + "\">" +
+    shellEscape(slot.badge || "") + "</span></td><td>" + shellEscape(slot.detail || "") + "</td></tr>"
   )).join("");
   return (
-    "<h3>What else is available</h3>" +
-    '<div class="table-wrap"><table><thead><tr><th scope="col">Feature</th><th scope="col">State</th></tr></thead><tbody>' +
-    body + "</tbody></table></div>"
+    '<section class="others"><h3>What else is available</h3>' +
+    '<div class="table-wrap"><table><thead><tr><th scope="col">Feature</th><th scope="col">State</th><th scope="col">Detail</th></tr></thead><tbody>' +
+    body + "</tbody></table></div></section>"
   );
 }
 
-function checkedLine() {
-  const iso = shell.payload && shell.payload.checked_at;
-  const when = iso && typeof formatDate === "function" ? formatDate(iso) : (iso || "");
-  const restart = (shell.payload && shell.payload.restart_note) || "";
-  return '<p class="hint">Last checked ' + shellEscape(when) + ". " + shellEscape(restart) + "</p>";
+function checkedText() {
+  const status = hostStatus();
+  const iso = status.checked_at || (shell.payload && shell.payload.checked_at) || "";
+  const when = iso && typeof formatDate === "function" ? formatDate(iso) : iso;
+  const found = status.found_label || "none";
+  return "Last checked " + when + ". Found: " + found + ".";
 }
 
 function bindCardActions(command) {
@@ -85,16 +90,23 @@ function bindCardActions(command) {
 function renderMissing(slot) {
   setCurrent(slot.id);
   const command = slot.command || "";
+  const explainer = slot.local_note || "It runs on this computer only.";
   showHost(
+    '<header class="page-head"><h2>' + shellEscape(slot.title) + "</h2>" +
+    '<p class="lede">' + shellEscape(slot.summary || "") + "</p></header>" +
     '<section class="panel availability-card">' +
-    "<h2>" + shellEscape(slot.title) + " is not installed</h2>" +
-    '<p class="lede">' + shellEscape(slot.summary || "") + " " + shellEscape(slot.local_note || "It runs on this computer only.") + "</p>" +
+    '<p class="state-pill">Not installed</p>' +
+    "<h3>" + shellEscape(slot.title) + " comes with the Air-Gap AI Toolkit</h3>" +
+    "<p>" + shellEscape(explainer) + "</p>" +
+    '<p class="install-label">Install from the local wheel folder</p>' +
     '<pre class="command"><code id="install-command">' + shellEscape(command) + "</code></pre>" +
-    '<div class="actions"><button type="button" class="primary" id="check-again">Check again</button>' +
+    '<p class="hint">' + shellEscape((shell.payload && shell.payload.restart_note) || "") + "</p>" +
+    '<div class="card-actions"><div class="actions">' +
+    '<button type="button" class="primary" id="check-again">Check again</button>' +
     '<button type="button" id="copy-command">Copy command</button></div>' +
-    checkedLine() +
-    othersTable(slot.id) +
-    "</section>"
+    '<p class="hint checked-line" id="checked-line">' + shellEscape(checkedText()) + "</p></div>" +
+    "</section>" +
+    othersTable(slot.id)
   );
   bindCardActions(command);
 }
@@ -124,9 +136,10 @@ function renderProblem(panel, slot) {
     : "";
   showHost(
     '<section class="panel availability-card" role="alert">' + body + commandBlock +
-    '<div class="actions"><button type="button" class="primary" id="check-again">Check again</button>' +
+    '<div class="card-actions"><div class="actions"><button type="button" class="primary" id="check-again">Check again</button>' +
     (command ? '<button type="button" id="copy-command">Copy command</button>' : "") +
-    "</div>" + checkedLine() + othersTable(slotId) + "</section>"
+    '</div><p class="hint checked-line">' + shellEscape(checkedText()) + "</p></div></section>" +
+    othersTable(slotId)
   );
   bindCardActions(command);
 }
@@ -154,7 +167,13 @@ function checksBanner(panel) {
 async function mountPlugin(panel) {
   const slotId = panel.slot || "more";
   setCurrent(document.querySelector('#side-nav .nav-item[data-slot="' + slotId + '"]') ? slotId : "more");
-  showHost('<div id="plugin-frame">' + checksBanner(panel) + '<div id="plugin-mount"></div></div>');
+  const lede = panel.summary || "Runs on this computer only.";
+  showHost(
+    '<header class="page-head"><h2>' + shellEscape(panel.title || panel.name || "Panel") + "</h2>" +
+    '<p class="lede">' + shellEscape(lede) + "</p></header>" +
+    checksBanner(panel) +
+    '<div class="panel plugin-card"><div id="plugin-mount"></div></div>'
+  );
   const mount = document.getElementById("plugin-mount");
   if (!mount) return;
   if (panel.assets && panel.assets.css) ensureCss(panel.assets.css);
@@ -170,20 +189,15 @@ async function mountPlugin(panel) {
         });
         return;
       }
-      mount.textContent = panel.title || panel.name;
+      mount.textContent = "This panel has no script to show.";
       return;
     } catch (err) {
-      mount.innerHTML = '<section class="panel" role="alert"><h2>This panel did not load</h2><p>' +
-        shellEscape(err && err.message ? err.message : "The panel script did not run.") + "</p></section>";
+      mount.innerHTML = '<p role="alert">' +
+        shellEscape(err && err.message ? err.message : "The panel script did not run.") + "</p>";
       return;
     }
   }
-  const head = document.createElement("header");
-  head.className = "page-head";
-  const title = document.createElement("h2");
-  title.textContent = panel.title || panel.name || "Panel";
-  head.appendChild(title);
-  mount.appendChild(head);
+  mount.textContent = "This panel has no script to show.";
 }
 
 async function fillJobs(runs) {
@@ -254,15 +268,10 @@ function renderSettings() {
     options + "</select></div>" +
     '<div class="actions"><button type="button" class="primary" id="settings-save">Save settings</button></div>' +
     '<p id="settings-note" class="hint"></p></div>' +
-    '<div class="panel"><h3>About</h3><p class="hint" id="settings-about">LLM Eval Suite ' + shellEscape(version) +
-    ". Runs on this computer. This app does not check for updates. Docs ship with the install.</p></div>"
+    '<div class="panel"><h3>About</h3><p id="settings-about">LLM Eval Suite ' + shellEscape(version) +
+    '. Runs on this computer. This app does not check for updates. Docs ship with the install.</p>' +
+    '<p id="llama-attribution">Built with Llama.</p></div>'
   );
-  document.getElementById("settings-save").addEventListener("click", () => {
-    saveSettings().catch((err) => {
-      const note = document.getElementById("settings-note");
-      if (note) note.textContent = err.message;
-    });
-  });
 }
 
 async function saveSettings() {
@@ -343,9 +352,13 @@ function openHash(hash) {
   renderMissing(slot);
 }
 
-function applyRoute() {
+function applyRoute(force) {
   const hash = location.hash || "#/evaluate";
-  if (hash === "#/evaluate" || hash.indexOf("#/evaluate/") === 0) {
+  const evaluate = hash === "#/evaluate" || hash.indexOf("#/evaluate/") === 0;
+  const view = document.getElementById("view-panel");
+  if (!force && shell.route === hash && !evaluate && view && !view.classList.contains("hidden")) return;
+  if (evaluate) {
+    shell.route = hash;
     showEvaluateView(hash.split("/")[2] || "connect");
     return;
   }
@@ -355,12 +368,14 @@ function applyRoute() {
     if (id) setCurrent(id);
     return;
   }
+  shell.route = hash;
   openHash(hash);
 }
 
 function paintEnvironment() {
   const line = document.getElementById("env-status");
-  if (line && shell.payload && shell.payload.environment) line.textContent = shell.payload.environment;
+  const text = hostStatus().environment || (shell.payload && shell.payload.environment);
+  if (line && text) line.textContent = text;
 }
 
 function paintBanner() {
@@ -404,14 +419,14 @@ function paintNav() {
     const dot = button.querySelector(".status-dot");
     const partial = slot.availability === "partial";
     if (dot) dot.classList.toggle("hidden", !partial);
-    let note = button.querySelector(".visually-hidden");
-    if (partial) {
+    let note = label ? label.querySelector(".visually-hidden") : null;
+    if (partial && label) {
       if (!note) {
         note = document.createElement("span");
         note.className = "visually-hidden";
-        button.appendChild(note);
+        label.appendChild(note);
       }
-      note.textContent = "Partly available";
+      note.textContent = ", partly available";
     } else if (note) {
       note.remove();
     }
@@ -425,7 +440,7 @@ async function checkAgain() {
   if (button) button.disabled = true;
   shell.payload = await api("/api/plugins");
   paintNav();
-  applyRoute();
+  applyRoute(true);
 }
 
 function copyCommand(command, button) {
@@ -491,11 +506,19 @@ function scheduleJobs() {
   }, delay);
 }
 
+document.getElementById("view-panel").addEventListener("click", (event) => {
+  if (!event.target.closest("#settings-save")) return;
+  saveSettings().catch((err) => {
+    const note = document.getElementById("settings-note");
+    if (note) note.textContent = err.message;
+  });
+});
+
 document.getElementById("side-nav").addEventListener("click", (event) => {
   const button = event.target.closest(".nav-item");
   if (!button) return;
   const route = button.dataset.route || "#/evaluate";
-  if (location.hash === route) applyRoute();
+  if (location.hash === route) applyRoute(true);
   else location.hash = route;
 });
 
@@ -528,8 +551,8 @@ if (subtabs) {
   });
 }
 
-window.addEventListener("hashchange", applyRoute);
-window.addEventListener("popstate", applyRoute);
+window.addEventListener("hashchange", () => applyRoute());
+window.addEventListener("popstate", () => applyRoute());
 
 const offlineToggle = document.getElementById("offline-toggle");
 if (offlineToggle) {

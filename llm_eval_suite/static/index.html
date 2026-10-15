@@ -70,10 +70,11 @@
       </button>
     </nav>
     <p class="nav-scroll-hint">Scroll for more sections</p>
-    <p id="job-pill" class="job-pill" hidden></p>
-    <p class="rail-note" id="env-status">Checking this computer.</p>
-    <p class="rail-note"><span class="local-dot" aria-hidden="true"></span><span id="rail-offline-note">Runs on this computer. Nothing leaves it unless you choose a cloud endpoint.</span></p>
-    <p class="rail-note" id="llama-attribution">Built with Llama.</p>
+    <div class="rail-foot">
+      <p id="job-pill" class="job-pill" hidden></p>
+      <p class="env-line"><span class="local-dot" aria-hidden="true"></span> Offline</p>
+      <p class="env-detail" id="env-status">Checking this computer.</p>
+    </div>
   </aside>
 
   <main id="main">
@@ -158,11 +159,14 @@
               </div>
             </div>
             <p id="server-note" class="hint hidden"></p>
-            <label class="check" for="offline-toggle">
-              <input id="offline-toggle" type="checkbox">
-              Offline mode. Blocks the OpenAI cloud API and refuses weight downloads.
-            </label>
             <div id="cloud-banner" class="banner banner-warn hidden">This endpoint is not on this computer. Prompts will leave the machine.</div>
+            <div class="toggle-row">
+              <div>
+                <label for="offline-toggle">Offline mode</label>
+                <p class="hint" id="offline-toggle-hint">Blocks the OpenAI cloud API and refuses weight downloads.</p>
+              </div>
+              <input id="offline-toggle" type="checkbox" role="switch" aria-describedby="offline-toggle-hint">
+            </div>
             <div class="actions actions-primary">
               <button id="test-connection" class="primary" type="button">Test connection</button>
               <button id="save-connection" type="button">Save connection</button>

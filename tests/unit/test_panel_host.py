@@ -198,7 +198,14 @@ def test_empty_shell_reserves_toolkit_slots(tmp_path: Path):
     assert "[rag]" in nav["knowledge"]["command"]
     assert "[safety]" in nav["safety"]["command"]
     assert "Restart this app" in body["restart_note"]
-    assert body["environment"]
+    assert body["environment"] == body["status"]["environment"]
+    assert body["checked_at"] == body["status"]["checked_at"]
+    assert "Ollama" in body["environment"] and "llama.cpp" in body["environment"] and "GPU" in body["environment"]
+    assert body["status"]["found_label"] == "none"
+    assert [row["id"] for row in body["status"]["features"]] == ["models", "knowledge", "finetune", "safety"]
+    assert body["status"]["features"][0]["badge"] == "Not installed"
+    assert body["status"]["features"][0]["detail"] == "Needs airgap-ai-toolkit"
+    assert next(row for row in body["status"]["features"] if row["id"] == "safety")["detail"] == "Needs airgap-ai-toolkit[safety]"
     page = TestClient(app).get("/")
     assert page.status_code == 200
     assert "Content-Security-Policy" in page.headers
@@ -234,6 +241,18 @@ def test_sample_panel_route_assets_and_not_installed_override(tmp_path: Path):
     assert nav["models"]["availability"] == "partial"
     assert nav["models"]["tag"] == ""
     assert nav["knowledge"]["availability"] == "not_installed"
+    status = body["status"]
+    assert status["environment"] == body["environment"]
+    assert status["checked_at"] == body["checked_at"]
+    models = next(row for row in status["features"] if row["id"] == "models")
+    assert models["badge"] == "Partly ready"
+    assert models["detail"] == "Ollama isn't running."
+    assert status["found"] == ["Models"]
+    safety = next(row for row in status["features"] if row["id"] == "safety")
+    assert safety["badge"] == "Not installed"
+    assert safety["detail"] == "Needs airgap-ai-toolkit[safety]"
+    finetune = next(row for row in status["features"] if row["id"] == "finetune")
+    assert finetune["badge"] == "Update needed"
     script = client.get("/plugins/sample_panel/panel.js")
     assert script.status_code == 200
     assert "export function mount" in script.text

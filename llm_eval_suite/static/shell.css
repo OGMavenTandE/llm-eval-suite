@@ -4,6 +4,7 @@
 html.app-shell { color-scheme: light; }
 
 html.app-shell .shell {
+  --rail-width: 220px;
   --navy: #1c2430;
   --ink: #1a1e2e;
   --muted: #565d68;
@@ -23,20 +24,37 @@ html.app-shell .shell {
   --ground: #f4f5f7;
   --surface: #ffffff;
   --ink-2: #565d68;
+  --pass: #14683f;
+  --pass-soft: #e3f2ea;
+  --warn: #8f5500;
+  --warn-soft: #fbf0dc;
+  --fail: #b3261e;
+  --fail-soft: #fbe9e7;
   --line: #e4e7ed;
   --line-strong: #c9ced8;
   --focus: #1c2430;
   background: var(--ground);
   color: var(--ink);
+  margin-top: 24px;
+  margin-bottom: 24px;
+  min-height: calc(100vh - 48px);
 }
 
 html.app-shell .rail {
   background: #ffffff;
-  color: var(--muted);
+  color: #565d68;
   border-right: 1px solid var(--rule);
   box-shadow: none;
-  padding: 16px 12px 12px;
-  gap: 16px;
+  padding: 16px 10px 12px;
+  gap: 12px;
+  height: calc(100vh - 48px);
+  top: 24px;
+  overflow: hidden;
+}
+html.app-shell #side-nav {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 html.app-shell .brand h1,
@@ -44,12 +62,13 @@ html.app-shell .brand-mark { color: var(--navy); }
 html.app-shell .brand-sub { color: var(--muted); opacity: 1; }
 
 html.app-shell .nav-item {
-  display: flex;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) max-content;
   align-items: center;
-  gap: 8px;
+  column-gap: 8px;
   width: 100%;
   margin: 0;
-  padding: 9px 12px;
+  padding: 8px;
   border: 0;
   border-radius: 8px;
   background: transparent;
@@ -80,17 +99,24 @@ html.app-shell .nav-item[aria-current="page"] {
   color: var(--navy);
 }
 html.app-shell .nav-item[aria-current="page"] svg { color: var(--data); }
-html.app-shell .nav-item.is-muted { color: var(--muted); }
-html.app-shell .nav-label { flex: 1; min-width: 0; }
+html.app-shell .nav-item.is-muted { color: #565d68; }
+html.app-shell .nav-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 html.app-shell .nav-tag {
-  flex: none;
+  justify-self: end;
   font-size: 12px;
   font-weight: 600;
   line-height: 1.4;
-  color: var(--muted);
-  background: var(--soft);
+  color: #565d68;
+  background: transparent;
+  border: 1px solid #565d68;
   border-radius: 999px;
-  padding: 0 6px;
+  padding: 1px 6px;
+  white-space: nowrap;
 }
 html.app-shell .status-dot {
   width: 8px;
@@ -104,7 +130,38 @@ html.app-shell .nav-divider {
   background: var(--rule);
   margin: 8px 12px;
 }
-html.app-shell .nav-scroll-hint { color: var(--muted); }
+html.app-shell .nav-scroll-hint { color: #565d68; }
+
+html.app-shell .rail-foot {
+  margin-top: auto;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 8px 0;
+  border-top: 1px solid var(--rule);
+}
+html.app-shell .env-line,
+html.app-shell .env-detail {
+  margin: 0;
+  color: #565d68;
+  font-size: 12px;
+  line-height: 1.45;
+}
+html.app-shell .env-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+html.app-shell .env-line .local-dot {
+  width: 8px;
+  height: 8px;
+  margin: 0;
+  background: #14683f;
+  box-shadow: none;
+  flex: none;
+}
 
 html.app-shell .job-pill {
   display: flex;
@@ -185,7 +242,96 @@ html.app-shell .subtabs .tab[aria-current="page"] {
   box-shadow: inset 0 -2px 0 var(--navy);
 }
 
-html.app-shell .availability-card { max-width: 760px; }
+html.app-shell #view-panel > .page-head { margin-bottom: 24px; }
+html.app-shell .availability-card {
+  max-width: 760px;
+  padding: 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+html.app-shell .availability-card > * { margin: 0; }
+html.app-shell .availability-card h3 { font-size: 20px; }
+html.app-shell .state-pill {
+  align-self: flex-start;
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: #565d68;
+  background: transparent;
+  border: 1px solid #565d68;
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+html.app-shell .install-label {
+  margin-top: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #1c2430;
+}
+html.app-shell .card-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 24px;
+  margin-top: 8px;
+}
+html.app-shell .card-actions .actions { margin: 0; }
+html.app-shell .checked-line {
+  margin: 0 0 0 auto;
+  color: #565d68;
+  font-size: 13px;
+  line-height: 1.4;
+  text-align: right;
+}
+html.app-shell .others { margin-top: 32px; max-width: 760px; }
+html.app-shell .others h3 { margin-bottom: 12px; }
+html.app-shell .badge-ready { background: #e3f2ea; color: #14683f; border-color: transparent; }
+html.app-shell .badge-partial { background: #fbf0dc; color: #8f5500; border-color: transparent; }
+html.app-shell .badge-missing {
+  background: transparent;
+  color: #565d68;
+  border-color: #565d68;
+}
+html.app-shell .toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 16px 0;
+}
+html.app-shell .toggle-row label {
+  font-weight: 600;
+  color: #1c2430;
+}
+html.app-shell .toggle-row .hint { margin: 2px 0 0; color: #565d68; }
+html.app-shell .toggle-row input[type="checkbox"] {
+  appearance: none;
+  width: 44px;
+  height: 24px;
+  margin: 0;
+  border: 0;
+  border-radius: 999px;
+  background: #6b7380;
+  position: relative;
+  flex: none;
+  cursor: pointer;
+}
+html.app-shell .toggle-row input[type="checkbox"]::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #ffffff;
+}
+html.app-shell .toggle-row input[type="checkbox"]:checked { background: #1c2430; }
+html.app-shell .toggle-row input[type="checkbox"]:checked::after { transform: translateX(20px); }
+html.app-shell .toggle-row input[type="checkbox"]:disabled { cursor: not-allowed; opacity: 0.6; }
+html.app-shell .plugin-card { max-width: 760px; }
 html.app-shell .command {
   margin: 0 0 16px;
   padding: 12px 14px;
@@ -203,21 +349,30 @@ html.app-shell .command code {
   padding: 0;
   font: inherit;
 }
+html.app-shell .availability-card .command { margin: 0; }
 html.app-shell .form-narrow { max-width: 640px; }
 html.app-shell .check-list { margin: 0; padding: 0; list-style: none; }
 html.app-shell .check-list li { margin: 0 0 8px; }
 
 html.app-shell .class-banner {
-  display: none;
+  display: block;
+  position: fixed;
+  left: 0;
+  right: 0;
   height: 24px;
   line-height: 24px;
+  z-index: 4;
+  visibility: hidden;
+  overflow: hidden;
   text-align: center;
   font-family: "Public Sans", "Segoe UI", system-ui, sans-serif;
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.04em;
 }
-html.app-shell .class-banner.is-on { display: block; }
+html.app-shell #class-banner-top { top: 0; }
+html.app-shell #class-banner-bottom { bottom: 0; }
+html.app-shell .class-banner.is-on { visibility: visible; }
 html.app-shell .class-banner[data-color="green"] { background: #007a33; color: #ffffff; }
 html.app-shell .class-banner[data-color="blue"] { background: #0033a0; color: #ffffff; }
 html.app-shell .class-banner[data-color="red"] { background: #c8102e; color: #ffffff; }
@@ -256,9 +411,18 @@ html.app-shell :focus-visible {
 
 @media (max-width: 760px) {
   html.app-shell main { padding: 24px 16px 48px; }
+  html.app-shell .rail {
+    position: static;
+    height: auto;
+    top: auto;
+    overflow: visible;
+  }
+  html.app-shell #side-nav { flex: none; overflow-x: auto; overflow-y: visible; }
   html.app-shell .rail .nav-item { width: auto; padding: 8px 10px; }
   html.app-shell .nav-tag { display: none; }
   html.app-shell main h2 { font-size: 22px; }
+  html.app-shell .card-actions { align-items: flex-start; }
+  html.app-shell .checked-line { text-align: left; margin-left: 0; }
 }
 
 @media (prefers-reduced-motion: reduce) {
