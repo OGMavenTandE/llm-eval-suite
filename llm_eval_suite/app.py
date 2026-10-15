@@ -33,6 +33,7 @@ from llm_eval_suite.connections import (
     judge_timeout,
     test_connection,
 )
+from llm_eval_suite.panel_host import mount_panels, shell_payload, shell_settings, update_shell_settings
 from llm_eval_suite.presets import demo_pair, list_presets
 from llm_eval_suite.runs import RunManager
 from llm_eval_suite.scoring import PASS_BAR
@@ -93,6 +94,11 @@ class OfflineIn(BaseModel):
     offline: bool = False
 
 
+class ShellSettingsIn(BaseModel):
+    toolkit_root: str | None = None
+    classification: dict | None = None
+
+
 class RunIn(BaseModel):
     connection_id: str
     preset: str
@@ -105,11 +111,26 @@ class DemoIn(BaseModel):
     preset: str | None = None
 
 
+_CSP = (
+    "default-src 'self'; "
+    "img-src 'self' data:; "
+    "font-src 'self'; "
+    "script-src 'self'; "
+    "style-src 'self'; "
+    "style-src-attr 'unsafe-inline'; "
+    "connect-src 'self' http://127.0.0.1:* http://localhost:*; "
+    "base-uri 'none'; "
+    "form-action 'self'; "
+    "frame-ancestors 'none'"
+)
+
+
 def create_app(
     data_dir: str | Path | None = None,
     runs_dir: str | Path | None = None,
     model_factory=None,
     sample_dataset: str | Path | None = None,
+    panel_entries=None,
 ) -> FastAPI:
     data = Path(data_dir or os.environ.get("LLM_EVAL_DATA_DIR") or "data")
     runs = Path(runs_dir or os.environ.get("LLM_EVAL_RUNS_DIR") or "runs")
@@ -121,6 +142,14 @@ def create_app(
     app.state.sample_dataset = sample
     app.state.datasets = data / "datasets"
     app.state.datasets.mkdir(parents=True, exist_ok=True)
+    app.state.panel_entries = panel_entries
+    mount_panels(app, panel_entries)
+
+    @app.middleware("http")
+    async def offline_content_security(request, call_next):
+        response = await call_next(request)
+        response.headers["Content-Security-Policy"] = _CSP
+        return response
 
     if STATIC_DIR.is_dir():
         app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -352,9 +381,38 @@ def create_app(
 
     @app.get("/api/plugins")
     def get_plugins():
-        from llm_eval.plugins import GROUPS, PLUGIN_API_VERSION, panels
+        return shell_payload(app.state.store.data_dir, app.state.panel_entries)
 
-        return {"api_version": PLUGIN_API_VERSION, "groups": GROUPS, "panels": panels()}
+    @app.get("/api/settings")
+    def get_shell_settings():
+        return shell_settings(app.state.store.data_dir)
+
+    @app.put("/api/settings")
+    def put_shell_settings(body: ShellSettingsIn):
+        try:
+            return update_shell_settings(
+                app.state.store.data_dir,
+                toolkit_root=body.toolkit_root,
+                classification=body.classification,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/plugins/{name}/{asset_path:path}")
+    def plugin_asset(name: str, asset_path: str):
+        mapping = getattr(app.state, "panel_files", {}).get(name)
+        rel = asset_path.replace("\\", "/").strip("/")
+        if not mapping or not rel or "/" in rel or rel.startswith("."):
+            raise HTTPException(status_code=404, detail="Asset not found")
+        path = mapping.get(rel)
+        if path is None or not path.is_file():
+            raise HTTPException(status_code=404, detail="Asset not found")
+        media = "text/css" if path.suffix.lower() == ".css" else "application/javascript"
+        return FileResponse(
+            path,
+            media_type=media,
+            headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
+        )
 
     @app.get("/api/judges")
     def get_judges():

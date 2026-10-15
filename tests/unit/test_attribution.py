@@ -26,7 +26,8 @@ def test_frontend_package_is_mit():
 
 def test_notice_and_vendored_mpl_files_are_in_the_repo():
     assert (ROOT / "NOTICE").read_text(encoding="utf-8").strip() == "Built with Llama."
-    page = (ROOT / "llm_eval_suite" / "static" / "index.html").read_text(encoding="utf-8")
+    page = (ROOT / "llm_eval_suite" / "static" / "shell.js").read_text(encoding="utf-8")
+    assert 'id="llama-attribution"' in page
     assert "Built with Llama." in page
     for package in ("certifi", "tqdm"):
         folder = ROOT / "third_party" / package
