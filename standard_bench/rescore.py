@@ -50,7 +50,7 @@ class RescoreError(RuntimeError):
 
 def _scorer_stamp() -> str:
     """Package version plus the scorer version. Used when git cannot answer."""
-    version = "0.1.0"
+    version = "0.2.0"
     try:
         found = package_version("llm-eval-suite")
     except PackageNotFoundError:

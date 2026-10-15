@@ -9,7 +9,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="LLM Eval Suite API",
         description="Local offline API for the AI Evaluation Workbench.",
-        version="0.1.0",
+        version="0.2.0",
     )
     app.add_middleware(
         CORSMiddleware,
