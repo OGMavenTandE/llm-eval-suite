@@ -58,7 +58,6 @@ The engine runs YAML configs against local or API-backed models, writes timestam
 - Council summary from local judge models. The model under test is not a judge
 - Live garak when installed. A missing install shows a labeled fixture. A failed live scan is INVALID, not a fixture
 - Dry-run validation without inference
-- Decision-to-evidence map: YAML in, evidence status out, one-page HTML for browser print
 - Structured run results, per-run audit JSON, and a filesystem run index
 
 ## Click-through app
@@ -180,27 +179,6 @@ python -m llm_eval.garak smoke
 
 Writes `results/garak/smoke-report.jsonl`. See [docs/garak-fixture-eval.md](docs/garak-fixture-eval.md). How empty generations are flagged is in [docs/LESSONS_LEARNED.md](docs/LESSONS_LEARNED.md).
 
-## Decision-to-evidence map
-
-A map ties each decision to the bar it must clear and to evidence from a click-through run, or to a signed attestation when the suite has no such metric. The command reports evidence status only. It does not grant authority. The optional `recommended_authority` line is copied from the map file and shown as written. Its column label is "Recommended authority (decision authority grants)".
-
-`met` requires all of these: the point estimate clears the bar, the 95% Wilson lower bound clears the bar, the sample count is at least `min_samples`, and the run is within `max_result_age_days`. A point estimate that clears while the interval straddles the bar is `partial`, as is a short sample or a stale run. A value below `partial_floor` (or below the bar when no floor is set), or an interval that sits entirely on the failing side, is `gap`. No qualifying run, a missing metric, a `not_run` row, or a fixture-only source is `not assessed`. The row status is the worst item. Pass rates use live rows only and are not averaged across categories. Latency and other point metrics have no interval.
-
-Outside metrics such as word error rate or perimeter accuracy can be registered with `register_metric` on `ExternalMetricProvider`. None are built in. Trigger lines are printed and not evaluated. The click-through app does not serve maps.
-
-The fictional Wildfire Edge Assist map is an example. Pass `--as-of 2026-10-19` so the fixture age stays inside the 30-day limit. Real maps stay out of the repo.
-
-```bash
-llm-eval-map validate llm_eval/decision_map/examples/wildfire_edge_assist.yaml
-llm-eval-map resolve llm_eval/decision_map/examples/wildfire_edge_assist.yaml \
-  --runs llm_eval/decision_map/examples/wildfire_run --as-of 2026-10-19
-llm-eval-map render llm_eval/decision_map/examples/wildfire_edge_assist.yaml \
-  --runs llm_eval/decision_map/examples/wildfire_run --as-of 2026-10-19 \
-  --output wildfire-map.html
-```
-
-Open the HTML and use the browser print dialog: landscape, 11 by 8.5 inches, margins none, background graphics on. The page CSS sets that size. This command does not install or launch a browser.
-
 ## Architecture
 
 ```
@@ -226,8 +204,7 @@ llm-eval-suite/
 │   ├── reporting/             # JSON/CSV reporters
 │   ├── dioptra/               # Offline Dioptra-shaped experiment records
 │   ├── rampart/               # Offline RAMPART-shaped pytest smoke records
-│   ├── garak/                 # Live garak scans and offline fixture reports
-│   └── decision_map/          # Decision-to-evidence map, status, and HTML export
+│   └── garak/                 # Live garak scans and offline fixture reports
 ├── frontend/                  # React workbench (optional; not the port 8765 app)
 ├── dashboard.html             # Single-file viewer for engine JSON
 └── tests/
