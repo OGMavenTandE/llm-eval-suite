@@ -54,7 +54,6 @@ llm-eval-suite = "llm_eval_suite.app:main"
 llm-eval-dow = "dow_bench.cli:main"
 llm-eval-standard = "standard_bench.cli:main"
 llm-eval-edge = "llm_eval.edge.cli:main"
-llm-eval-map = "llm_eval.decision_map.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/OGMavenTandE/llm-eval-suite"
@@ -66,7 +65,6 @@ where = ["."]
 include = ["llm_eval*", "apps*", "llm_eval_suite*", "dow_bench", "dow_bench.*", "standard_bench", "standard_bench.*"]
 
 [tool.setuptools.package-data]
-llm_eval = ["decision_map/examples/*.yaml", "decision_map/examples/wildfire_run/*.json"]
 llm_eval_suite = ["static/*", "static/fonts/*", "static/favicon.ico", "presets.json"]
 dow_bench = ["*.json", "*.md", "public/*"]
 standard_bench = ["fixtures/manifest.json", "fixtures/*/*.jsonl"]
