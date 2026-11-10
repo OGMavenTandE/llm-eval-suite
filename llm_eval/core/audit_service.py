@@ -1,4 +1,5 @@
 import json
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -11,6 +12,9 @@ def _plugin_manifest() -> list[dict]:
     from llm_eval.plugins import current_manifest
 
     return current_manifest()
+
+
+_RUN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$")
 
 
 class AuditService:
@@ -27,7 +31,13 @@ class AuditService:
         return path
 
     def audit_file_path(self, output_dir: str, run_id: str) -> Path:
-        return self.audit_dir(output_dir) / f"{run_id}.json"
+        if not isinstance(run_id, str) or _RUN_ID.fullmatch(run_id) is None:
+            raise ValueError("Run id must be a single file name.")
+        directory = self.audit_dir(output_dir)
+        path = directory / f"{run_id}.json"
+        if path.resolve().parent != directory.resolve():
+            raise ValueError("Run id must be a single file name.")
+        return path
 
     def build_audit_metadata(
         self,
@@ -114,7 +124,10 @@ class AuditService:
 
     def load(self, output_dir: str, run_id: str) -> AuditMetadata | None:
         """Load persisted audit metadata for a run."""
-        path = self.audit_file_path(output_dir, run_id)
+        try:
+            path = self.audit_file_path(output_dir, run_id)
+        except ValueError:
+            return None
         if not path.exists():
             return None
         with path.open(encoding="utf-8") as f:

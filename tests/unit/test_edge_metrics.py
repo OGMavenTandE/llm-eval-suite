@@ -316,7 +316,7 @@ def test_ollama_stream_hook_records_ttft_and_falls_back(monkeypatch):
         def json(self):
             return {"response": "Pong", "eval_count": 1, "prompt_eval_count": 2, "model": "llama"}
 
-    def post(url, json=None, timeout=None, stream=None):  # noqa: A002
+    def post(url, json=None, timeout=None, stream=None, **kwargs):  # noqa: A002
         calls["n"] += 1
         if stream:
             raise ValueError("bad stream")

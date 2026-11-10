@@ -96,6 +96,43 @@ def redact(profile: dict) -> dict:
     return cleaned
 
 
+def write_private_text(path: Path, text: str) -> None:
+    """Write a secret-bearing file so other users on this machine cannot read it."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        handle.write(text)
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+
+
+def _public_judge(row: dict) -> dict:
+    cleaned = dict(row)
+    secret = cleaned.get("api_key") or ""
+    if secret and secret != "set":
+        cleaned["api_key"] = "set"
+        cleaned["has_api_key"] = True
+    else:
+        cleaned["api_key"] = ""
+        cleaned["has_api_key"] = False
+    return cleaned
+
+
+def _kept_judge_key(existing: list[dict], index: int, row: dict) -> str:
+    """Keep a stored judge key when the client sends the ``set`` placeholder."""
+    if "api_key" in row and row.get("api_key") not in (None, "set"):
+        return row.get("api_key") or ""
+    model = (row.get("model") or "").strip()
+    if index < len(existing) and (existing[index].get("model") or "").strip() == model:
+        return existing[index].get("api_key") or ""
+    for old in existing:
+        if (old.get("model") or "").strip() == model and old.get("api_key"):
+            return old.get("api_key") or ""
+    return ""
+
+
 class ConnectionStore:
     def __init__(self, data_dir: str | Path):
         self.data_dir = Path(data_dir)
@@ -186,16 +223,24 @@ class ConnectionStore:
                 "timeout": DEFAULT_JUDGE_TIMEOUT,
                 "max_tokens": DEFAULT_JUDGE_MAX_TOKENS,
             }
-            self.judges_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-            return payload
+            write_private_text(self.judges_path, json.dumps(payload, indent=2) + "\n")
+            return self._public_judges(payload)
         stored = json.loads(self.judges_path.read_text(encoding="utf-8"))
         stored.setdefault("timeout", DEFAULT_JUDGE_TIMEOUT)
         stored.setdefault("max_tokens", DEFAULT_JUDGE_MAX_TOKENS)
-        return stored
+        return self._public_judges(stored)
 
     def save_judges(self, payload: dict) -> dict:
+        previous: list[dict] = []
+        if self.judges_path.is_file():
+            try:
+                raw = json.loads(self.judges_path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                raw = {}
+            if isinstance(raw, dict):
+                previous = list(raw.get("judges") or [])
         judges = []
-        for row in payload.get("judges") or []:
+        for index, row in enumerate(payload.get("judges") or []):
             base_url = check_base_url(row.get("base_url") or "http://127.0.0.1:11434")
             judges.append(
                 {
@@ -204,7 +249,7 @@ class ConnectionStore:
                     "base_url": base_url,
                     "model": (row.get("model") or "").strip(),
                     "mode": row.get("mode") or "chat",
-                    "api_key": row.get("api_key") or "",
+                    "api_key": _kept_judge_key(previous, index, row),
                     "cloud": bool(row.get("cloud")) or not is_local_url(base_url),
                 }
             )
@@ -215,8 +260,13 @@ class ConnectionStore:
             "timeout": judge_timeout(payload),
             "max_tokens": judge_max_tokens(payload),
         }
-        self.judges_path.write_text(json.dumps(stored, indent=2) + "\n", encoding="utf-8")
-        return stored
+        write_private_text(self.judges_path, json.dumps(stored, indent=2) + "\n")
+        return self._public_judges(stored)
+
+    def _public_judges(self, stored: dict) -> dict:
+        payload = dict(stored)
+        payload["judges"] = [_public_judge(row) for row in stored.get("judges") or []]
+        return payload
 
     def _read(self) -> list[dict]:
         if not self.path.is_file():
@@ -227,10 +277,7 @@ class ConnectionStore:
         return list(data)
 
     def _write(self, rows: list[dict]) -> None:
-        self.path.write_text(
-            json.dumps({"connections": rows}, indent=2) + "\n",
-            encoding="utf-8",
-        )
+        write_private_text(self.path, json.dumps({"connections": rows}, indent=2) + "\n")
 
 
 _SERVER_ROOTS = {

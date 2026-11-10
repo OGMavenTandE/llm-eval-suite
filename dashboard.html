@@ -1214,11 +1214,10 @@ tbody tr:hover { background: var(--bg-surface-hover); }
 
     if (mode === 'single') {
       let html = '<table><thead><tr><th style="width:40px">#</th><th>Prompt</th><th>Expected</th><th>Response</th><th>Metrics</th></tr></thead><tbody>';
-      for (const s of filteredSamples) {
-        const allPass = sampleAllPassed(s);
-        const rowId = 'drill-' + s.sample_idx;
+      filteredSamples.forEach((s, index) => {
+        const rowId = 'drill-' + index;
         html += '<tr class="drill-row" data-target="' + rowId + '">';
-        html += '<td>' + s.sample_idx + '</td>';
+        html += '<td>' + escHtml(s.sample_idx) + '</td>';
         html += '<td><span class="truncate" style="display:inline-block">' + escHtml(s.prompt) + '</span></td>';
         html += '<td><code style="font-family:var(--font-mono);font-size:0.82rem">' + escHtml(s.expected) + '</code></td>';
         html += '<td><code style="font-family:var(--font-mono);font-size:0.82rem">' + escHtml(s.model_response) + '</code></td>';
@@ -1228,7 +1227,7 @@ tbody tr:hover { background: var(--bg-surface-hover); }
         html += '<tr class="drill-expand" id="' + rowId + '"><td colspan="5">';
         html += drillDetailSingle(s);
         html += '</td></tr>';
-      }
+      });
       html += '</tbody></table>';
       container.innerHTML = html;
     } else {
@@ -1236,10 +1235,10 @@ tbody tr:hover { background: var(--bg-surface-hover); }
       let html = '<table><thead><tr><th style="width:40px">#</th><th>Prompt</th><th>Expected</th>';
       for (const m of models) html += '<th>' + escHtml(m) + '</th>';
       html += '</tr></thead><tbody>';
-      for (const s of filteredSamples) {
-        const rowId = 'drill-' + s.sample_idx;
+      filteredSamples.forEach((s, index) => {
+        const rowId = 'drill-c-' + index;
         html += '<tr class="drill-row" data-target="' + rowId + '">';
-        html += '<td>' + s.sample_idx + '</td>';
+        html += '<td>' + escHtml(s.sample_idx) + '</td>';
         html += '<td><span class="truncate" style="display:inline-block">' + escHtml(s.prompt) + '</span></td>';
         html += '<td><code style="font-family:var(--font-mono);font-size:0.82rem">' + escHtml(s.expected) + '</code></td>';
         for (const m of models) {
@@ -1249,7 +1248,7 @@ tbody tr:hover { background: var(--bg-surface-hover); }
         html += '<tr class="drill-expand" id="' + rowId + '"><td colspan="' + (3 + models.length) + '">';
         html += drillDetailComparison(s);
         html += '</td></tr>';
-      }
+      });
       html += '</tbody></table>';
       container.innerHTML = html;
     }
@@ -1303,7 +1302,7 @@ tbody tr:hover { background: var(--bg-surface-hover); }
       if (ev.details) {
         html += '<span style="font-size:0.72rem;color:var(--text-tertiary);margin-top:2px">';
         const entries = Object.entries(ev.details).filter(([k]) => k !== 'mode' && k !== 'expected' && k !== 'response');
-        html += entries.map(([k,v]) => k + ': ' + v).join(', ');
+        html += entries.map(([k, v]) => escHtml(k) + ': ' + escHtml(v == null ? '' : String(v))).join(', ');
         html += '</span>';
       }
       html += '</div>';
@@ -1440,7 +1439,7 @@ tbody tr:hover { background: var(--bg-surface-hover); }
       }
 
       html += '<tr>';
-      html += '<td>' + s.sample_idx + '</td>';
+      html += '<td>' + escHtml(s.sample_idx) + '</td>';
       html += '<td><span class="truncate" style="display:inline-block">' + escHtml(s.prompt) + '</span></td>';
       for (const m of models) {
         const isBest = m === bestModel;

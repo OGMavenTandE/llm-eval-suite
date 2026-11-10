@@ -1,6 +1,7 @@
 import logging
 import traceback
 from datetime import datetime
+from pathlib import Path
 from uuid import uuid4
 
 from llm_eval.core.audit_service import AuditService
@@ -16,6 +17,16 @@ from llm_eval.schemas.run_result import (
 from llm_eval.storage.index import RunIndex
 
 logger = logging.getLogger(__name__)
+
+
+def _path_inside(root: str, candidate: str) -> bool:
+    """True when ``candidate`` stays inside ``root`` after resolving symlinks."""
+    try:
+        base = Path(root).resolve()
+        target = Path(candidate).resolve()
+    except OSError:
+        return False
+    return target == base or base in target.parents
 
 
 class RunService:
@@ -184,12 +195,11 @@ class RunService:
     def get_run_audit(self, run_id: str, output_dir: str = "results/") -> AuditMetadata | None:
         """Load persisted audit metadata for a run."""
         indexed = self.get_run(run_id, output_dir)
-        if indexed and indexed.get("audit_path"):
+        if indexed and indexed.get("audit_path") and _path_inside(output_dir, indexed["audit_path"]):
             path = indexed["audit_path"]
             if path:
                 try:
                     import json
-                    from pathlib import Path
 
                     with Path(path).open(encoding="utf-8") as f:
                         data = json.load(f)

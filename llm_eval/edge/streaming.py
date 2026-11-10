@@ -11,7 +11,7 @@ import time
 
 import requests
 
-from llm_eval.http_policy import check_base_url, tls_verify
+from llm_eval.http_policy import check_base_url, refuse_redirect
 from llm_eval.models.base import ModelResponse
 from llm_eval.models.context import strip_think_blocks
 from llm_eval.offline import refuse_remote_http
@@ -97,7 +97,8 @@ def ollama_stream_generate(base_url: str, payload: dict, timeout: int = 120) -> 
     model = body.get("model") or ""
     start = time.perf_counter()
     try:
-        resp = requests.post(url, json=body, timeout=timeout, stream=True)
+        resp = requests.post(url, json=body, timeout=timeout, stream=True, allow_redirects=False)
+        refuse_redirect(resp)
         resp.raise_for_status()
         ttft, text, last, latency_ms = consume_ollama_lines(resp.iter_lines(), start)
     except requests.exceptions.ConnectionError:
@@ -140,7 +141,8 @@ def _ollama_blocking(url: str, body: dict, timeout: int, model: str, ttft_reason
     payload["stream"] = False
     start = time.perf_counter()
     try:
-        resp = requests.post(url, json=payload, timeout=timeout)
+        resp = requests.post(url, json=payload, timeout=timeout, allow_redirects=False)
+        refuse_redirect(resp)
         latency_ms = (time.perf_counter() - start) * 1000
         resp.raise_for_status()
     except requests.exceptions.ConnectionError:
@@ -166,110 +168,3 @@ def _ollama_blocking(url: str, body: dict, timeout: int, model: str, ttft_reason
         "stream": False,
     }
     return _response(data.get("response") or "", latency_ms, eval_count, metadata)
-
-
-def openai_stream_generate(
-    *,
-    base_url: str,
-    mode: str,
-    payload: dict,
-    headers: dict,
-    timeout: int,
-    what: str = "OpenAI cloud API",
-) -> ModelResponse:
-    """Stream chat or completions. A rejected stream falls back to one blocking call."""
-    base_url = check_base_url(base_url)
-    refuse_remote_http(base_url, what=what)
-    url = f"{base_url}/completions" if mode == "completions" else f"{base_url}/chat/completions"
-    body = {key: value for key, value in payload.items() if key != "edge_stream"}
-    body["stream"] = True
-    if mode != "completions":
-        body["stream_options"] = {"include_usage": True}
-    model = body.get("model") or ""
-    start = time.perf_counter()
-    try:
-        resp = _post_stream(url, body, headers, timeout, model)
-        ttft, text, usage, finish, reported, latency_ms = consume_openai_sse(resp.iter_lines(), start, mode)
-    except requests.exceptions.ConnectionError:
-        raise RuntimeError(f"Could not connect to OpenAI-compatible API at {base_url}.") from None
-    except requests.exceptions.Timeout:
-        raise RuntimeError(f"Request timed out after {timeout} seconds (model={model}).") from None
-    except Exception as exc:
-        return _openai_blocking(
-            url, payload, headers, timeout, mode, model, base_url, ttft_reason=f"streaming failed: {exc}"
-        )
-    completion = (usage or {}).get("completion_tokens")
-    reason = "" if ttft is not None else "stream returned no token"
-    metadata = {
-        "model": reported,
-        "finish_reason": finish,
-        "prompt_tokens": (usage or {}).get("prompt_tokens"),
-        "completion_tokens": completion,
-        "mode": mode,
-        "ttft_ms": ttft,
-        "ttft_reason": reason,
-        "output_tokens": completion,
-        "stream": True,
-    }
-    return _response(text, latency_ms, (usage or {}).get("total_tokens") or completion, metadata)
-
-
-def _post_stream(url: str, body: dict, headers: dict, timeout: int, model: str):
-    verify = tls_verify()
-    resp = requests.post(url, json=body, headers=headers, timeout=timeout, stream=True, verify=verify)
-    if resp.status_code >= 400 and "stream_options" in body:
-        reduced = {key: value for key, value in body.items() if key != "stream_options"}
-        resp.close()
-        resp = requests.post(url, json=reduced, headers=headers, timeout=timeout, stream=True, verify=verify)
-    try:
-        resp.raise_for_status()
-    except requests.exceptions.HTTPError as exc:
-        detail = getattr(resp, "text", str(exc))
-        raise RuntimeError(f"API error {resp.status_code}: {detail}") from exc
-    return resp
-
-
-def _openai_blocking(
-    url: str,
-    payload: dict,
-    headers: dict,
-    timeout: int,
-    mode: str,
-    model: str,
-    base_url: str,
-    ttft_reason: str,
-) -> ModelResponse:
-    body = {key: value for key, value in payload.items() if key not in {"stream", "stream_options", "edge_stream"}}
-    start = time.perf_counter()
-    try:
-        resp = requests.post(url, json=body, headers=headers, timeout=timeout, verify=tls_verify())
-        latency_ms = (time.perf_counter() - start) * 1000
-        resp.raise_for_status()
-    except requests.exceptions.ConnectionError:
-        raise RuntimeError(f"Could not connect to OpenAI-compatible API at {base_url}.") from None
-    except requests.exceptions.Timeout:
-        raise RuntimeError(f"Request timed out after {timeout} seconds (model={model}).") from None
-    except requests.exceptions.HTTPError as exc:
-        detail = getattr(resp, "text", str(exc))
-        raise RuntimeError(f"API error {resp.status_code}: {detail}") from exc
-    data = resp.json()
-    choice = data["choices"][0]
-    if mode == "completions":
-        text = choice.get("text") or ""
-    else:
-        message = choice.get("message") or {}
-        text = message.get("content") or choice.get("text") or ""
-    usage = data.get("usage") or {}
-    completion = usage.get("completion_tokens")
-    metadata = {
-        "model": data.get("model"),
-        "finish_reason": choice.get("finish_reason"),
-        "prompt_tokens": usage.get("prompt_tokens"),
-        "completion_tokens": completion,
-        "mode": mode,
-        "ttft_ms": None,
-        "ttft_reason": ttft_reason,
-        "output_tokens": completion,
-        "stream": False,
-    }
-    return _response(text, latency_ms, usage.get("total_tokens"), metadata)

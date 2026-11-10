@@ -358,7 +358,7 @@ def test_ollama_sends_think_false_and_retries_when_rejected(monkeypatch):
 
     native_payloads = []
 
-    def native_post(url, json=None, timeout=None):  # noqa: A002
+    def native_post(url, json=None, timeout=None, **kwargs):  # noqa: A002
         native_payloads.append(dict(json))
         return Response(200, {"response": "<think>x</think>Paris", "eval_count": 1})
 
@@ -1224,7 +1224,7 @@ def test_ollama_judge_uses_native_chat_and_drops_thinking(monkeypatch):
                 "done_reason": "stop",
             }
 
-    def fake_post(url, json=None, timeout=None):  # noqa: A002
+    def fake_post(url, json=None, timeout=None, **kwargs):  # noqa: A002
         seen["url"] = url
         seen["json"] = json
         seen["timeout"] = timeout

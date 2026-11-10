@@ -1,3 +1,3 @@
-from apps.api.routes import artifacts, datasets, health, models, profiles, runs
+from apps.api.routes import datasets, health, models, profiles, runs
 
-__all__ = ["artifacts", "datasets", "health", "models", "profiles", "runs"]
+__all__ = ["datasets", "health", "models", "profiles", "runs"]
