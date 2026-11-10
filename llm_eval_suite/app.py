@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
@@ -17,7 +18,7 @@ from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from llm_eval.http_policy import check_base_url
+from llm_eval.http_policy import check_base_url, refuse_redirect
 from llm_eval.models.nanogpt_convert import convert_nanogpt_to_hf
 from llm_eval.offline import (
     load_settings,
@@ -320,7 +321,8 @@ def create_app(
             root = root[:-3]
         try:
             refuse_remote_http(root, what="remote Ollama")
-            response = requests.get(f"{root}/api/tags", timeout=5)
+            response = requests.get(f"{root}/api/tags", timeout=5, allow_redirects=False)
+            refuse_redirect(response)
             response.raise_for_status()
             payload = response.json()
         except RuntimeError as exc:
@@ -430,8 +432,8 @@ def create_app(
         profile = app.state.store.get(body.connection_id)
         if profile is None:
             raise HTTPException(status_code=404, detail="Connection not found")
-        dataset_path = _dataset_path(app, body.dataset_id)
         try:
+            dataset_path = _dataset_path(app, body.dataset_id)
             return app.state.runs.start(
                 connection=profile,
                 preset_id=body.preset,
@@ -563,15 +565,34 @@ def _write_demo(app: FastAPI, folder: str) -> None:
     path.write_text(json.dumps({"folder": folder}, indent=2) + "\n", encoding="utf-8")
 
 
+_DATASET_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,80}$")
+
+
 def _dataset_path(app: FastAPI, dataset_id: str) -> Path:
     if dataset_id == "sample":
         path = Path(app.state.sample_dataset)
         if not path.is_file():
             raise FileNotFoundError("Sample dataset is missing")
         return path
-    matches = list(Path(app.state.datasets).glob(f"{dataset_id}.*"))
+    if not isinstance(dataset_id, str) or _DATASET_ID.fullmatch(dataset_id) is None:
+        raise FileNotFoundError("Dataset not found")
+    folder = Path(app.state.datasets)
+    root = folder.resolve()
+    matches = []
+    if folder.is_dir():
+        for path in folder.iterdir():
+            if not path.is_file() or path.stem != dataset_id or path.suffix.lower() not in {".jsonl", ".csv"}:
+                continue
+            try:
+                resolved = path.resolve()
+            except OSError:
+                continue
+            if resolved.parent != root:
+                continue
+            matches.append(resolved)
     if not matches:
         raise FileNotFoundError("Dataset not found")
+    matches.sort()
     return matches[0]
 
 

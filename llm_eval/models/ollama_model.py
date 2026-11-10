@@ -2,7 +2,7 @@ import time
 
 import requests
 
-from llm_eval.http_policy import check_base_url
+from llm_eval.http_policy import check_base_url, refuse_redirect
 from llm_eval.models.base import BaseModel, ModelResponse
 from llm_eval.offline import refuse_remote_http
 from llm_eval.models.context import strip_think_blocks
@@ -49,7 +49,8 @@ def ollama_chat(
     url = f"{base_url}/api/chat"
     refuse_remote_http(base_url, what="remote Ollama")
     try:
-        resp = requests.post(url, json=payload, timeout=timeout)
+        resp = requests.post(url, json=payload, timeout=timeout, allow_redirects=False)
+        refuse_redirect(resp)
         resp.raise_for_status()
     except requests.exceptions.ConnectionError:
         raise RuntimeError(
@@ -99,7 +100,8 @@ class OllamaModel(BaseModel):
         start = time.perf_counter()
 
         try:
-            resp = requests.post(url, json=payload, timeout=120)
+            resp = requests.post(url, json=payload, timeout=120, allow_redirects=False)
+            refuse_redirect(resp)
             latency_ms = (time.perf_counter() - start) * 1000
             resp.raise_for_status()
         except requests.exceptions.ConnectionError:

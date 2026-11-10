@@ -7,7 +7,8 @@ is never turned off.
 Configured base URLs must be http or https. Link-local and metadata hosts
 are rejected, including 169.254.0.0/16. localhost stays allowed so Ollama
 on this machine still connects. The check uses the host string only. It
-does not open a socket.
+does not open a socket. Shortened, octal, and hexadecimal IPv4 spellings
+are read the same way the system resolver reads them.
 """
 
 from __future__ import annotations
@@ -21,9 +22,17 @@ _ENABLED = {"1", "true", "yes", "on"}
 _METADATA_HOSTS = {
     "metadata.google.internal",
     "metadata.goog",
+    "metadata.tencentyun.com",
+    "instance-data.ec2.internal",
 }
 _LINK_LOCAL_V4 = ipaddress.ip_network("169.254.0.0/16")
 _LINK_LOCAL_V6 = ipaddress.ip_network("fe80::/10")
+# Cloud metadata addresses that are not in the link-local ranges above.
+_EXTRA_BLOCKED_IPS = {
+    ipaddress.ip_address("100.100.100.200"),
+    ipaddress.ip_address("fd00:ec2::254"),
+}
+_REDIRECT_STATUS = {301, 302, 303, 307, 308}
 
 _BLOCKED_HOST = (
     "Base URL host is a link-local or metadata address. "
@@ -55,6 +64,20 @@ def tls_verify(ca_bundle: str | None = None, *, verify: object = None) -> bool |
         return True
     reject_disabled_verify(chosen)
     return chosen
+
+
+def refuse_redirect(response) -> None:
+    """Raise when ``response`` is a redirect.
+
+    Callers pass ``allow_redirects=False``. A followed redirect would skip
+    :func:`check_base_url` and can land on a metadata address.
+    """
+    status = getattr(response, "status_code", None)
+    if getattr(response, "is_redirect", False) or status in _REDIRECT_STATUS:
+        close = getattr(response, "close", None)
+        if callable(close):
+            close()
+        raise RuntimeError("Refusing to follow a redirect from this endpoint.")
 
 
 def check_base_url(url: str) -> str:
@@ -93,14 +116,22 @@ def _is_disabled_text(value: object) -> bool:
 def _blocked_host(host: str) -> bool:
     if host in _METADATA_HOSTS or host.endswith(".metadata.google.internal"):
         return True
-    ip = _ip_from_host(host)
-    if ip is not None and _is_blocked_ip(ip):
+    if host.endswith(".metadata.tencentyun.com"):
         return True
+    ip = _ip_from_host(host)
+    if ip is not None:
+        return _is_blocked_ip(ip)
+    # 169.254.43518.nip.io and customer1.169.254.169.254.nip.io embed the
+    # metadata address in a name the resolver would turn into that address.
     labels = host.split(".")
-    if len(labels) > 4:
-        embedded = _dotted_ipv4(".".join(labels[:4]))
-        if embedded is not None and _is_blocked_ip(embedded):
-            return True
+    if len(labels) < 2:
+        return False
+    for start in range(len(labels)):
+        room = len(labels) - start
+        for count in range(min(4, room), 0, -1):
+            embedded = _ipv4_literal(".".join(labels[start : start + count]))
+            if embedded is not None and _is_blocked_ip(embedded):
+                return True
     return False
 
 
@@ -110,43 +141,64 @@ def _ip_from_host(host: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | 
     try:
         ip = ipaddress.ip_address(text)
     except ValueError:
-        ip = None
-    if ip is None and (text.isdigit() or text.startswith("0x")):
-        try:
-            ip = ipaddress.ip_address(int(text, 0))
-        except (ValueError, OverflowError):
-            ip = None
-    if ip is None:
-        ip = _dotted_ipv4(text)
+        ip = _ipv4_literal(text)
     if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
         return ip.ipv4_mapped
     return ip
 
 
-def _dotted_ipv4(host: str) -> ipaddress.IPv4Address | None:
+def _ipv4_component(part: str) -> int | None:
+    text = part.strip()
+    if not text:
+        return None
+    try:
+        lowered = text.lower()
+        if lowered.startswith("0x"):
+            if len(lowered) == 2:
+                return None
+            return int(lowered, 16)
+        if len(text) > 1 and text.startswith("0") and all(ch in "01234567" for ch in text):
+            return int(text, 8)
+        if text.isdigit():
+            return int(text, 10)
+    except ValueError:
+        return None
+    return None
+
+
+def _ipv4_literal(host: str) -> ipaddress.IPv4Address | None:
+    """One to four IPv4 parts, including the short forms ``inet_aton`` accepts."""
     parts = host.split(".")
-    if len(parts) != 4:
+    if not 1 <= len(parts) <= 4:
         return None
     numbers: list[int] = []
     for part in parts:
-        try:
-            if part.lower().startswith("0x"):
-                number = int(part, 16)
-            elif len(part) > 1 and part.startswith("0") and part.isdigit():
-                number = int(part, 8)
-            elif part.isdigit():
-                number = int(part, 10)
-            else:
-                return None
-        except ValueError:
-            return None
-        if number > 255:
+        number = _ipv4_component(part)
+        if number is None or number < 0:
             return None
         numbers.append(number)
-    return ipaddress.IPv4Address(".".join(str(number) for number in numbers))
+    if len(numbers) == 1:
+        value = numbers[0]
+        if value > 0xFFFFFFFF:
+            return None
+    elif len(numbers) == 2:
+        if numbers[0] > 0xFF or numbers[1] > 0xFFFFFF:
+            return None
+        value = (numbers[0] << 24) | numbers[1]
+    elif len(numbers) == 3:
+        if numbers[0] > 0xFF or numbers[1] > 0xFF or numbers[2] > 0xFFFF:
+            return None
+        value = (numbers[0] << 24) | (numbers[1] << 16) | numbers[2]
+    else:
+        if any(number > 0xFF for number in numbers):
+            return None
+        value = (numbers[0] << 24) | (numbers[1] << 16) | (numbers[2] << 8) | numbers[3]
+    return ipaddress.IPv4Address(value)
 
 
 def _is_blocked_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    if ip in _EXTRA_BLOCKED_IPS:
+        return True
     if ip.version == 4:
         return ip in _LINK_LOCAL_V4
     return ip in _LINK_LOCAL_V6

@@ -5,7 +5,7 @@ from urllib.parse import urlparse
 
 import requests
 
-from llm_eval.http_policy import check_base_url, tls_verify
+from llm_eval.http_policy import check_base_url, refuse_redirect, tls_verify
 from llm_eval.models.base import BaseModel, ModelResponse
 from llm_eval.offline import refuse_remote_http
 from llm_eval.models.context import clamp_prompt_and_new_tokens, strip_think_blocks
@@ -132,8 +132,15 @@ class OpenAIModel(BaseModel):
             body["stream_options"] = {"include_usage": True}
         try:
             resp = requests.post(
-                url, json=body, headers=headers, timeout=self.timeout, stream=True, verify=self.verify
+                url,
+                json=body,
+                headers=headers,
+                timeout=self.timeout,
+                stream=True,
+                verify=self.verify,
+                allow_redirects=False,
             )
+            refuse_redirect(resp)
         except requests.exceptions.ConnectionError:
             raise RuntimeError(
                 f"Could not connect to OpenAI-compatible API at {self.base_url}."
@@ -191,8 +198,14 @@ class OpenAIModel(BaseModel):
     def _post_once(self, url: str, payload: dict, headers: dict):
         try:
             resp = requests.post(
-                url, json=payload, headers=headers, timeout=self.timeout, verify=self.verify
+                url,
+                json=payload,
+                headers=headers,
+                timeout=self.timeout,
+                verify=self.verify,
+                allow_redirects=False,
             )
+            refuse_redirect(resp)
             resp.raise_for_status()
             return resp
         except requests.exceptions.ConnectionError:

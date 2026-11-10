@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 import subprocess
 import sys
 import threading
@@ -16,6 +17,7 @@ from pathlib import Path
 from llm_eval.datasets.loader import load_dataset
 from llm_eval.garak.live import is_empty_generation, validity_from_items
 from llm_eval_suite.compare import compare_runs
+from llm_eval_suite.connections import write_private_text
 from llm_eval_suite.council import run_council
 from llm_eval_suite.presets import apply_per_suite, estimate_preset, expand_preset
 from llm_eval_suite.report_html import render_report
@@ -25,6 +27,9 @@ from llm_eval_suite.timing import TimingStore
 from llm_eval_suite.worker import build_worker_command
 
 logger = logging.getLogger("llm_eval_suite.runs")
+
+# One path segment. Rejects "..", absolute paths, and header-breaking characters.
+_RUN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$")
 
 
 def _hardware_stamp(connection: dict) -> dict:
@@ -221,6 +226,19 @@ class RunManager:
         self._lock = threading.Lock()
         self._eta_state: dict[tuple[str, str], dict] = {}
 
+    def _run_dir(self, run_id: str) -> Path:
+        """A direct child of the runs directory. ``..`` and other paths are refused."""
+        if not isinstance(run_id, str) or _RUN_ID.fullmatch(run_id) is None:
+            raise FileNotFoundError(run_id)
+        root = self.runs_dir.resolve()
+        try:
+            resolved = (root / run_id).resolve()
+        except OSError as exc:
+            raise FileNotFoundError(run_id) from exc
+        if resolved.parent != root:
+            raise FileNotFoundError(run_id)
+        return resolved
+
     def start(
         self,
         *,
@@ -242,12 +260,12 @@ class RunManager:
                 raise ValueError(reason)
         if resume_run_id:
             run_id = resume_run_id
-            run_dir = self.runs_dir / run_id
+            run_dir = self._run_dir(run_id)
             if not (run_dir / "run.json").is_file():
                 raise FileNotFoundError(f"No run to resume: {resume_run_id}")
         else:
             run_id = uuid.uuid4().hex[:12]
-            run_dir = self.runs_dir / run_id
+            run_dir = self._run_dir(run_id)
             run_dir.mkdir(parents=True, exist_ok=True)
         expanded = expand_preset(preset_id)
         if per_suite is not None:
@@ -348,7 +366,7 @@ class RunManager:
         event = self._cancel.get(run_id)
         if event is not None:
             event.set()
-        run_dir = self.runs_dir / run_id
+        run_dir = self._run_dir(run_id)
         record = self._read_run(run_dir)
         if record is None:
             raise FileNotFoundError(run_id)
@@ -358,21 +376,29 @@ class RunManager:
         return record
 
     def get(self, run_id: str) -> dict:
-        record = self._read_run(self.runs_dir / run_id)
+        run_dir = self._run_dir(run_id)
+        record = self._read_run(run_dir)
         if record is None:
             raise FileNotFoundError(run_id)
-        record["failures"] = live_failures(self._read_items(self.runs_dir / run_id))[:100]
+        record["failures"] = live_failures(self._read_items(run_dir))[:100]
         return record
 
     def items(self, run_id: str) -> list[dict]:
-        return self._read_items(self.runs_dir / run_id)
+        return self._read_items(self._run_dir(run_id))
 
     def list_runs(self) -> list[dict]:
         rows = []
         if not self.runs_dir.is_dir():
             return rows
+        root = self.runs_dir.resolve()
         for path in self.runs_dir.iterdir():
-            record = self._read_run(path)
+            try:
+                resolved = path.resolve()
+            except OSError:
+                continue
+            if resolved.parent != root:
+                continue
+            record = self._read_run(resolved)
             if record is None:
                 continue
             invalid = record.get("validity") == "invalid" or record.get("status") == "invalid"
@@ -393,20 +419,20 @@ class RunManager:
         return rows
 
     def compare(self, left_id: str, right_id: str) -> dict:
-        left = self._read_run(self.runs_dir / left_id)
-        right = self._read_run(self.runs_dir / right_id)
+        left = self._read_run(self._run_dir(left_id))
+        right = self._read_run(self._run_dir(right_id))
         if left is None or right is None:
             raise FileNotFoundError("Both runs must exist.")
         return compare_runs(left, right, self.items(left_id), self.items(right_id))
 
     def report_html(self, run_id: str) -> str:
-        record = self._read_run(self.runs_dir / run_id)
+        record = self._read_run(self._run_dir(run_id))
         if record is None:
             raise FileNotFoundError(run_id)
         return render_report(record, self.items(run_id))
 
     def analyze(self, run_id: str, judges: list[dict], chairman: str | None = None, max_tokens: int = 1200) -> dict:
-        record = self._read_run(self.runs_dir / run_id)
+        record = self._read_run(self._run_dir(run_id))
         if record is None:
             raise FileNotFoundError(run_id)
         items = self.items(run_id)
@@ -434,7 +460,7 @@ class RunManager:
         audit["number_guard"] = analysis.get("number_guard")
         audit["number_rejections"] = rejections
         audit["summary_source"] = analysis.get("mode")
-        run_dir = self.runs_dir / run_id
+        run_dir = self._run_dir(run_id)
         for row in rejections:
             line = f"Number check rejected {row.get('token')} in: {row.get('sentence')}"
             self._append_log(run_dir, line)
@@ -464,7 +490,7 @@ class RunManager:
             "resume_run_id": run_id,
         }
         job_path = run_dir / "job.json"
-        job_path.write_text(json.dumps(job, indent=2) + "\n", encoding="utf-8")
+        write_private_text(job_path, json.dumps(job, indent=2) + "\n")
         command = build_worker_command(job_path)
         try:
             subprocess.Popen(command, shell=False)

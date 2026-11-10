@@ -69,12 +69,13 @@ def discover_datasets(settings: AppSettings) -> list[dict]:
 
 def _probe_ollama(base_url: str = "http://localhost:11434", timeout: float = 1.0) -> tuple[bool, str, set[str]]:
     try:
-        from llm_eval.http_policy import check_base_url
+        from llm_eval.http_policy import check_base_url, refuse_redirect
         from llm_eval.offline import refuse_remote_http
 
         base_url = check_base_url(base_url)
         refuse_remote_http(base_url, what="remote Ollama")
-        resp = requests.get(f"{base_url}/api/tags", timeout=timeout)
+        resp = requests.get(f"{base_url}/api/tags", timeout=timeout, allow_redirects=False)
+        refuse_redirect(resp)
         resp.raise_for_status()
         data = resp.json()
         names = {model.get("name", "") for model in data.get("models", []) if model.get("name")}

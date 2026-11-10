@@ -1,5 +1,8 @@
 """TLS verification, URL checks, and connection failures. No network."""
 
+import json
+import os
+
 import pytest
 import requests
 from fastapi.testclient import TestClient
@@ -11,6 +14,7 @@ from llm_eval.models.openai_model import OpenAIModel
 from llm_eval.models.served import check_health
 from llm_eval_suite.app import create_app
 from llm_eval_suite.connections import ConnectionStore
+from llm_eval_suite.runs import RunManager
 
 
 def _ok_response():
@@ -39,8 +43,8 @@ def test_openai_verifies_tls_and_accepts_a_ca_bundle(monkeypatch, tmp_path):
     monkeypatch.delenv("LLM_EVAL_CA_BUNDLE", raising=False)
     seen = []
 
-    def fake_post(url, json=None, headers=None, timeout=None, stream=None, verify=None):  # noqa: A002
-        seen.append({"stream": stream, "verify": verify})
+    def fake_post(url, json=None, headers=None, timeout=None, stream=None, verify=None, **kwargs):  # noqa: A002
+        seen.append({"stream": stream, "verify": verify, "allow_redirects": kwargs.get("allow_redirects")})
         if stream:
             class Rejected:
                 status_code = 400
@@ -61,6 +65,7 @@ def test_openai_verifies_tls_and_accepts_a_ca_bundle(monkeypatch, tmp_path):
     assert model.generate("ping").text == "pong"
     assert seen
     assert all(call["verify"] is True for call in seen)
+    assert all(call["allow_redirects"] is False for call in seen)
     assert any(call["stream"] for call in seen)
     assert any(not call["stream"] for call in seen)
 
@@ -98,15 +103,17 @@ def test_health_check_verifies_tls_and_rejects_metadata(monkeypatch):
         def json(self):
             return {"status": "ok"}
 
-    def fake_get(url, timeout=None, verify=None):
+    def fake_get(url, timeout=None, verify=None, **kwargs):
         seen["url"] = url
         seen["verify"] = verify
+        seen["allow_redirects"] = kwargs.get("allow_redirects")
         return Response()
 
     monkeypatch.setattr("llm_eval.models.served.requests.get", fake_get)
     health = check_health("https://127.0.0.1:8000/v1", "/health")
     assert health["ok"] is True
     assert seen["verify"] is True
+    assert seen["allow_redirects"] is False
     assert seen["url"].endswith("/health")
 
     seen.clear()
@@ -121,6 +128,7 @@ def test_base_url_allows_localhost_and_rejects_link_local_and_other_schemes():
     assert check_base_url("http://[::1]:11434") == "http://[::1]:11434"
     assert check_base_url("https://api.openai.com/v1") == "https://api.openai.com/v1"
     assert check_base_url("http://10.1.2.3:8000/v1") == "http://10.1.2.3:8000/v1"
+    assert check_base_url("http://127.1:11434") == "http://127.1:11434"
     OpenAIModel("local", {"base_url": "http://[::1]:11434/v1", "api_key": ""})
     OllamaModel("llama", {"base_url": "http://localhost:11434"})
 
@@ -132,6 +140,15 @@ def test_base_url_allows_localhost_and_rejects_link_local_and_other_schemes():
         "http://2852039166/",
         "http://0251.0376.0251.0376/",
         "http://169.254.169.254.nip.io/",
+        "http://169.254.43518/",
+        "http://169.16689662/",
+        "http://0XA9FEA9FE/",
+        "http://169.254.43518.nip.io/",
+        "http://customer1.169.254.169.254.nip.io/",
+        "http://100.100.100.200/",
+        "http://[fd00:ec2::254]/",
+        "http://metadata.tencentyun.com/",
+        "http://instance-data.ec2.internal/",
         "http://metadata.google.internal/",
         "file:///etc/passwd",
         "ftp://127.0.0.1/model",
@@ -209,4 +226,84 @@ def test_openai_connection_error_is_a_runtime_error(monkeypatch):
     model = OpenAIModel("local", {"base_url": "http://127.0.0.1:9/v1", "api_key": ""})
     with pytest.raises(RuntimeError, match="Could not connect to OpenAI-compatible API"):
         model.generate("hello")
+
+
+def test_openai_refuses_a_redirect(monkeypatch):
+    class Redirect:
+        status_code = 302
+        headers = {"Location": "http://169.254.169.254/latest/meta-data"}
+        text = ""
+        is_redirect = True
+
+        def close(self):
+            return None
+
+        def raise_for_status(self):
+            return None
+
+    monkeypatch.setattr("llm_eval.models.openai_model.requests.post", lambda *args, **kwargs: Redirect())
+    model = OpenAIModel("local", {"base_url": "http://127.0.0.1:9/v1", "api_key": ""})
+    with pytest.raises(RuntimeError, match="redirect"):
+        model.generate("ping")
+
+
+def test_run_id_and_dataset_id_cannot_escape_their_directories(tmp_path):
+    runs = tmp_path / "runs"
+    manager = RunManager(runs)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "run.json").write_text("{}\n", encoding="utf-8")
+    for run_id in ("../outside", "..", "/tmp/outside", "nested/name", 'quote"'):
+        with pytest.raises(FileNotFoundError):
+            manager.get(run_id)
+    assert not (tmp_path / "run.json").exists()
+
+    app = create_app(data_dir=tmp_path / "data", runs_dir=runs)
+    client = TestClient(app)
+    presets = client.get("/api/presets", params={"dataset_id": "*"})
+    assert presets.status_code == 200
+    saved = client.post(
+        "/api/connections",
+        json={"type": "ollama", "model": "llama3.2", "base_url": "http://127.0.0.1:11434"},
+    )
+    started = client.post(
+        "/api/runs",
+        json={"connection_id": saved.json()["id"], "preset": "quick", "dataset_id": "../outside"},
+    )
+    assert started.status_code == 400
+    assert "Dataset" in started.json()["detail"]
+
+
+def test_secret_files_are_private_and_judge_keys_round_trip(tmp_path):
+    store = ConnectionStore(tmp_path)
+    store.save(
+        {
+            "type": "openai",
+            "model": "local",
+            "base_url": "http://127.0.0.1:9/v1",
+            "api_key": "connection-secret",
+        }
+    )
+    saved = store.save_judges(
+        {
+            "judges": [
+                {
+                    "model": "phi4-mini",
+                    "base_url": "http://127.0.0.1:11434",
+                    "api_key": "judge-secret",
+                }
+            ]
+        }
+    )
+    assert saved["judges"][0]["api_key"] == "set"
+    assert saved["judges"][0]["has_api_key"] is True
+    listed = store.judges()
+    assert "judge-secret" not in json.dumps(listed)
+    again = store.save_judges({"judges": listed["judges"], "chairman": listed["chairman"]})
+    assert again["judges"][0]["api_key"] == "set"
+    stored = json.loads((tmp_path / "judges.json").read_text(encoding="utf-8"))
+    assert stored["judges"][0]["api_key"] == "judge-secret"
+    if os.name == "posix":
+        assert (tmp_path / "connections.json").stat().st_mode & 0o777 == 0o600
+        assert (tmp_path / "judges.json").stat().st_mode & 0o777 == 0o600
 
