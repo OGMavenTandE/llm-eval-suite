@@ -1,13 +1,16 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 - 2026-11-18
+
+Changes since v0.2.0, from merged pull requests #49 through #53. #50 was reverted by #51.
 
 ### Added
 
-- Evaluation gates for small-model specialization (`python -m gates`, `llm-eval-gates`). One workload is walked down the Enterprise AI Adoption Curve with a GO, NO-GO, or INVALID decision at each gate: Gate 2 baseline measurement, Gate 3 right-sizing log audit, Gate 4 routing harness with stress cases, Gate 5 acceptance against the model it would replace (paired bootstrap non-inferiority and per-class recall bars), and Gate 6 drift (accuracy drop, label-mix PSI, version agreement). Each gate writes HTML, markdown, and JSON with the SHA-256 of every input. Exit codes are 0, 1, and 2 so a pipeline can stop on a gate.
-- `gates.train_lora`: offline LoRA adapter training on a local base-model folder, trained on the `train` split only, with a training record and an optional merged folder.
-- Synthetic message-triage reference case in `examples/message_triage/`: seeded generator, spec, audit rules, router cases, and a shifted monitoring month. No test message appears in training, and one phrasing per label is held out of training.
-- `python -m gates demo` writes a simulated packet for layout checks. Every page carries a SIMULATED banner.
+- Offline eval shell hosts plugin panels in a side rail, with an offline switch and an optional classification banner. A panel whose plugin is missing shows Not installed. (#49)
+- Evaluation gates for small-model specialization (`python -m gates`, `llm-eval-gates`). One workload is walked down the Enterprise AI Adoption Curve with a GO, NO-GO, or INVALID decision at each gate: Gate 2 baseline measurement, Gate 3 right-sizing log audit, Gate 4 routing harness with stress cases, Gate 5 acceptance against the model it would replace (paired bootstrap non-inferiority and per-class recall bars), and Gate 6 drift (accuracy drop, label-mix PSI, version agreement). Each gate writes HTML, markdown, and JSON with the SHA-256 of every input. Exit codes are 0, 1, and 2 so a pipeline can stop on a gate. (#53)
+- `gates.train_lora`: offline LoRA adapter training on a local base-model folder, trained on the `train` split only, with a training record and an optional merged folder. (#53)
+- Synthetic message-triage reference case in `examples/message_triage/`: seeded generator, spec, audit rules, router cases, and a shifted monitoring month. No test message appears in training, and one phrasing per label is held out of training. (#53)
+- `python -m gates demo` writes a simulated packet for layout checks. Every page carries a SIMULATED banner. (#53)
 
 ## 0.2.0 - 2026-10-14
 

@@ -28,7 +28,7 @@ Read [docs/LESSONS_LEARNED.md](docs/LESSONS_LEARNED.md) before changing garak sc
 - `examples/message_triage/`: synthetic reference case for the gates. Regenerate with `make_data.py`; do not hand-edit the JSONL
 - `dashboard.html`: single-file viewer for engine JSON. It embeds Public Sans and uses the same palette as the exported report
 - `run_app.bat`: Windows launcher. Creates `.venv-eval` and pins torch, garak, and transformers
-- `pyproject.toml`: package metadata. Version 0.2.0
+- `pyproject.toml`: package metadata. Version 0.3.0
 
 ## Setup
 
