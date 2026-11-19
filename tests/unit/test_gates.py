@@ -309,3 +309,11 @@ def test_predict_records_replies_and_errors(tmp_path):
     assert [r["prediction"] for r in rows] == ["A", None, "B"]
     assert rows[1]["error"].startswith("TimeoutError")
     assert (tmp_path / "p.jsonl").read_text(encoding="utf-8").count("\n") == 3
+
+
+def test_predict_params_are_deterministic_per_provider():
+    from gates.cli import predict_params
+
+    assert predict_params("ollama", 16) == {"options": {"num_predict": 16, "temperature": 0}}
+    assert predict_params("openai", 16) == {"max_new_tokens": 16, "temperature": 0}
+    assert predict_params("hf", 16) == {"max_new_tokens": 16}

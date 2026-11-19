@@ -29,6 +29,19 @@ from gates.spec import load_spec
 _EXIT = {GO: 0, NO_GO: 1}
 
 
+def predict_params(provider: str, max_new_tokens: int) -> dict:
+    """Short, deterministic replies so a gate run can be repeated.
+
+    Ollama reads its cap and temperature from ``options``; a top-level
+    ``max_new_tokens`` would be ignored there.
+    """
+    if provider == "ollama":
+        return {"options": {"num_predict": max_new_tokens, "temperature": 0}}
+    if provider == "hf":
+        return {"max_new_tokens": max_new_tokens}
+    return {"max_new_tokens": max_new_tokens, "temperature": 0}
+
+
 def _finish(decision, out: str, inputs: dict) -> int:
     decision.inputs = {role: file_digest(path) for role, path in inputs.items() if path}
     paths = write_gate(decision, out)
@@ -119,7 +132,7 @@ def main(argv: list[str] | None = None) -> int:
         from gates.predict import build_model, predict
 
         spec = load_spec(args.spec)
-        params = {"max_new_tokens": args.max_new_tokens}
+        params = predict_params(args.provider, args.max_new_tokens)
         if args.base_url:
             params["base_url"] = args.base_url
         if args.folder:
