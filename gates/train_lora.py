@@ -35,8 +35,11 @@ def build_examples(spec, items, tokenizer, max_len: int):
                 [{"role": "user", "content": prompt}], tokenize=False, add_generation_prompt=True
             )
         prompt_ids = tokenizer(prompt, add_special_tokens=False)["input_ids"]
-        answer_ids = tokenizer(" " + item["label"] if not prompt.endswith((" ", "\n")) else item["label"],
-                               add_special_tokens=False)["input_ids"]
+        # A chat template ends on the assistant turn, so the label follows directly.
+        # A plain prompt gets a space before the label, as a completion would.
+        templated = bool(getattr(tokenizer, "chat_template", None))
+        answer = item["label"] if templated or prompt.endswith((" ", "\n")) else " " + item["label"]
+        answer_ids = tokenizer(answer, add_special_tokens=False)["input_ids"]
         if tokenizer.eos_token_id is not None:
             answer_ids = answer_ids + [tokenizer.eos_token_id]
         prompt_ids = prompt_ids[-(max_len - len(answer_ids)):]
@@ -79,7 +82,7 @@ def main(argv: list[str] | None = None) -> int:
     tokenizer = AutoTokenizer.from_pretrained(args.base, local_files_only=True)
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token = tokenizer.eos_token
-    model = AutoModelForCausalLM.from_pretrained(args.base, local_files_only=True, torch_dtype=dtype).to(device)
+    model = AutoModelForCausalLM.from_pretrained(args.base, local_files_only=True, dtype=dtype).to(device)
     target = args.target_modules if args.target_modules == "all-linear" else args.target_modules.split(",")
     model = get_peft_model(model, LoraConfig(r=args.rank, lora_alpha=args.alpha, lora_dropout=args.dropout,
                                              target_modules=target, task_type="CAUSAL_LM"))
