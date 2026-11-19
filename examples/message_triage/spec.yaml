@@ -6,7 +6,7 @@ description: >
   person at the right speed. The data is synthetic and unclassified; it stands in
   for a program's own traffic.
 owner: AI Eval Corporation
-baseline_name: frontier baseline
+baseline_name: large baseline model
 # heldout_phrasing marks test messages written in a phrasing the training split never used.
 report_slices: [heldout_phrasing]
 labels: [FLASH, IMMEDIATE, PRIORITY, ROUTINE]
