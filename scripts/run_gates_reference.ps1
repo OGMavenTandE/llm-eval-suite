@@ -27,6 +27,8 @@ param(
 )
 
 $ErrorActionPreference = "Continue"
+# Python buffers stdout when piped; unbuffered output keeps progress lines live in the window and run.log.
+$env:PYTHONUNBUFFERED = "1"
 $Repo = Split-Path -Parent $PSScriptRoot
 Set-Location $Repo
 New-Item -ItemType Directory -Force -Path $OutRoot | Out-Null
