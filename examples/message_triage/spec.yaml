@@ -1,0 +1,46 @@
+# Gate 1: mission metrics before seats.
+# Written before any model is built or scored. Gates 2, 5 and 6 read their bars from here.
+workload: Message precedence triage (synthetic reference case)
+description: >
+  Assign one of four precedences to an incoming message so it reaches the right
+  person at the right speed. The data is synthetic and unclassified; it stands in
+  for a program's own traffic.
+owner: AI Eval Corporation
+baseline_name: frontier baseline
+# heldout_phrasing marks test messages written in a phrasing the training split never used.
+report_slices: [heldout_phrasing]
+labels: [FLASH, IMMEDIATE, PRIORITY, ROUTINE]
+classes:
+  FLASH:
+    min_recall: 0.98
+    cost_of_miss: "high: a life-safety message waits in the routine queue"
+  IMMEDIATE:
+    min_recall: 0.95
+    cost_of_miss: "high: action is delayed past the window"
+  PRIORITY:
+    cost_of_miss: "medium: a request slips by a day"
+  ROUTINE:
+    cost_of_miss: "low: over-routing costs reader time"
+acceptance:
+  min_accuracy: 0.90
+  # Judged on the lower end of a 95% paired interval. With 600 held-out items a
+  # 3-point margin is reachable for a model that truly matches the baseline.
+  noninferiority_margin: 0.03
+  min_parsed: 0.98
+  min_items: 500
+  bootstrap_resamples: 2000
+  seed: 20261118
+drift:
+  max_accuracy_drop: 0.02
+  max_psi: 0.2
+  min_agreement: 0.95
+prompt_template: |
+  You triage military messages. Assign exactly one precedence:
+  FLASH (life safety or an emergency happening now), IMMEDIATE (needs action within hours),
+  PRIORITY (needs action within days), ROUTINE (everything else).
+  Reply with the precedence word only.
+
+  Message:
+  {text}
+
+  Precedence:

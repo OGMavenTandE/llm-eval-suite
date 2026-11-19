@@ -1,0 +1,35 @@
+# Gate 3 and Gate 4 rules: how traffic is sorted and where each kind is routed.
+# Tune the keywords to a program's own logs. These rules are part of the record.
+default_task_type: other
+min_rows: 100
+min_classified: 0.8
+hold_high_cost: true
+task_types:
+  triage:
+    keywords: ["precedence", "triage"]
+    route: small
+    cost_of_wrong: high
+  rephrase:
+    keywords: ["rephrase", "reword"]
+    route: small
+    cost_of_wrong: low
+  summarize:
+    keywords: ["summarize", "summary"]
+    route: small
+    cost_of_wrong: medium
+  extract:
+    keywords: ["extract"]
+    route: small
+    cost_of_wrong: medium
+  format:
+    keywords: ["convert", "24-hour", "sort it", "format"]
+    route: deterministic
+    cost_of_wrong: low
+  lookup:
+    keywords: ["look up", "roster"]
+    route: deterministic
+    cost_of_wrong: low
+  planning:
+    keywords: ["course of action", "courses of action", "recommend"]
+    route: large
+    cost_of_wrong: high

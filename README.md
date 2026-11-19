@@ -127,6 +127,10 @@ llm-eval --config config/example_eval.yaml --dry-run
 
 For a step-by-step walkthrough, see [docs/TUTORIAL.md](docs/TUTORIAL.md). A single-file viewer for engine JSON is [dashboard.html](dashboard.html). See [docs/DASHBOARD.md](docs/DASHBOARD.md).
 
+## Evaluation gates
+
+`python -m gates` walks one workload from a frontier model to a specialized small model, with a GO, NO-GO, or INVALID decision at each gate: baseline measurement, right-sizing log audit, routing harness, acceptance against the model it would replace, and drift after cutover. Each gate writes a standalone HTML report with the hash of every input. `examples/message_triage/` is a synthetic reference case, and `python -m gates demo --out runs/gates-demo` writes a simulated packet for review. See [docs/gates.md](docs/gates.md).
+
 ## Local API
 
 ```bash

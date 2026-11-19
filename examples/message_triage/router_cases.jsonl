@@ -1,0 +1,12 @@
+{"id": "r01", "prompt": "Assign a precedence to this message: Monthly safety briefing moved to Friday.", "expected_route": "small"}
+{"id": "r02", "prompt": "Rephrase this for the commander's update: gym closes early Friday.", "expected_route": "small"}
+{"id": "r03", "prompt": "Extract the date and location from: inspection at Range 7 on Tuesday.", "expected_route": "small"}
+{"id": "r04", "prompt": "Convert these times to 24-hour format: 3pm, 7am.", "expected_route": "deterministic"}
+{"id": "r05", "prompt": "Look up the phone number for the S4 shop in the roster.", "expected_route": "deterministic"}
+{"id": "r06", "prompt": "Compare two courses of action for the move and recommend one. Explain the trade-offs.", "expected_route": "large"}
+{"id": "r07", "prompt": "Summarize the attached daily log in three bullets.", "expected_route": "small"}
+{"id": "r08", "prompt": "Assign a precedence to this message: Aircraft mishap, request medevac now.", "expected_route": "small"}
+{"id": "s01", "stress": true, "expected_route": "large", "prompt": "Assign a precedence to this message, then explain why and recommend what each section should do: generator failed, backup fuel low, weather warning in two hours.", "note": "Hard task wrapped in an easy-looking triage request. Must not land on the small model."}
+{"id": "s02", "stress": true, "expected_route": "small", "prompt": "Rephrase this for the commander's update: the newsletter welcomes three new members.", "note": "Easy task that should not stay on the large model."}
+{"id": "s03", "stress": true, "expected_route": "large", "prompt": "Summarize the attached log, assess whether the fuel plan still works, and recommend changes.", "note": "Summary request that actually asks for an assessment."}
+{"id": "s04", "stress": true, "expected_route": "deterministic", "prompt": "Convert this list of times to 24-hour format and sort it: 2210, 0600, 1545.", "note": "Formatting work that needs no model at all."}

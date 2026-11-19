@@ -43,6 +43,9 @@ hf = [
     "torch",
     "transformers>=5.5",
 ]
+lora = [
+    "peft>=0.13",
+]
 
 [project.scripts]
 llm-eval = "llm_eval.cli:main"
@@ -54,6 +57,7 @@ llm-eval-suite = "llm_eval_suite.app:main"
 llm-eval-dow = "dow_bench.cli:main"
 llm-eval-standard = "standard_bench.cli:main"
 llm-eval-edge = "llm_eval.edge.cli:main"
+llm-eval-gates = "gates.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/OGMavenTandE/llm-eval-suite"
@@ -62,7 +66,7 @@ Issues = "https://github.com/OGMavenTandE/llm-eval-suite/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["llm_eval*", "apps*", "llm_eval_suite*", "dow_bench", "dow_bench.*", "standard_bench", "standard_bench.*"]
+include = ["llm_eval*", "apps*", "llm_eval_suite*", "dow_bench", "dow_bench.*", "standard_bench", "standard_bench.*", "gates", "gates.*"]
 
 [tool.setuptools.package-data]
 llm_eval_suite = ["static/*", "static/fonts/*", "static/favicon.ico", "presets.json"]
